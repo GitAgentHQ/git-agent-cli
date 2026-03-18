@@ -1,4 +1,104 @@
-# BDD Specifications — ga commit V1
+# BDD Specifications — ga V1
+
+## Feature: Project Initialization
+
+```gherkin
+Feature: ga init - AI-powered scope detection and project config generation
+  As a developer or Coding Agent
+  I want to generate .ga/config.yml from my repository's history
+  So that ga commit uses accurate, project-specific scopes without manual configuration
+
+  Background:
+    Given the `ga` binary is installed
+    And I am in a git repository
+    And a valid OpenAI-compatible API endpoint is available
+```
+
+### Happy Path
+
+```gherkin
+  Scenario: Init with default empty hook
+    Given the repository has 50+ commits with conventional commit subjects
+    And GA_API_KEY is set
+    And .ga/config.yml does not exist
+    When I run `ga init`
+    Then git log subjects (up to 200) are read
+    And top-level directories are scanned
+    And the LLM returns {"scopes": ["api", "core", "auth"], "reasoning": "..."}
+    And .ga/config.yml is written with the scopes list
+    And .ga/hooks/pre-commit is created as an empty executable placeholder (exit 0)
+    And stdout contains the generated .ga/config.yml content
+    And stderr contains the LLM reasoning
+    And exit code is 0
+
+  Scenario: Init with built-in conventional hook
+    Given .ga/config.yml does not exist
+    And GA_API_KEY is set
+    When I run `ga init --hook conventional`
+    Then .ga/config.yml is written
+    And .ga/hooks/pre-commit is installed from the embedded conventional template
+    And .ga/hooks/pre-commit is executable (chmod +x)
+    And stderr prints "installed hook: conventional"
+    And exit code is 0
+
+  Scenario: Unknown hook name
+    When I run `ga init --hook unknown-hook`
+    Then stderr prints "error: unknown built-in hook \"unknown-hook\" (available: conventional)"
+    And no files are written
+    And exit code is 1
+
+  Scenario: Init on fresh repository with no commit history
+    Given the repository has 0 commits
+    And GA_API_KEY is set
+    When I run `ga init`
+    Then only top-level directories are used as hints
+    And the LLM generates scopes from directory names
+    And .ga/config.yml is written
+    And exit code is 0
+
+  Scenario: Custom max-commits depth
+    Given the repository has 500 commits
+    When I run `ga init --max-commits 50`
+    Then only the 50 most recent commit subjects are sent to the LLM
+    And exit code is 0
+```
+
+### Error Scenarios
+
+```gherkin
+  Scenario: Config already exists without --force
+    Given .ga/config.yml already exists
+    When I run `ga init`
+    Then stderr prints "error: .ga/config.yml already exists (use --force to overwrite)"
+    And the existing file is not modified
+    And exit code is 1
+
+  Scenario: Hook already exists without --force
+    Given .ga/hooks/pre-commit already exists
+    When I run `ga init`
+    Then stderr prints "error: .ga/hooks/pre-commit already exists (use --force to overwrite)"
+    And exit code is 1
+
+  Scenario: Config and hook overwritten with --force
+    Given .ga/config.yml and .ga/hooks/pre-commit already exist
+    When I run `ga init --force`
+    Then both files are overwritten
+    And exit code is 0
+
+  Scenario: Not in a git repository
+    Given the current directory is not a git repository
+    When I run `ga init`
+    Then stderr prints "error: not a git repository"
+    And exit code is 1
+
+  Scenario: Missing API key
+    Given no GA_API_KEY is set and no --api-key flag
+    When I run `ga init`
+    Then stderr prints "error: API key required (set GA_API_KEY or use --api-key)"
+    And exit code is 1
+```
+
+---
 
 ## Feature: AI-Powered Git Commit
 
@@ -25,10 +125,27 @@ Feature: ga commit - AI-powered semantic commit message generation
     When I run `ga commit`
     Then the staged diff is extracted via `git diff --staged`
     And the diff is sent to the LLM with a conventional commit prompt
-    And the LLM returns {"commit_message": "feat(core): ...", "outline": "..."}
-    And .aig/hooks/pre-commit (if present) receives the JSON payload and exits 0
-    And `git commit -m "<commit_message>"` is executed
+    And the LLM returns {"commit_message": "feat(core): ...", "body": "- ...\n\n...", "outline": "..."}
+    And ga assembles the full commit message (title + blank line + body)
+    And .ga/hooks/pre-commit (if present) receives the JSON payload and exits 0
+    And `git commit -m "<full_commit_message>"` is executed
     And the outline is printed to stdout
+    And exit code is 0
+
+  Scenario: Commit with scopes from .ga/config.yml
+    Given .ga/config.yml exists with scopes [api, core, auth]
+    And I have staged changes in src/api/handler.go
+    When I run `ga commit`
+    Then the LLM prompt includes "Valid scopes: api, core, auth"
+    And the generated commit_message uses one of the valid scopes
+    And the hook receives config.scopes = ["api", "core", "auth"]
+    And exit code is 0
+
+  Scenario: Generate commit with Co-Authored-By footer
+    Given I have staged changes
+    And GA_CO_AUTHOR is set to "Claude Sonnet 4.6 <noreply@anthropic.com>"
+    When I run `ga commit`
+    Then the assembled commit message ends with "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
     And exit code is 0
 
   Scenario: Generate commit with user intent
@@ -185,9 +302,16 @@ Feature: ga commit - AI-powered semantic commit message generation
 
   Scenario: LLM returns JSON missing commit_message
     Given I have staged changes
-    And the LLM returns {"outline": "..."} without commit_message
+    And the LLM returns {"outline": "..."} without commit_message or body
     When I run `ga commit`
     Then stderr prints "error: LLM response missing required field: commit_message"
+    And exit code is 1
+
+  Scenario: LLM returns JSON missing body
+    Given I have staged changes
+    And the LLM returns {"commit_message": "feat: x", "outline": "..."} without body
+    When I run `ga commit`
+    Then stderr prints "error: LLM response missing required field: body"
     And exit code is 1
 ```
 
@@ -198,7 +322,7 @@ Feature: ga commit - AI-powered semantic commit message generation
 ```gherkin
   Scenario: Pre-commit hook passes validation
     Given I have staged changes
-    And .aig/hooks/pre-commit is an executable script that exits 0
+    And .ga/hooks/pre-commit is an executable script that exits 0
     When I run `ga commit`
     Then the hook is executed with JSON payload via stdin
     And the JSON payload matches: {diff, commit_message, intent, staged_files}
@@ -207,7 +331,7 @@ Feature: ga commit - AI-powered semantic commit message generation
 
   Scenario: Pre-commit hook blocks commit
     Given I have staged changes
-    And .aig/hooks/pre-commit exits with code 1
+    And .ga/hooks/pre-commit exits with code 1
     And the hook writes "error: WIP commits not allowed" to stderr
     When I run `ga commit`
     Then `git commit` is NOT executed
@@ -216,15 +340,15 @@ Feature: ga commit - AI-powered semantic commit message generation
 
   Scenario: Pre-commit hook does not exist
     Given I have staged changes
-    And .aig/hooks/pre-commit does not exist
+    And .ga/hooks/pre-commit does not exist
     When I run `ga commit`
     Then no hook is executed
     And the commit proceeds normally
     And exit code is 0
 
-  Scenario: .aig/hooks directory does not exist
+  Scenario: .ga/hooks directory does not exist
     Given I have staged changes
-    And the .aig/hooks directory does not exist
+    And the .ga/hooks directory does not exist
     When I run `ga commit`
     Then no hook execution is attempted
     And the commit proceeds normally
@@ -232,19 +356,19 @@ Feature: ga commit - AI-powered semantic commit message generation
 
   Scenario: Pre-commit hook is not executable
     Given I have staged changes
-    And .aig/hooks/pre-commit exists but has no execute permission (chmod 644)
+    And .ga/hooks/pre-commit exists but has no execute permission (chmod 644)
     When I run `ga commit`
-    Then stderr prints "error: hook is not executable: .aig/hooks/pre-commit"
+    Then stderr prints "error: hook is not executable: .ga/hooks/pre-commit"
     And `git commit` is NOT executed
     And exit code is 2
 
   Scenario: Hook receives correct JSON schema
     Given I have staged changes to ["src/main.go", "src/cache.go"]
     And I run `ga commit --intent "add caching"`
-    And .aig/hooks/pre-commit captures and validates stdin
+    And .ga/hooks/pre-commit captures and validates stdin
     Then the hook stdin JSON contains:
       - diff: (non-empty filtered diff)
-      - commit_message: (conventional commit string)
+      - commit_message: (full assembled message: title + blank line + body + optional Co-Authored-By)
       - intent: "add caching"
       - staged_files: ["src/main.go", "src/cache.go"]
 ```

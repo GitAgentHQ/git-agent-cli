@@ -123,6 +123,7 @@ fmt.Println("Error: " + err.Error())
 | `--api-key` | `GA_API_KEY` | (required) |
 | `--model` | `GA_MODEL` | `gpt-4o` |
 | `--base-url` | `GA_BASE_URL` | OpenAI default |
+| `--co-author` | `GA_CO_AUTHOR` | `""` |
 | `--max-diff-lines` | `GA_MAX_DIFF_LINES` | `500` |
 | `--intent` / `-i` | `GA_INTENT` | `""` |
 | `--dry-run` | — | `false` |
@@ -158,7 +159,7 @@ func NewCommitCmd(svc *application.CommitService) *cobra.Command {
 ### Security Rules
 
 1. **No shell interpretation**: Always `exec.Command(absPath)` — never `exec.Command("sh", "-c", hookPath)`
-2. **Path traversal guard**: Resolve absolute path and verify it's under `.aig/` prefix
+2. **Path traversal guard**: Resolve absolute path and verify it's under `.ga/` prefix
 3. **Executable check**: Verify `mode&0111 != 0` before execution
 4. **stdin only**: Pass context via JSON stdin — not environment variables (avoids leaking API keys)
 
@@ -185,21 +186,29 @@ cmd := exec.CommandContext(hookCtx, absHookPath)
 
 ```bash
 #!/bin/bash
-# .aig/hooks/pre-commit
-# Blocks WIP commits and validates conventional format
+# .ga/hooks/pre-commit
+# Blocks WIP commits; commit_message contains the full assembled message
 
 INPUT=$(cat)
-MSG=$(echo "$INPUT" | jq -r '.commit_message')
+FULL_MSG=$(echo "$INPUT" | jq -r '.commit_message')
+TITLE=$(echo "$FULL_MSG" | head -1)
 
 # Block WIP commits
-if echo "$MSG" | grep -qi "WIP\|wip"; then
+if echo "$TITLE" | grep -qi "WIP\|wip"; then
   echo "error: WIP commits are not allowed" >&2
   exit 1
 fi
 
-# Validate conventional commit format
-if ! echo "$MSG" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|ci|revert)(\(.+\))?: .+'; then
-  echo "error: commit message does not follow Conventional Commits format" >&2
+# Validate conventional commit title (type(scope): description, ≤50 chars)
+if ! echo "$TITLE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(\([a-z0-9_-]+\))?!?: [a-z].+'; then
+  echo "error: title must be: type(scope): description (all lowercase, ≤50 chars)" >&2
+  exit 1
+fi
+
+# Validate body exists (lines 3+)
+BODY=$(echo "$FULL_MSG" | tail -n +3)
+if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
+  echo "error: commit body required (bullet points + explanation)" >&2
   exit 1
 fi
 
@@ -221,7 +230,7 @@ exit 0
 resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
     Model:       c.model,
     Temperature: 0,
-    MaxTokens:   500,
+    MaxTokens:   800, // body + explanation needs more headroom than title-only
     ResponseFormat: &openai.ChatCompletionResponseFormat{
         Type: openai.ChatCompletionResponseFormatTypeJSONObject,
     },
@@ -237,21 +246,25 @@ resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 Always validate both required fields before proceeding:
 
 ```go
-func parseResponse(body string) (*commit.CommitMessage, error) {
+func parseResponse(raw string) (*commit.CommitMessage, error) {
     var r struct {
         CommitMessage string `json:"commit_message"`
+        Body          string `json:"body"`
         Outline       string `json:"outline"`
     }
-    if err := json.Unmarshal([]byte(body), &r); err != nil {
+    if err := json.Unmarshal([]byte(raw), &r); err != nil {
         return nil, errors.New(errors.ExitError, "invalid LLM response format")
     }
     if r.CommitMessage == "" {
         return nil, errors.New(errors.ExitError, "LLM response missing required field: commit_message")
     }
+    if r.Body == "" {
+        return nil, errors.New(errors.ExitError, "LLM response missing required field: body")
+    }
     if r.Outline == "" {
         return nil, errors.New(errors.ExitError, "LLM response missing required field: outline")
     }
-    return &commit.CommitMessage{Message: r.CommitMessage, Outline: r.Outline}, nil
+    return &commit.CommitMessage{Title: r.CommitMessage, Body: r.Body, Outline: r.Outline}, nil
 }
 ```
 
@@ -274,7 +287,7 @@ func maskKey(key string) string {
 
 ### Diff Content Warning
 
-Document in README: staged diffs may contain secrets (API keys, passwords, tokens). Recommend using `git-secrets`, `detect-secrets`, or a custom `.aig/hooks/pre-commit` that scans for patterns.
+Document in README: staged diffs may contain secrets (API keys, passwords, tokens). Recommend using `git-secrets`, `detect-secrets`, or a custom `.ga/hooks/pre-commit` that scans for patterns.
 
 `ga` itself does not scan for secrets in V1 (avoid false positives from legitimate code).
 

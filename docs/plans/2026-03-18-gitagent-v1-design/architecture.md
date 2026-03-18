@@ -45,8 +45,9 @@ No external dependencies. Defines value objects, interfaces, and domain errors o
 ```go
 // CommitMessage is an immutable value object
 type CommitMessage struct {
-    Message string // "feat(core): add cache layer"
-    Outline string // "1. Added Redis client; 2. Integrated with service"
+    Title   string // "feat(core): add cache layer" (≤50 chars, lowercase)
+    Body    string // "- Add Redis client\n\nReduces API latency by caching."
+    Outline string // "1. Added Redis client; 2. Integrated with service" (stdout only)
 }
 
 // CommitMessageGenerator is the LLM abstraction
@@ -80,6 +81,26 @@ type DiffTruncator interface {
 }
 ```
 
+#### `domain/project/`
+
+```go
+// ProjectConfig is the value object written to .ga/config.yml
+type ProjectConfig struct {
+    Scopes    []string `yaml:"scopes"`
+    Reasoning string   `yaml:"-"` // LLM explanation, printed to stderr only
+}
+
+type GenerateScopesRequest struct {
+    CommitSubjects []string
+    Dirs           []string
+}
+
+// ScopeGenerator is the LLM abstraction for ga init
+type ScopeGenerator interface {
+    GenerateScopes(ctx context.Context, req GenerateScopesRequest) (*ProjectConfig, error)
+}
+```
+
 #### `domain/hook/`
 ```go
 // HookInput is the JSON payload sent to hook scripts via stdin
@@ -106,15 +127,52 @@ type HookExecutor interface {
 
 ### `application/` — Orchestration
 
-Single service: `CommitService`. Owns the full workflow. Has no knowledge of CLI, OpenAI, or Git — only domain interfaces.
+Two services: `CommitService` and `InitService`. Neither has knowledge of CLI, OpenAI, or Git — only domain interfaces.
+
+#### `InitService`
+
+```go
+type InitService struct {
+    git       git.LogReader           // infrastructure interface
+    fs        fs.DirScanner           // infrastructure interface
+    generator project.ScopeGenerator  // domain interface (LLM)
+    writer    fs.ConfigWriter          // infrastructure interface
+}
+
+func (s *InitService) Execute(ctx context.Context, input *InitInput) (*InitResult, error) {
+    // 1. Read recent commit subjects
+    subjects, err := s.git.LogSubjects(ctx, input.MaxCommits)
+
+    // 2. Scan top-level directories as supplementary hints
+    dirs, err := s.fs.TopLevelDirs(ctx)
+
+    // 3. Call LLM to suggest scopes
+    cfg, err := s.generator.GenerateScopes(ctx, project.GenerateScopesRequest{
+        CommitSubjects: subjects,
+        Dirs:           dirs,
+    })
+    // cfg = ProjectConfig{Scopes: [...], Reasoning: "..."}
+
+    // 4. Write .ga/config.yml (respects Force flag)
+    err = s.writer.WriteConfig(ctx, cfg, input.Force)
+
+    // 5. Resolve and install hook template
+    hookBytes, err := s.hookRegistry.Resolve(input.HookName) // "conventional" or ""
+    err = s.writer.InstallHook(ctx, hookBytes, input.Force)  // chmod +x
+
+    return &InitResult{Config: cfg, InstalledHook: input.HookName}, nil
+}
+```
+
+#### `CommitService`
 
 ```go
 type CommitService struct {
-    git        git.Client          // infrastructure interface
-    filter     diff.DiffFilter     // domain interface
-    truncator  diff.DiffTruncator  // domain interface
-    generator  commit.CommitMessageGenerator
-    hooks      hook.HookExecutor
+    git       git.Client
+    filter    diff.DiffFilter
+    truncator diff.DiffTruncator
+    generator commit.CommitMessageGenerator
+    hooks     hook.HookExecutor
 }
 
 func (s *CommitService) Execute(ctx context.Context, input *CommitInput) (*CommitResult, error) {
@@ -140,11 +198,14 @@ func (s *CommitService) Execute(ctx context.Context, input *CommitInput) (*Commi
         StagedFiles: truncated.Files,
     })
 
-    // 5. Run pre-commit hook (optional)
+    // 5. Assemble full commit message
+    fullMsg := assembleCommitMessage(msg.Title, msg.Body, input.CoAuthor)
+
+    // 6. Run pre-commit hook (optional)
     if !input.DryRun {
         result, err := s.hooks.Execute(ctx, "pre-commit", hook.HookInput{
             Diff:          truncated.Raw,
-            CommitMessage: msg.Message,
+            CommitMessage: fullMsg, // full message so hooks can validate body/footer
             Intent:        input.Intent,
             StagedFiles:   truncated.Files,
         })
@@ -153,16 +214,25 @@ func (s *CommitService) Execute(ctx context.Context, input *CommitInput) (*Commi
         }
     }
 
-    // 6. Commit (unless dry-run)
+    // 7. Commit (unless dry-run)
     if !input.DryRun {
-        err = s.git.Commit(ctx, msg.Message)
+        err = s.git.Commit(ctx, fullMsg)
     }
 
     return &CommitResult{
-        Outline:     msg.Outline,
-        DryRun:      input.DryRun,
+        Outline:      msg.Outline,
+        DryRun:       input.DryRun,
         WasTruncated: wasTruncated,
     }, nil
+}
+
+// assembleCommitMessage builds: title + blank line + body [+ blank line + Co-Authored-By]
+func assembleCommitMessage(title, body, coAuthor string) string {
+    msg := title + "\n\n" + body
+    if coAuthor != "" {
+        msg += "\n\nCo-Authored-By: " + coAuthor
+    }
+    return msg
 }
 ```
 
@@ -201,7 +271,9 @@ type Client struct {
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
     prompt := buildPrompt(req.Diff, req.Intent, req.StagedFiles)
     resp, err := c.openaiClient.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-        Model: c.model,
+        Model:       c.model,
+        Temperature: 0,
+        MaxTokens:   800,
         Messages: []openai.ChatCompletionMessage{
             {Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
             {Role: openai.ChatMessageRoleUser, Content: prompt},
@@ -214,10 +286,92 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 }
 ```
 
-#### `infrastructure/hook/`
+#### `infrastructure/hooks/` — Built-in Hook Registry
+
+Built-in hook templates are embedded directly in the binary via Go's `embed` package — no runtime files needed.
 
 ```go
-// Executes .aig/hooks/<hookName> with security checks
+// registry.go
+//go:embed ../hooks/*.sh
+var embeddedHooks embed.FS
+
+var builtinHooks = map[string]string{
+    "conventional": "hooks/conventional.sh",
+    // future: "no-wip", "secret-scan", ...
+}
+
+type Registry struct{}
+
+// Resolve returns template bytes for the given hook name.
+// Empty name returns the blank placeholder.
+func (r *Registry) Resolve(name string) ([]byte, error) {
+    if name == "" {
+        return embeddedHooks.ReadFile("hooks/empty.sh")
+    }
+    path, ok := builtinHooks[name]
+    if !ok {
+        return nil, fmt.Errorf("unknown built-in hook %q (available: %s)",
+            name, strings.Join(availableHooks(), ", "))
+    }
+    return embeddedHooks.ReadFile(path)
+}
+```
+
+**`hooks/empty.sh`** (default):
+```bash
+#!/bin/sh
+# .ga/hooks/pre-commit — generated by ga init
+# Receives JSON via stdin: {diff, commit_message, intent, staged_files, config}
+# Exit 0 to allow commit; exit non-zero to block.
+exit 0
+```
+
+**`hooks/conventional.sh`** (built-in validator):
+```bash
+#!/bin/sh
+# .ga/hooks/pre-commit — conventional commit validator
+# Built-in hook installed by: ga init --hook conventional
+
+INPUT=$(cat)
+FULL_MSG=$(echo "$INPUT" | jq -r '.commit_message')
+TITLE=$(echo "$FULL_MSG" | head -1)
+VALID_TYPES="feat|fix|docs|refactor|perf|test|chore|build|ci|style"
+
+# 1. Title format: type(scope): description (lowercase, ≤50 chars)
+if ! echo "$TITLE" | grep -qE "^($VALID_TYPES)(\([a-z0-9_-]+\))?!?:[[:space:]][a-z].+"; then
+  echo "error: title must match type(scope): description (all lowercase)" >&2
+  exit 1
+fi
+
+if [ ${#TITLE} -gt 50 ]; then
+  echo "error: title must be ≤50 characters (${#TITLE})" >&2
+  exit 1
+fi
+
+# 2. Body required (lines after blank line)
+BODY=$(echo "$FULL_MSG" | tail -n +3)
+if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
+  echo "error: body required (bullet points + explanation paragraph)" >&2
+  exit 1
+fi
+
+# 3. Scope whitelist (if scopes configured)
+SCOPES=$(echo "$INPUT" | jq -r '.config.scopes // [] | .[]' 2>/dev/null)
+if [ -n "$SCOPES" ]; then
+  SCOPE=$(echo "$TITLE" | grep -oE '\([a-z0-9_-]+\)' | tr -d '()')
+  if [ -n "$SCOPE" ] && ! echo "$SCOPES" | grep -q "^$SCOPE$"; then
+    echo "error: scope '$SCOPE' not in whitelist: $(echo "$SCOPES" | tr '\n' ' ')" >&2
+    exit 1
+  fi
+fi
+
+exit 0
+```
+
+#### `infrastructure/hook/` — Hook Executor
+
+```go
+// Executes .ga/hooks/<hookName> with security checks
 func (e *Executor) Execute(ctx context.Context, hookName string, input hook.HookInput) (*hook.HookResult, error) {
     hookPath := filepath.Join(".aig", "hooks", hookName)
 
@@ -228,8 +382,8 @@ func (e *Executor) Execute(ctx context.Context, hookName string, input hook.Hook
 
     // 2. Path traversal guard
     abs, _ := filepath.Abs(hookPath)
-    aigAbs, _ := filepath.Abs(".aig")
-    if !strings.HasPrefix(abs, aigAbs) {
+    gaAbs, _ := filepath.Abs(".ga")
+    if !strings.HasPrefix(abs, gaAbs) {
         return nil, fmt.Errorf("hook path traversal denied")
     }
 
@@ -267,22 +421,53 @@ func (e *Executor) Execute(ctx context.Context, hookName string, input hook.Hook
 
 #### `infrastructure/config/`
 
+Four-layer resolver: flag → env → `.ga/config.yml` → `git config ga.*` → default.
+
 ```go
-// Resolver: flag → env → default
+// resolver.go: flag → env → gitconfig → default (for scalar values)
 type Resolver struct {
-    flags *pflag.FlagSet
+    flags      *pflag.FlagSet
+    projectCfg *ProjectConfig // loaded from .ga/config.yml
 }
 
-func (r *Resolver) GetString(flagName, envName, defaultVal string) string {
+func (r *Resolver) GetString(flagName, envName, gitKey, defaultVal string) string {
     if val, _ := r.flags.GetString(flagName); val != "" {
         return val
     }
     if val := os.Getenv(envName); val != "" {
         return val
     }
+    if val := readGitConfig(gitKey); val != "" { // git config --get ga.<key>
+        return val
+    }
     return defaultVal
 }
+
+// gitconfig.go: reads personal machine defaults via git subprocess
+func readGitConfig(key string) string {
+    out, err := exec.Command("git", "config", "--get", key).Output()
+    if err != nil {
+        return "" // missing key is not an error
+    }
+    return strings.TrimSpace(string(out))
+}
+
+// project.go: reads .ga/config.yml (team config, version-controlled)
+type ProjectConfig struct {
+    Scopes []string `yaml:"scopes"`
+}
+
+func LoadProjectConfig() (*ProjectConfig, error) {
+    data, err := os.ReadFile(".ga/config.yml")
+    if os.IsNotExist(err) {
+        return &ProjectConfig{}, nil // optional file
+    }
+    var cfg ProjectConfig
+    return &cfg, yaml.Unmarshal(data, &cfg)
+}
 ```
+
+`model` and `co-author` are **not** read from gitconfig — they are per-commit and must be supplied via flag or env.
 
 ---
 
@@ -356,10 +541,11 @@ go 1.23
 require (
     github.com/spf13/cobra v1.8.0
     github.com/sashabaranov/go-openai v1.24.0
+    gopkg.in/yaml.v3 v3.0.1
 )
 ```
 
-No other direct runtime dependencies.
+`gopkg.in/yaml.v3` is the only addition — used solely for `.ga/config.yml` parsing.
 
 ---
 
@@ -369,12 +555,17 @@ No other direct runtime dependencies.
 ```
 You are an expert software engineer. Generate a conventional commit message
 from the provided git diff. Respond ONLY with valid JSON matching this schema:
-{"commit_message": "string", "outline": "string"}
+{"commit_message": "string", "body": "string", "outline": "string"}
 
 Rules:
 - commit_message: conventional commits format (type(scope): subject)
-- subject: imperative mood, max 72 chars, no trailing period
-- outline: numbered list of key changes (1-3 items), in the diff's language
+  - ALL LOWERCASE, ≤50 chars, imperative mood, no trailing period
+  - Add "!" before ":" for breaking changes
+  - Valid types: feat, fix, docs, refactor, perf, test, chore, build, ci, style
+- body: two sections separated by a blank line:
+  1. Bullet points: "- Verb Object Detail" (imperative, ≤72 chars/line, 1-5 items)
+  2. Explanation paragraph: 1-3 sentences explaining WHY, not just what
+- outline: numbered summary for machine consumption (1-3 items)
 - If intent is provided, use it to guide the commit type/subject
 ```
 
@@ -394,7 +585,7 @@ Staged files: {{join .StagedFiles ", "}}
 
 ## Security Considerations
 
-1. **Hook path traversal**: `filepath.Abs` + prefix check against `.aig/` absolute path
+1. **Hook path traversal**: `filepath.Abs` + prefix check against `.ga/` absolute path
 2. **Hook execution**: Direct `exec.Command` — never `sh -c hookPath` (prevents injection)
 3. **API key masking**: Never log full API key; use `key[:4]+"..."` in verbose output
 4. **Diff content**: Document that diffs may contain secrets; recommend `git-secrets` or `detect-secrets` as pre-commit hooks
