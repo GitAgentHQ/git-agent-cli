@@ -30,30 +30,31 @@
 | FR-006 | Assemble full commit message: title + blank line + body + Co-Authored-By footer |
 | FR-007 | Execute `git commit -m` non-interactively (headless) |
 | FR-008 | stdout = outline only; stderr = errors; exit 0/1/2 |
-| FR-009 | `--api-key` flag (fallback: `GA_API_KEY` env) |
-| FR-010 | `--model` flag (fallback: `GA_MODEL`, default: `@cf/openai/gpt-oss-20b`) |
-| FR-011 | `--base-url` flag (fallback: `GA_BASE_URL`) |
+| FR-009 | `--api-key` flag (fallback: `~/.config/ga/config.yml`) |
+| FR-010 | `--model` flag (fallback: `~/.config/ga/config.yml`) |
+| FR-011 | `--base-url` flag (fallback: `~/.config/ga/config.yml`) |
 | FR-012 | `--co-author` flag (fallback: `GA_CO_AUTHOR`): appended as `Co-Authored-By:` footer |
 | FR-013 | `--dry-run` flag: generate message, skip commit |
 | FR-014 | `--max-diff-lines` flag (fallback: `GA_MAX_DIFF_LINES`, default: 500) |
-| FR-015 | `--provider` flag (fallback: `GA_PROVIDER`, default: `cloudflare`): `openai` or `cloudflare` |
-| FR-016 | `--account-id` flag (fallback: `GA_ACCOUNT_ID`): Cloudflare account ID (required for cloudflare provider) |
-| FR-017 | Hook system: `.ga/hooks/pre-commit` executable, JSON via stdin |
-| FR-018 | Hook exit 0 = proceed; non-zero = block commit (exit code 2) |
-| FR-019 | Validate staged changes exist before LLM call |
-| FR-020 | Validate API key presence; clear error if missing |
+| FR-015 | Zero-config default: no user credential required; uses project-maintained free endpoint |
+| FR-016 | User config home follows XDG: `$XDG_CONFIG_HOME/ga` (fallback: `~/.config/ga`) |
+| FR-017 | User config loaded from `~/.config/ga/config.yml`: `base_url`, `api_key`, `model` |
+| FR-018 | Hook system: `.ga/hooks/pre-commit` executable, JSON via stdin |
+| FR-019 | Hook exit 0 = proceed; non-zero = block commit (exit code 2) |
+| FR-020 | Validate staged changes exist before LLM call |
+| FR-021 | Validate API key presence when using custom endpoint; clear error if missing |
 
-| FR-021 | `ga init` subcommand: analyze git history + dirs → LLM → write `.ga/config.yml` |
-| FR-022 | `ga init` reads up to N recent commits via `git log` to extract scope patterns |
-| FR-023 | `ga init` scans top-level directory names as supplementary scope hints |
-| FR-024 | `ga init` calls LLM, receives `{scopes, reasoning}`, writes `.ga/config.yml` |
-| FR-025 | `ga init` creates `.ga/hooks/pre-commit` as an empty executable placeholder (`exit 0`) |
-| FR-026 | `ga init --hook <name>` installs a named built-in hook instead of the empty placeholder |
-| FR-027 | Built-in hook `conventional`: validates title format, body, Co-Authored-By footer |
-| FR-028 | Built-in hooks are embedded in the `ga` binary (`//go:embed`); no runtime files needed |
-| FR-029 | `ga init --force` overwrites existing `.ga/config.yml` and hook; without flag, exits 1 if either exists |
-| FR-030 | `ga init --max-commits` flag (default: 200) controls history depth |
-| FR-031 | `ga init` stdout = generated `.ga/config.yml` content; stderr = progress/errors |
+| FR-022 | `ga init` subcommand: analyze git history + dirs → LLM → write `.ga/project.yml` |
+| FR-023 | `ga init` reads up to N recent commits via `git log` to extract scope patterns |
+| FR-024 | `ga init` scans top-level directory names as supplementary scope hints |
+| FR-025 | `ga init` calls LLM, receives `{scopes, reasoning}`, writes `.ga/project.yml` |
+| FR-026 | `ga init` creates `.ga/hooks/pre-commit` as an empty executable placeholder (`exit 0`) |
+| FR-027 | `ga init --hook <name>` installs a named built-in hook instead of the empty placeholder |
+| FR-028 | Built-in hook `conventional`: validates title format, body, Co-Authored-By footer |
+| FR-029 | Built-in hooks are embedded in the `ga` binary (`//go:embed`); no runtime files needed |
+| FR-030 | `ga init --force` overwrites existing `.ga/project.yml` and hook; without flag, exits 1 if either exists |
+| FR-031 | `ga init --max-commits` flag (default: 200) controls history depth |
+| FR-032 | `ga init` stdout = generated `.ga/project.yml` content; stderr = progress/errors |
 
 ### Should Have (V1)
 
@@ -76,10 +77,9 @@
 | NFR-007 | Hook execution timeout: 30 seconds |
 | NFR-008 | Hook is optional: if `.ga/hooks/pre-commit` does not exist, proceed without error |
 | NFR-009 | Hook stderr output on **success** (exit 0) is discarded; only captured on failure |
-| NFR-010 | `.ga/config.yml` is optional: if absent, no scopes constraint applied |
+| NFR-010 | `.ga/project.yml` is optional: if absent, no scopes constraint applied |
 | NFR-011 | `git config ga.*` read via subprocess (`git config --get`); failure is silent |
-| NFR-012 | Default provider is `cloudflare`; use `--provider openai` for OpenAI API |
-| NFR-013 | Cloudflare provider requires `--account-id` or `GA_ACCOUNT_ID` environment variable |
+| NFR-012 | Default uses built-in free endpoint; custom endpoints opt-in via `--base-url`/config |
 
 ---
 
@@ -103,14 +103,13 @@ Distinguishes policy violations from system errors. CI/CD pipelines can handle t
 ### Why stdout = outline only?
 The tool is designed for machine consumption. Upstream agents parse stdout directly. All human-readable output goes to stderr.
 
-### Why Cloudflare as Default Provider?
-The default provider is Cloudflare Workers AI because:
-1. **Free tier**: 10,000 Neurons/day (sufficient for personal/hobby projects)
-2. **No credit card required**: Unlike OpenAI, no billing setup needed
-3. **OpenAI-compatible API**: Minimal code changes if switching providers later
-4. **Good enough for commit messages**: The `@cf/openai/gpt-oss-20b` model handles code understanding well
-
-Users who need higher volume can switch to `--provider openai` or `--provider azure`.
+### Why Zero-Config Default with Universal OpenAI-Compatible Override?
+The built-in free endpoint is used by default so first run requires no setup:
+1. **Zero onboarding friction**: `ga commit` works without API key or account setup
+2. **Predictable quickstart**: teams can adopt the tool without cloud account dependency
+3. **Clean upgrade path**: advanced users set `base_url`/`api_key`/`model` to point to any OpenAI-compatible endpoint (OpenAI, Cloudflare Workers AI, Ollama, LM Studio, Azure OpenAI, etc.)
+4. **Operational clarity**: user-owned credentials stay in `~/.config/ga/config.yml` only when needed
+5. **Maximum compatibility**: any OpenAI-compatible API works — no provider-specific code paths
 
 ---
 
@@ -131,7 +130,7 @@ infrastructure/fs: list top-level directories             → dir hints
 infrastructure/openai: build prompt (subjects + dirs) → call API
      │              ↓ JSON: {scopes, reasoning}
      ▼
-infrastructure/fs: write .ga/config.yml
+infrastructure/fs: write .ga/project.yml
      │
      ▼
 infrastructure/hooks: resolve hook template
@@ -151,7 +150,7 @@ cmd: print config content to stdout, exit 0
 ga commit [flags]
      │
      ▼
-infrastructure/config: flags → GA_* env → .ga/config.yml → git config ga.* → defaults
+infrastructure/config: flags → ~/.config/ga/config.yml → .ga/project.yml → defaults
      │
      ▼
 application/CommitService.Execute()
@@ -223,14 +222,15 @@ ga-cli/
 │   │   ├── executor.go              # .ga/hooks/ runner + path validation
 │   │   └── discovery.go             # Hook file existence checks
 │   ├── fs/
-│   │   ├── config_writer.go         # Write .ga/config.yml
+│   │   ├── config_writer.go         # Write .ga/project.yml
 │   │   ├── hook_installer.go        # Write .ga/hooks/pre-commit (chmod +x)
 │   │   └── dir_scanner.go           # List top-level directories
 │   ├── hooks/
 │   │   └── registry.go              # embed.FS loader; maps name → template bytes
 │   └── config/
-│       ├── resolver.go              # flag → env → project → gitconfig → default
-│       ├── project.go               # .ga/config.yml reader
+│       ├── resolver.go              # flag → ~/.config/ga/config.yml → default
+│       ├── user.go                  # ~/.config/ga/config.yml reader
+│       ├── project.go               # .ga/project.yml reader
 │       └── gitconfig.go             # git config ga.* reader
 └── pkg/
     ├── errors/
@@ -242,48 +242,46 @@ ga-cli/
 
 ### Config Resolution
 
-Four-layer resolution, highest priority first:
+Three-layer resolution, highest priority first:
 
 ```
-CLI flag > GA_* env var > .ga/config.yml (project) > git config ga.* (global) > default
+CLI flag > `~/.config/ga/config.yml` (user) > `.ga/project.yml` (project) > built-in default
 ```
 
-**Provider Configuration**:
+**Built-in Defaults**:
 
-| Provider | Default Base URL | Default Model |
-|----------|-----------------|---------------|
-| `cloudflare` | `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1` | `@cf/openai/gpt-oss-20b` |
-| `openai` | `https://api.openai.com/v1` | `gpt-4o` |
+| Field | Default Value |
+|-------|---------------|
+| `base_url` | `<project-maintained free endpoint>` |
+| `api_key` | `""` (not required for free endpoint) |
+| `model` | `<project default free model>` |
 
-When using `cloudflare` provider, `account_id` must be provided via `--account-id` flag or `GA_ACCOUNT_ID` env.
+Users override these to point to **any** OpenAI-compatible endpoint:
 
 ```
-CommitInput.APIKey     = --api-key   → GA_API_KEY   → git config ga.apikey   → error (required)
-CommitInput.BaseURL    = --base-url  → GA_BASE_URL  → git config ga.baseurl  → (cloudflare default)
-CommitInput.Model      = --model     → GA_MODEL     → "@cf/openai/gpt-oss-20b"
-CommitInput.Provider   = --provider  → GA_PROVIDER  → "cloudflare"
-CommitInput.AccountID  = --account-id → GA_ACCOUNT_ID → (cloudflare default)
-CommitInput.Intent    = --intent    → GA_INTENT    → ""
-CommitInput.CoAuthor  = --co-author → GA_CO_AUTHOR → ""
-CommitInput.MaxLines  = --max-diff-lines → GA_MAX_DIFF_LINES → 500
-CommitInput.DryRun    = --dry-run (boolean)
-CommitInput.Verbose   = --verbose   → GA_VERBOSE   → false
-CommitInput.Scopes    =             →              → .ga/config.yml scopes  → [] (any scope allowed)
+CommitInput.APIKey     = --api-key        → config.yml api_key    → "" (free: no key needed)
+CommitInput.BaseURL    = --base-url       → config.yml base_url   → <free endpoint>
+CommitInput.Model      = --model          → config.yml model      → <free default model>
+CommitInput.Intent     = --intent         → ""
+CommitInput.CoAuthor   = --co-author      → ""
+CommitInput.MaxLines   = --max-diff-lines → 500
+CommitInput.DryRun     = --dry-run (boolean)
+CommitInput.Verbose    = --verbose        → false
+CommitInput.Scopes     =                  → .ga/project.yml scopes → [] (any scope allowed)
 ```
 
 **Notes**:
-- Default provider is `cloudflare`, which uses Workers AI with OpenAI-compatible endpoints
-- `model` and `co-author` are **not** stored in gitconfig — they are per-commit decisions (flag or env)
-- `api-key` and `base-url` may be stored in `~/.gitconfig [ga]` to avoid repeating env vars across machines
-- `scopes` only comes from `.ga/config.yml` (team config, version-controlled)
-- Cloudflare provider requires `account-id` — must be provided via flag or `GA_ACCOUNT_ID` env
+- Default uses built-in free endpoint for zero-config onboarding
+- User credentials/settings live in `~/.config/ga/config.yml` (XDG: `$XDG_CONFIG_HOME/ga/config.yml`)
+- `scopes` only comes from `.ga/project.yml` (team config, version-controlled)
+- Any OpenAI-compatible endpoint works: OpenAI, Cloudflare Workers AI, Ollama, LM Studio, Azure OpenAI, etc.
 
-### Project Config: `.ga/config.yml`
+### Project Config: `.ga/project.yml`
 
 Stored in the **repository root**, committed alongside code. Defines team-shared policy:
 
 ```yaml
-# .ga/config.yml
+# .ga/project.yml
 scopes:
   - api
   - core
@@ -295,32 +293,33 @@ When `scopes` is set, ga-cli:
 1. Injects the list into the LLM prompt → LLM generates only valid scopes
 2. Passes `scopes` in hook JSON payload → hooks can validate without reading files
 
-### Global gitconfig: `~/.gitconfig [ga]`
+### User Config Home: `~/.config/ga/`
 
-Personal machine defaults, **not committed**. Only for stable personal preferences:
+Personal machine defaults, **not committed**.
 
-**Cloudflare (default)**:
-```ini
-# ~/.gitconfig
-[ga]
-    apikey = YOUR_CLOUDFLARE_API_TOKEN
-    accountid = YOUR_CLOUDFLARE_ACCOUNT_ID
+Use `$XDG_CONFIG_HOME/ga` when set; fallback to `~/.config/ga`.
+
+**`~/.config/ga/config.yml` (optional):**
+```yaml
+# Point to any OpenAI-compatible endpoint
+base_url: https://api.openai.com/v1
+api_key: sk-...
+model: gpt-4o
 ```
 
-**OpenAI**:
-```ini
-# ~/.gitconfig
-[ga]
-    apikey = sk-...
-    baseurl = https://api.openai.com/v1
-    provider = openai
+**Examples for other providers:**
+```yaml
+# Cloudflare Workers AI
+base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
+api_key: YOUR_CLOUDFLARE_API_TOKEN
+model: "@cf/meta/llama-3.1-8b-instruct"
 ```
 
-Set via:
-- `git config --global ga.apikey "YOUR_CLOUDFLARE_API_TOKEN"`
-- `git config --global ga.accountid "YOUR_CLOUDFLARE_ACCOUNT_ID"`
-
-`model`, `co-author`, and `provider` are intentionally excluded — they vary per commit.
+```yaml
+# Local Ollama
+base_url: http://localhost:11434/v1
+model: llama3
+```
 
 ### Hook JSON Schema (with config)
 
@@ -398,7 +397,7 @@ The `commit_message` field contains the **fully assembled** commit message (titl
 }
 ```
 
-`scopes` is written to `.ga/config.yml`. `reasoning` is printed to stderr for transparency.
+`scopes` is written to `.ga/project.yml`. `reasoning` is printed to stderr for transparency.
 
 `commit_message` = title only (type(scope): description, ≤50 chars, lowercase, imperative, no period).
 `body` = bullet points (`- Verb ...`) + blank line + explanation paragraph (the "why").
@@ -452,12 +451,12 @@ No other external dependencies in V1.
 
 ## V1 Success Criteria
 
-1. `ga init` analyzes git history + dirs, generates `.ga/config.yml` with scopes
+1. `ga init` analyzes git history + dirs, generates `.ga/project.yml` with scopes
 2. `ga init` on existing config without `--force` exits 1 with clear error
 3. `ga commit` generates and applies a conventional commit message from staged diff
 4. `ga commit --intent "fix auth bug"` incorporates intent into LLM prompt
 5. `ga commit --dry-run` outputs outline without committing
-6. `.ga/config.yml` scopes injected into LLM prompt and hook payload when present
+6. `.ga/project.yml` scopes injected into LLM prompt and hook payload when present
 7. Pre-commit hook in `.ga/hooks/pre-commit` is executed with correct JSON payload (incl. `config`)
 8. Hook exit non-zero → exit code 2, no commit
 9. Missing API key → clear error + exit 1

@@ -25,7 +25,7 @@ Write end-to-end integration tests that verify the full CLI workflow with real g
 - Create temp git repo with commit history
 - Start mock LLM server
 - Run `ga init`
-- Verify .ga/config.yml created
+- Verify .ga/project.yml created
 - Verify .ga/hooks/pre-commit created and executable
 
 ### 3. Hook blocking integration

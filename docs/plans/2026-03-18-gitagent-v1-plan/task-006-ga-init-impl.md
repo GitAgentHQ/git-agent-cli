@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement the `ga init` command that generates .ga/config.yml from git history and top-level directories using an LLM.
+Implement the `ga init` command that generates .ga/project.yml from git history and top-level directories using an LLM.
 
 ## Execution Context
 
@@ -26,7 +26,7 @@ Implement the `ga init` command that generates .ga/config.yml from git history a
   3. Scan top-level directories
   4. Build LLM prompt with subjects + dirs
   5. Call LLM, receive scopes + reasoning
-  6. Write .ga/config.yml
+  6. Write .ga/project.yml
   7. Install hook (or empty placeholder)
 
 ### 3. infrastructure/openai/prompt_builder.go
@@ -36,7 +36,7 @@ Implement the `ga init` command that generates .ga/config.yml from git history a
   - Request for scopes array
 
 ### 4. infrastructure/fs/config_writer.go
-- Write .ga/config.yml with scopes list
+- Write .ga/project.yml with scopes list
 
 ### 5. infrastructure/fs/hook_installer.go
 - Create .ga/hooks/pre-commit

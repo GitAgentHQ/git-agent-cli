@@ -17,7 +17,7 @@ Write tests for the core `ga commit` flow that generates commit messages from st
 ```gherkin
 Scenario: Generate and commit from staged changes
   Given I have staged changes in the repository
-  And GA_API_KEY is set to a valid key
+  And no ~/.config/ga/config.yml exists (using built-in free endpoint)
   When I run `ga commit`
   Then the staged diff is extracted via `git diff --staged`
   And the diff is sent to the LLM with a conventional commit prompt
@@ -28,8 +28,8 @@ Scenario: Generate and commit from staged changes
   And the outline is printed to stdout
   And exit code is 0
 
-Scenario: Commit with scopes from .ga/config.yml
-  Given .ga/config.yml exists with scopes [api, core, auth]
+Scenario: Commit with scopes from .ga/project.yml
+  Given .ga/project.yml exists with scopes [api, core, auth]
   And I have staged changes in src/api/handler.go
   When I run `ga commit`
   Then the LLM prompt includes "Valid scopes: api, core, auth"

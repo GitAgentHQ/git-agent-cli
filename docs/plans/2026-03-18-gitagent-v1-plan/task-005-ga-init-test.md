@@ -4,7 +4,7 @@
 
 ## Description
 
-Write tests for the `ga init` command that generates .ga/config.yml from git history and top-level directories using an LLM.
+Write tests for the `ga init` command that generates .ga/project.yml from git history and top-level directories using an LLM.
 
 ## Execution Context
 
@@ -17,23 +17,23 @@ Write tests for the `ga init` command that generates .ga/config.yml from git his
 ```gherkin
 Scenario: Init with default empty hook
   Given the repository has 50+ commits with conventional commit subjects
-  And GA_API_KEY is set
-  And .ga/config.yml does not exist
+  
+  And .ga/project.yml does not exist
   When I run `ga init`
   Then git log subjects (up to 200) are read
   And top-level directories are scanned
   And the LLM returns {"scopes": ["api", "core", "auth"], "reasoning": "..."}
-  And .ga/config.yml is written with the scopes list
+  And .ga/project.yml is written with the scopes list
   And .ga/hooks/pre-commit is created as an empty executable placeholder (exit 0)
-  And stdout contains the generated .ga/config.yml content
+  And stdout contains the generated .ga/project.yml content
   And stderr contains the LLM reasoning
   And exit code is 0
 
 Scenario: Init with built-in conventional hook
-  Given .ga/config.yml does not exist
-  And GA_API_KEY is set
+  Given .ga/project.yml does not exist
+  
   When I run `ga init --hook conventional`
-  Then .ga/config.yml is written
+  Then .ga/project.yml is written
   And .ga/hooks/pre-commit is installed from the embedded conventional template
   And .ga/hooks/pre-commit is executable (chmod +x)
   And stderr prints "installed hook: conventional"
@@ -47,11 +47,11 @@ Scenario: Unknown hook name
 
 Scenario: Init on fresh repository with no commit history
   Given the repository has 0 commits
-  And GA_API_KEY is set
+  
   When I run `ga init`
   Then only top-level directories are used as hints
   And the LLM generates scopes from directory names
-  And .ga/config.yml is written
+  And .ga/project.yml is written
   And exit code is 0
 
 Scenario: Custom max-commits depth
@@ -61,9 +61,9 @@ Scenario: Custom max-commits depth
   And exit code is 0
 
 Scenario: Config already exists without --force
-  Given .ga/config.yml already exists
+  Given .ga/project.yml already exists
   When I run `ga init`
-  Then stderr prints "error: .ga/config.yml already exists (use --force to overwrite)"
+  Then stderr prints "error: .ga/project.yml already exists (use --force to overwrite)"
   And the existing file is not modified
   And exit code is 1
 
@@ -74,7 +74,7 @@ Scenario: Hook already exists without --force
   And exit code is 1
 
 Scenario: Config and hook overwritten with --force
-  Given .ga/config.yml and .ga/hooks/pre-commit already exist
+  Given .ga/project.yml and .ga/hooks/pre-commit already exist
   When I run `ga init --force`
   Then both files are overwritten
   And exit code is 0
@@ -85,10 +85,10 @@ Scenario: Not in a git repository
   Then stderr prints "error: not a git repository"
   And exit code is 1
 
-Scenario: Missing API key
-  Given no GA_API_KEY is set and no --api-key flag
+Scenario: Missing API key with custom endpoint
+  Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
   When I run `ga init`
-  Then stderr prints "error: API key required (set GA_API_KEY or use --api-key)"
+  Then stderr prints "error: api_key required when using custom base_url"
   And exit code is 1
 ```
 

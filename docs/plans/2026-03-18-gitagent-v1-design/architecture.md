@@ -84,7 +84,7 @@ type DiffTruncator interface {
 #### `domain/project/`
 
 ```go
-// ProjectConfig is the value object written to .ga/config.yml
+// ProjectConfig is the value object written to .ga/project.yml
 type ProjectConfig struct {
     Scopes    []string `yaml:"scopes"`
     Reasoning string   `yaml:"-"` // LLM explanation, printed to stderr only
@@ -153,7 +153,7 @@ func (s *InitService) Execute(ctx context.Context, input *InitInput) (*InitResul
     })
     // cfg = ProjectConfig{Scopes: [...], Reasoning: "..."}
 
-    // 4. Write .ga/config.yml (respects Force flag)
+    // 4. Write .ga/project.yml (respects Force flag)
     err = s.writer.WriteConfig(ctx, cfg, input.Force)
 
     // 5. Resolve and install hook template
@@ -421,44 +421,50 @@ func (e *Executor) Execute(ctx context.Context, hookName string, input hook.Hook
 
 #### `infrastructure/config/`
 
-Four-layer resolver: flag → env → `.ga/config.yml` → `git config ga.*` → default.
+Three-layer resolver: flag → `~/.config/ga/config.yml` → `.ga/project.yml` → default.
 
 ```go
-// resolver.go: flag → env → gitconfig → default (for scalar values)
+// resolver.go: flag → user config file → default (for scalar values)
 type Resolver struct {
     flags      *pflag.FlagSet
-    projectCfg *ProjectConfig // loaded from .ga/config.yml
+    projectCfg *ProjectConfig // loaded from .ga/project.yml
+    userCfg    *UserConfig    // loaded from ~/.config/ga/config.yml
 }
 
-func (r *Resolver) GetString(flagName, envName, gitKey, defaultVal string) string {
+func (r *Resolver) GetString(flagName, userValue, defaultVal string) string {
     if val, _ := r.flags.GetString(flagName); val != "" {
         return val
     }
-    if val := os.Getenv(envName); val != "" {
-        return val
-    }
-    if val := readGitConfig(gitKey); val != "" { // git config --get ga.<key>
-        return val
+    if userValue != "" {
+        return userValue
     }
     return defaultVal
 }
 
-// gitconfig.go: reads personal machine defaults via git subprocess
-func readGitConfig(key string) string {
-    out, err := exec.Command("git", "config", "--get", key).Output()
-    if err != nil {
-        return "" // missing key is not an error
-    }
-    return strings.TrimSpace(string(out))
+// user.go: reads ~/.config/ga/config.yml (personal, not committed)
+type UserConfig struct {
+    BaseURL string `yaml:"base_url"`
+    APIKey  string `yaml:"api_key"`
+    Model   string `yaml:"model"`
 }
 
-// project.go: reads .ga/config.yml (team config, version-controlled)
+func LoadUserConfig() (*UserConfig, error) {
+    path := filepath.Join(ConfigHome(), "config.yml")
+    data, err := os.ReadFile(path)
+    if os.IsNotExist(err) {
+        return &UserConfig{}, nil // optional file
+    }
+    var cfg UserConfig
+    return &cfg, yaml.Unmarshal(data, &cfg)
+}
+
+// project.go: reads .ga/project.yml (team config, version-controlled)
 type ProjectConfig struct {
     Scopes []string `yaml:"scopes"`
 }
 
 func LoadProjectConfig() (*ProjectConfig, error) {
-    data, err := os.ReadFile(".ga/config.yml")
+    data, err := os.ReadFile(".ga/project.yml")
     if os.IsNotExist(err) {
         return &ProjectConfig{}, nil // optional file
     }
@@ -467,7 +473,20 @@ func LoadProjectConfig() (*ProjectConfig, error) {
 }
 ```
 
-`model` and `co-author` are **not** read from gitconfig — they are per-commit and must be supplied via flag or env.
+`model` and `co-author` remain per-commit decisions, but user defaults come from `~/.config/ga/config.yml`.
+
+User config path follows XDG:
+
+```go
+// config_home.go
+func ConfigHome() string {
+    if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+        return filepath.Join(xdg, "ga")
+    }
+    home, _ := os.UserHomeDir()
+    return filepath.Join(home, ".config", "ga")
+}
+```
 
 ---
 
@@ -545,7 +564,7 @@ require (
 )
 ```
 
-`gopkg.in/yaml.v3` is the only addition — used solely for `.ga/config.yml` parsing.
+`gopkg.in/yaml.v3` is the only addition — used for `.ga/project.yml` and `~/.config/ga/config.yml` parsing.
 
 ---
 

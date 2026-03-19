@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Load `superpowers:executing-plans` skill using the Skill tool to implement this plan task-by-task.
 
-**Goal:** Build `ga` CLI - an AI-first Git CLI tool for automated commit message generation using OpenAI-compatible LLMs with hook-based policy enforcement.
+**Goal:** Build `ga` CLI - an AI-first Git CLI tool for automated commit message generation with zero-config default (built-in free endpoint), optional user-owned OpenAI-compatible endpoints, and hook-based policy enforcement.
 
 **Architecture:** Go-based CLI using cobra for command structure, Clean Architecture with domain/application/infrastructure layers, embedded hook templates via go:embed.
 
@@ -27,12 +27,12 @@ tasks:
     type: "impl"
     depends-on: ["001"]
   - id: "003"
-    subject: "Config resolver test"
+    subject: "Provider config resolver test"
     slug: "config-resolver-test"
     type: "test"
     depends-on: ["002"]
   - id: "004"
-    subject: "Config resolver implementation"
+    subject: "Provider config resolver implementation"
     slug: "config-resolver-impl"
     type: "impl"
     depends-on: ["003"]
@@ -126,7 +126,7 @@ All BDD scenarios from the design are covered by these tasks:
 | ga init - Error Scenarios | Config exists, Hook exists, --force, Not git repo, Missing API key | 005, 006, 015 |
 | ga commit - Happy Path | Generate commit, Scopes from config, Co-Author-By, User intent, Dry-run | 007, 008 |
 | ga commit - Diff Filtering | Lock files excluded, Binary excluded, Truncation | 009, 010 |
-| ga commit - Config Resolution | API key precedence, Custom model, Custom base URL | 003, 004 |
+| ga commit - Config Resolution | Flag precedence, XDG user config file, zero-config free endpoint | 003, 004 |
 | ga commit - Error Scenarios | No staged changes, Missing API key, LLM errors | 015 |
 | Hook System | Hook passes, Hook blocks, No hook, Not executable | 011, 012 |
 | Verbose Mode | Verbose output, Truncation info | 013, 014 |

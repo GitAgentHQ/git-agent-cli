@@ -40,11 +40,11 @@ Scenario: No staged changes
   And `git commit` is NOT executed
   And exit code is 1
 
-Scenario: Missing API key
-  Given no GA_API_KEY env var is set
+Scenario: Missing API key with custom endpoint
+  Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
   And no --api-key flag is provided
   When I run `ga commit`
-  Then stderr prints "error: API key required (set GA_API_KEY or use --api-key)"
+  Then stderr prints "error: api_key required when using custom base_url"
   And exit code is 1
 
 Scenario: LLM API returns HTTP error

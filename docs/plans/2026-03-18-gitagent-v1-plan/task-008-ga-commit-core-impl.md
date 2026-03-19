@@ -15,7 +15,7 @@ Implement the core `ga commit` flow including LLM integration, message assembly,
 ## Implementation Components
 
 ### 1. cmd/commit.go
-- Flag definitions: --api-key, --model, --base-url, --provider, --account-id, --intent, --co-author, --max-diff-lines, --dry-run, --verbose
+- Flag definitions: --api-key, --model, --base-url, --intent, --co-author, --max-diff-lines, --dry-run, --verbose
 - Parse flags into CommitInput DTO
 - Call CommitService.Execute()
 
@@ -69,7 +69,7 @@ Implement the core `ga commit` flow including LLM integration, message assembly,
 
 ### Step 3: Implement OpenAI client wrapper
 - Wrap go-openai client
-- Handle cloudflare vs openai providers
+- Use OpenAI-compatible client for all endpoints
 
 ### Step 4: Implement prompt builder
 - Build commit prompt with scopes, intent

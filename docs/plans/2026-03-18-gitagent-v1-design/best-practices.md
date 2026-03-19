@@ -120,16 +120,16 @@ fmt.Println("Error: " + err.Error())
 
 | Flag | Env Var | Default |
 |------|---------|---------|
-| `--api-key` | `GA_API_KEY` | (required) |
-| `--model` | `GA_MODEL` | `gpt-4o` |
-| `--base-url` | `GA_BASE_URL` | OpenAI default |
+| `--api-key` | — | `""` (not required for free endpoint) |
+| `--model` | — | `<free default model>` |
+| `--base-url` | — | `<free endpoint>` |
 | `--co-author` | `GA_CO_AUTHOR` | `""` |
 | `--max-diff-lines` | `GA_MAX_DIFF_LINES` | `500` |
-| `--intent` / `-i` | `GA_INTENT` | `""` |
+| `--intent` / `-i` | — | `""` |
 | `--dry-run` | — | `false` |
-| `--verbose` | `GA_VERBOSE` | `false` |
+| `--verbose` | — | `false` |
 
-Prefix all env vars with `GA_` to avoid namespace conflicts.
+Flags override `~/.config/ga/config.yml` values. Env vars are only used for `GA_CO_AUTHOR` and `GA_MAX_DIFF_LINES`.
 
 ### Cobra Wiring Pattern
 
@@ -145,8 +145,8 @@ func NewCommitCmd(svc *application.CommitService) *cobra.Command {
         },
     }
 
-    cmd.Flags().StringVarP(&flags.Intent, "intent", "i", "", "Context hint for LLM (env: GA_INTENT)")
-    cmd.Flags().StringVar(&flags.APIKey, "api-key", "", "OpenAI API key (env: GA_API_KEY)")
+    cmd.Flags().StringVarP(&flags.Intent, "intent", "i", "", "Context hint for LLM")
+    cmd.Flags().StringVar(&flags.APIKey, "api-key", "", "API key for custom endpoint")
     // ...
     return cmd
 }

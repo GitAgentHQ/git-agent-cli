@@ -16,7 +16,7 @@ Write tests for verbose debug output and stdout/stderr separation.
 
 ```gherkin
 Scenario: Verbose flag outputs debug info to stderr
-  Given I have staged changes and GA_API_KEY is set
+  Given I have staged changes
   When I run `ga commit --verbose`
   Then stderr prints "resolved model: gpt-4o"
   And stderr prints "resolved api-key: sk-1234...abcd" (masked)

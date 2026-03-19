@@ -1,10 +1,10 @@
-# Task 004: Config resolver implementation
+# Task 004: Provider config resolver implementation
 
 **depends-on**: task-003
 
 ## Description
 
-Implement the configuration resolution system that handles CLI flags, environment variables, .ga/config.yml, and git config with proper precedence.
+Implement the configuration resolution system that handles CLI flags, `~/.config/ga/config.yml` user config, and `.ga/project.yml` with proper precedence.
 
 ## Execution Context
 
@@ -16,48 +16,53 @@ Implement the configuration resolution system that handles CLI flags, environmen
 
 ### Config Resolution Order (highest to lowest)
 1. CLI flag
-2. GA_* environment variable
-3. .ga/config.yml (project)
-4. git config ga.* (global)
-5. Default value
+2. `~/.config/ga/config.yml` (or `$XDG_CONFIG_HOME/ga/config.yml`)
+3. `.ga/project.yml` (project)
+4. Built-in default (free endpoint)
 
 ### Fields to Resolve
-- APIKey (required): flag --api-key, env GA_API_KEY, git config ga.apikey
-- BaseURL: flag --base-url, env GA_BASE_URL, git config ga.baseurl, default (cloudflare)
-- Model: flag --model, env GA_MODEL, default @cf/openai/gpt-oss-20b
-- Provider: flag --provider, env GA_PROVIDER, default cloudflare
-- AccountID: flag --account-id, env GA_ACCOUNT_ID, required for cloudflare
-- Intent: flag --intent, env GA_INTENT
-- CoAuthor: flag --co-author, env GA_CO_AUTHOR
-- MaxLines: flag --max-diff-lines, env GA_MAX_DIFF_LINES, default 500
+- APIKey: flag --api-key, config.yml api_key, "" (free: not required)
+- BaseURL: flag --base-url, config.yml base_url, built-in free endpoint
+- Model: flag --model, config.yml model, built-in free model
+- Intent: flag --intent
+- CoAuthor: flag --co-author
+- MaxLines: flag --max-diff-lines, default 500
 - DryRun: flag --dry-run
-- Verbose: flag --verbose, env GA_VERBOSE
-- Scopes: from .ga/config.yml only
+- Verbose: flag --verbose
+- Scopes: from .ga/project.yml only
 
-### Provider Defaults
-- cloudflare: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1
-- openai: https://api.openai.com/v1
+### Built-in Defaults
+- base_url: project-maintained free endpoint
+- model: project default free model
+- api_key: "" (not required for free endpoint)
 
 ## Files to Modify/Create
 
 - Modify: `infrastructure/config/resolver.go` (implement)
-- Create: `infrastructure/config/gitconfig.go`
+- Create: `infrastructure/config/user.go`
+- Create: `infrastructure/config/config_home.go`
 - Create: `infrastructure/config/project.go`
 
 ## Steps
 
-### Step 1: Implement gitconfig reader
-- Use `git config --get` subprocess to read ga.* values
-- Return empty string if not set
+### Step 1: Implement config home resolver
+- Resolve config root via `$XDG_CONFIG_HOME/ga`, fallback to `~/.config/ga`
+- Create path helper for `config.yml`
 
-### Step 2: Implement project config reader
-- Read .ga/config.yml if exists
+### Step 2: Implement user config reader
+- Read `~/.config/ga/config.yml` if exists
+- Parse YAML for base_url, api_key, model
+- Return empty user config if file absent
+
+### Step 3: Implement project config reader
+- Read `.ga/project.yml` if exists
 - Parse YAML for scopes
 
-### Step 3: Implement resolver logic
-- Implement priority chain: flag > env > project > gitconfig > default
+### Step 4: Implement resolver logic
+- Implement priority chain: flag > user config file > built-in default
+- Validate: if custom base_url is set, require api_key
 
-### Step 4: Run tests
+### Step 5: Run tests
 - Verify all tests pass
 
 ## Verification Commands

@@ -5,7 +5,7 @@
 ```gherkin
 Feature: ga init - AI-powered scope detection and project config generation
   As a developer or Coding Agent
-  I want to generate .ga/config.yml from my repository's history
+  I want to generate .ga/project.yml from my repository's history
   So that ga commit uses accurate, project-specific scopes without manual configuration
 
   Background:
@@ -19,23 +19,21 @@ Feature: ga init - AI-powered scope detection and project config generation
 ```gherkin
   Scenario: Init with default empty hook
     Given the repository has 50+ commits with conventional commit subjects
-    And GA_API_KEY is set
-    And .ga/config.yml does not exist
+    And .ga/project.yml does not exist
     When I run `ga init`
     Then git log subjects (up to 200) are read
     And top-level directories are scanned
     And the LLM returns {"scopes": ["api", "core", "auth"], "reasoning": "..."}
-    And .ga/config.yml is written with the scopes list
+    And .ga/project.yml is written with the scopes list
     And .ga/hooks/pre-commit is created as an empty executable placeholder (exit 0)
-    And stdout contains the generated .ga/config.yml content
+    And stdout contains the generated .ga/project.yml content
     And stderr contains the LLM reasoning
     And exit code is 0
 
   Scenario: Init with built-in conventional hook
-    Given .ga/config.yml does not exist
-    And GA_API_KEY is set
+    Given .ga/project.yml does not exist
     When I run `ga init --hook conventional`
-    Then .ga/config.yml is written
+    Then .ga/project.yml is written
     And .ga/hooks/pre-commit is installed from the embedded conventional template
     And .ga/hooks/pre-commit is executable (chmod +x)
     And stderr prints "installed hook: conventional"
@@ -49,11 +47,10 @@ Feature: ga init - AI-powered scope detection and project config generation
 
   Scenario: Init on fresh repository with no commit history
     Given the repository has 0 commits
-    And GA_API_KEY is set
     When I run `ga init`
     Then only top-level directories are used as hints
     And the LLM generates scopes from directory names
-    And .ga/config.yml is written
+    And .ga/project.yml is written
     And exit code is 0
 
   Scenario: Custom max-commits depth
@@ -67,9 +64,9 @@ Feature: ga init - AI-powered scope detection and project config generation
 
 ```gherkin
   Scenario: Config already exists without --force
-    Given .ga/config.yml already exists
+    Given .ga/project.yml already exists
     When I run `ga init`
-    Then stderr prints "error: .ga/config.yml already exists (use --force to overwrite)"
+    Then stderr prints "error: .ga/project.yml already exists (use --force to overwrite)"
     And the existing file is not modified
     And exit code is 1
 
@@ -80,7 +77,7 @@ Feature: ga init - AI-powered scope detection and project config generation
     And exit code is 1
 
   Scenario: Config and hook overwritten with --force
-    Given .ga/config.yml and .ga/hooks/pre-commit already exist
+    Given .ga/project.yml and .ga/hooks/pre-commit already exist
     When I run `ga init --force`
     Then both files are overwritten
     And exit code is 0
@@ -91,10 +88,10 @@ Feature: ga init - AI-powered scope detection and project config generation
     Then stderr prints "error: not a git repository"
     And exit code is 1
 
-  Scenario: Missing API key
-    Given no GA_API_KEY is set and no --api-key flag
+  Scenario: Missing API key with custom endpoint
+    Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
     When I run `ga init`
-    Then stderr prints "error: API key required (set GA_API_KEY or use --api-key)"
+    Then stderr prints "error: api_key required when using custom base_url"
     And exit code is 1
 ```
 
@@ -119,12 +116,12 @@ Feature: ga commit - AI-powered semantic commit message generation
 ## Happy Path
 
 ```gherkin
-  Scenario: Generate and commit from staged changes
+  Scenario: Generate and commit from staged changes (zero-config)
     Given I have staged changes in the repository
-    And GA_API_KEY is set to a valid key
+    And no ~/.config/ga/config.yml exists (using built-in free endpoint)
     When I run `ga commit`
     Then the staged diff is extracted via `git diff --staged`
-    And the diff is sent to the LLM with a conventional commit prompt
+    And the diff is sent to the built-in free LLM endpoint
     And the LLM returns {"commit_message": "feat(core): ...", "body": "- ...\n\n...", "outline": "..."}
     And ga assembles the full commit message (title + blank line + body)
     And .ga/hooks/pre-commit (if present) receives the JSON payload and exits 0
@@ -132,8 +129,8 @@ Feature: ga commit - AI-powered semantic commit message generation
     And the outline is printed to stdout
     And exit code is 0
 
-  Scenario: Commit with scopes from .ga/config.yml
-    Given .ga/config.yml exists with scopes [api, core, auth]
+  Scenario: Commit with scopes from .ga/project.yml
+    Given .ga/project.yml exists with scopes [api, core, auth]
     And I have staged changes in src/api/handler.go
     When I run `ga commit`
     Then the LLM prompt includes "Valid scopes: api, core, auth"
@@ -215,17 +212,17 @@ Feature: ga commit - AI-powered semantic commit message generation
 ## Configuration Resolution
 
 ```gherkin
-  Scenario: API key from flag takes precedence over env var
-    Given GA_API_KEY is set to "env-key"
+  Scenario: API key from flag takes precedence over config file
+    Given ~/.config/ga/config.yml has api_key "file-key"
     When I run `ga commit --api-key "flag-key"`
     Then the LLM request uses "flag-key" as the API key
     And exit code is 0
 
-  Scenario: API key from env var when no flag provided
-    Given GA_API_KEY is set to "env-key"
+  Scenario: API key from config file when no flag provided
+    Given ~/.config/ga/config.yml has api_key "file-key"
     And no --api-key flag is provided
     When I run `ga commit`
-    Then the LLM request uses "env-key" as the API key
+    Then the LLM request uses "file-key" as the API key
     And exit code is 0
 
   Scenario: Custom model via flag
@@ -237,6 +234,14 @@ Feature: ga commit - AI-powered semantic commit message generation
     Given I have a local LLM endpoint at http://localhost:11434/v1
     When I run `ga commit --base-url "http://localhost:11434/v1"`
     Then the LLM API request is sent to http://localhost:11434/v1
+    And exit code is 0
+
+  Scenario: Zero-config uses built-in free endpoint
+    Given no ~/.config/ga/config.yml exists
+    And no --base-url or --api-key flags
+    When I run `ga commit`
+    Then the LLM request uses the built-in free endpoint
+    And no API key is required
     And exit code is 0
 ```
 
@@ -271,11 +276,11 @@ Feature: ga commit - AI-powered semantic commit message generation
     And `git commit` is NOT executed
     And exit code is 1
 
-  Scenario: Missing API key
-    Given no GA_API_KEY env var is set
+  Scenario: Missing API key with custom endpoint
+    Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
     And no --api-key flag is provided
     When I run `ga commit`
-    Then stderr prints "error: API key required (set GA_API_KEY or use --api-key)"
+    Then stderr prints "error: api_key required when using custom base_url"
     And exit code is 1
 
   Scenario: LLM API returns HTTP error
@@ -379,7 +384,7 @@ Feature: ga commit - AI-powered semantic commit message generation
 
 ```gherkin
   Scenario: Verbose flag outputs debug info to stderr
-    Given I have staged changes and GA_API_KEY is set
+    Given I have staged changes
     When I run `ga commit --verbose`
     Then stderr prints "resolved model: gpt-4o"
     And stderr prints "resolved api-key: sk-1234...abcd" (masked)
@@ -450,7 +455,7 @@ Feature: ga commit - AI-powered semantic commit message generation
 - `CommitService.Execute()` with mock LLM returning valid/invalid responses
 - `CommitService.Execute()` with mock hook returning pass/fail
 - `CommitService.Execute()` with empty diff
-- Config resolver: flag > env > default precedence
+- Config resolver: flag > config file > default precedence
 - Diff filter: lock file patterns, binary detection
 - Diff truncator: line count boundary, truncation note appended
 
