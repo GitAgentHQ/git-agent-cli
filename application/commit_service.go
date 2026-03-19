@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/fradser/ga-cli/domain/commit"
 	"github.com/fradser/ga-cli/domain/diff"
@@ -26,13 +27,15 @@ type CommitGitClient interface {
 }
 
 type CommitRequest struct {
-	Intent   string
-	CoAuthor string
-	HookPath string
-	DryRun   bool
-	All      bool
-	Config   *project.Config
-	MaxLines int
+	Intent    string
+	CoAuthor  string
+	HookPath  string
+	DryRun    bool
+	All       bool
+	Config    *project.Config
+	MaxLines  int
+	Verbose   bool
+	LogWriter io.Writer
 }
 
 type CommitService struct {
@@ -43,6 +46,12 @@ type CommitService struct {
 
 func NewCommitService(gen commit.CommitMessageGenerator, git CommitGitClient, hookExec hook.HookExecutor) *CommitService {
 	return &CommitService{gen: gen, git: git, hookExec: hookExec}
+}
+
+func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
+	if req.Verbose && req.LogWriter != nil {
+		fmt.Fprintf(req.LogWriter, format+"\n", args...)
+	}
 }
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
@@ -60,6 +69,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		return nil, fmt.Errorf("no staged changes")
 	}
 
+	s.vlog(req, "staged files: %v", staged.Files)
+	s.vlog(req, "diff lines: %d", staged.Lines)
+	s.vlog(req, "calling LLM...")
+
 	msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
 		Diff:   staged,
 		Intent: req.Intent,
@@ -68,6 +81,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	if err != nil {
 		return nil, fmt.Errorf("generate commit message: %w", err)
 	}
+	s.vlog(req, "LLM response received")
 
 	assembled := msg.Title
 	if msg.Body != "" {

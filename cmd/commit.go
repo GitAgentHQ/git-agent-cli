@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -55,14 +56,21 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		infraHook.NewShellHookExecutor(),
 	)
 
+	var logWriter io.Writer
+	if verbose {
+		logWriter = cmd.ErrOrStderr()
+	}
+
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
-		Intent:   intent,
-		CoAuthor: coAuthor,
-		HookPath: ".ga/hooks/pre-commit",
-		DryRun:   dryRun,
-		All:      all,
-		Config:   projCfg,
-		MaxLines: maxDiffLines,
+		Intent:    intent,
+		CoAuthor:  coAuthor,
+		HookPath:  ".ga/hooks/pre-commit",
+		DryRun:    dryRun,
+		All:       all,
+		Config:    projCfg,
+		MaxLines:  maxDiffLines,
+		Verbose:   verbose,
+		LogWriter: logWriter,
 	})
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
