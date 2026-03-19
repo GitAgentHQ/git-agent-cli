@@ -26,11 +26,12 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
-		if err := yaml.Unmarshal(data, &file); err != nil {
-			return nil, err
+		if err == nil {
+			// Silently ignore parse errors — treat as empty config.
+			_ = yaml.Unmarshal(data, &file)
 		}
 	}
 

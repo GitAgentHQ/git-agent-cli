@@ -86,8 +86,11 @@ func TestExecute_HookDoesNotExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for missing hook, got: %v", err)
 	}
-	if result != nil {
-		t.Errorf("expected nil result for missing hook, got: %+v", result)
+	if result == nil {
+		t.Fatal("expected non-nil result for missing hook")
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit code 0 for missing hook, got %d", result.ExitCode)
 	}
 }
 

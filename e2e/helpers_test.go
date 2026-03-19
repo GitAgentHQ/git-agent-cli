@@ -34,11 +34,21 @@ func buildBinary() (string, error) {
 	return bin, nil
 }
 
-// ga runs the ga binary with the given args and returns combined output and exit code.
+// ga runs the ga binary with the given args in the given directory, with no user config.
+// Returns combined output and exit code.
 func ga(t *testing.T, dir string, args ...string) (string, int) {
+	t.Helper()
+	return gaEnv(t, dir, nil, args...)
+}
+
+// gaEnv runs the ga binary with additional environment variables.
+func gaEnv(t *testing.T, dir string, env []string, args ...string) (string, int) {
 	t.Helper()
 	c := exec.Command(gaBin, args...)
 	c.Dir = dir
+	// Isolate from user config by default.
+	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	c.Env = append(c.Env, env...)
 	out, err := c.CombinedOutput()
 	code := 0
 	if err != nil {

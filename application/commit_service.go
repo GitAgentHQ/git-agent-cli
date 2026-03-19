@@ -13,6 +13,12 @@ import (
 
 var ErrHookBlocked = errors.New("hook blocked commit")
 
+// CommitResult holds the output of a successful Commit call.
+type CommitResult struct {
+	Outline string
+	DryRun  bool
+}
+
 type CommitGitClient interface {
 	StagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	Commit(ctx context.Context, message string) error
@@ -39,19 +45,19 @@ func NewCommitService(gen commit.CommitMessageGenerator, git CommitGitClient, ho
 	return &CommitService{gen: gen, git: git, hookExec: hookExec}
 }
 
-func (s *CommitService) Commit(ctx context.Context, req CommitRequest) error {
+func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
 	if req.All {
 		if err := s.git.AddAll(ctx); err != nil {
-			return fmt.Errorf("git add --all: %w", err)
+			return nil, fmt.Errorf("git add --all: %w", err)
 		}
 	}
 
 	staged, err := s.git.StagedDiff(ctx)
 	if err != nil {
-		return fmt.Errorf("staged diff: %w", err)
+		return nil, fmt.Errorf("staged diff: %w", err)
 	}
 	if len(staged.Files) == 0 {
-		return fmt.Errorf("no staged changes")
+		return nil, fmt.Errorf("no staged changes")
 	}
 
 	msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
@@ -60,7 +66,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) error {
 		Config: req.Config,
 	})
 	if err != nil {
-		return fmt.Errorf("generate commit message: %w", err)
+		return nil, fmt.Errorf("generate commit message: %w", err)
 	}
 
 	assembled := msg.Title
@@ -72,7 +78,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) error {
 	}
 
 	if req.HookPath != "" {
-		result, err := s.hookExec.Execute(ctx, req.HookPath, hook.HookInput{
+		hookResult, err := s.hookExec.Execute(ctx, req.HookPath, hook.HookInput{
 			Diff:          staged.Content,
 			CommitMessage: assembled,
 			Intent:        req.Intent,
@@ -80,16 +86,21 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) error {
 			Config:        *req.Config,
 		})
 		if err != nil {
-			return fmt.Errorf("hook execute: %w", err)
+			return nil, fmt.Errorf("hook execute: %w", err)
 		}
-		if result.ExitCode != 0 {
-			return ErrHookBlocked
+		if hookResult.ExitCode != 0 {
+			return nil, ErrHookBlocked
 		}
 	}
+
+	result := &CommitResult{Outline: msg.Outline, DryRun: req.DryRun}
 
 	if req.DryRun {
-		return nil
+		return result, nil
 	}
 
-	return s.git.Commit(ctx, assembled)
+	if err := s.git.Commit(ctx, assembled); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

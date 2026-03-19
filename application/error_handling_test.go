@@ -19,7 +19,7 @@ func TestCommitService_NoStagedChanges(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
-	err := svc.Commit(context.Background(), req)
+	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
 		t.Fatal("expected error for empty staged diff, got nil")
@@ -36,7 +36,7 @@ func TestCommitService_LLMError(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
-	err := svc.Commit(context.Background(), req)
+	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
 		t.Fatal("expected error from LLM failure, got nil")
@@ -56,7 +56,7 @@ func TestCommitService_GitCommitError(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
-	err := svc.Commit(context.Background(), req)
+	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
 		t.Fatal("expected error from git commit failure, got nil")

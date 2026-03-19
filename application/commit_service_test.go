@@ -80,7 +80,7 @@ func TestCommitService_GeneratesAndCommits(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
-	if err := svc.Commit(context.Background(), req); err != nil {
+	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestCommitService_DryRun(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{DryRun: true, Config: &project.Config{}}
-	if err := svc.Commit(context.Background(), req); err != nil {
+	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestCommitService_CoAuthor(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{CoAuthor: "Alice <alice@example.com>", Config: &project.Config{}}
-	if err := svc.Commit(context.Background(), req); err != nil {
+	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestCommitService_AllFlag(t *testing.T) {
 	svc := application.NewCommitService(gen, git, noopHook())
 
 	req := application.CommitRequest{All: true, Config: &project.Config{}}
-	if err := svc.Commit(context.Background(), req); err != nil {
+	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	svc := application.NewCommitService(gen, git, blockingHook)
 
 	req := application.CommitRequest{HookPath: "/some/hook", Config: &project.Config{}}
-	err := svc.Commit(context.Background(), req)
+	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
 		t.Fatal("expected error when hook blocks, got nil")
