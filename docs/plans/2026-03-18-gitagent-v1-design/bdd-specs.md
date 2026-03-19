@@ -429,10 +429,10 @@ Feature: ga commit - AI-powered semantic commit message generation
 ## Output Contract (stdout/stderr isolation)
 
 ```gherkin
-  Scenario: stdout contains only the outline on success
+  Scenario: stdout contains the AI-generated detailed report on success
     Given a successful `ga commit` run
-    Then stdout contains exactly the outline text and nothing else
-    And stdout does not contain the commit message
+    Then stdout contains exactly the AI-generated report (outline field) and nothing else
+    And the report includes the generated commit message and the list of submitted files
     And stdout does not contain debug info
 
   Scenario: All errors and warnings go to stderr

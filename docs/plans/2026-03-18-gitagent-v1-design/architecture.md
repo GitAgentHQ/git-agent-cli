@@ -176,6 +176,13 @@ type CommitService struct {
 }
 
 func (s *CommitService) Execute(ctx context.Context, input *CommitInput) (*CommitResult, error) {
+    // 0. Auto-stage all changes if requested
+    if input.AutoStage {
+        if err := s.git.AddAll(ctx); err != nil {
+            return nil, errors.New(errors.ExitError, "failed to stage files: "+err.Error())
+        }
+    }
+
     // 1. Read staged diff
     staged, err := s.git.DiffStaged(ctx)
     if staged.Raw == "" {
@@ -247,6 +254,15 @@ Implements domain interfaces. May import external packages.
 ```go
 // Thin wrapper around git CLI subprocess
 type Client struct{}
+
+func (c *Client) AddAll(ctx context.Context) error {
+    return exec.CommandContext(ctx, "git", "add", "-A").Run()
+}
+
+func (c *Client) Add(ctx context.Context, paths []string) error {
+    args := append([]string{"add"}, paths...)
+    return exec.CommandContext(ctx, "git", args...).Run()
+}
 
 func (c *Client) DiffStaged(ctx context.Context) (*diff.StagedDiff, error) {
     out, err := exec.CommandContext(ctx, "git", "diff", "--staged").Output()
@@ -584,7 +600,10 @@ Rules:
 - body: two sections separated by a blank line:
   1. Bullet points: "- Verb Object Detail" (imperative, ≤72 chars/line, 1-5 items)
   2. Explanation paragraph: 1-3 sentences explaining WHY, not just what
-- outline: numbered summary for machine consumption (1-3 items)
+- outline: A detailed markdown report intended for the user, containing:
+  1. The exact generated commit message (Title and Body).
+  2. The list of files that were submitted.
+  3. A numbered summary of the changes.
 - If intent is provided, use it to guide the commit type/subject
 ```
 

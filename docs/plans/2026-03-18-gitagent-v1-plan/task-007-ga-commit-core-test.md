@@ -61,6 +61,14 @@ Scenario: Dry-run generates message without committing
   And stdout contains the generated outline and message
   And the staging area is unchanged
   And exit code is 0
+
+Scenario: Auto-stage all changes before commit
+  Given I have modified and untracked files
+  And I have NO staged changes
+  When I run `ga commit -a` (or `--all`)
+  Then `git add -A` is executed first to stage all changes
+  And the commit is generated and executed successfully
+  And exit code is 0
 ```
 
 **Spec Source**: `../2026-03-18-gitagent-v1-design/bdd-specs.md` (Happy Path section)

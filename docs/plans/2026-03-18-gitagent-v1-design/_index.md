@@ -23,6 +23,7 @@
 | ID | Requirement |
 |----|-------------|
 | FR-001 | `ga commit` subcommand via `spf13/cobra` |
+| FR-001b| `ga add <pathspecs>` subcommand to stage files via `git add` |
 | FR-002 | Read staged diff via `git diff --staged` |
 | FR-003 | `--intent / -i` flag for LLM context hint |
 | FR-004 | Diff filtering (skip lock files, binaries) + line-based truncation |
@@ -35,6 +36,7 @@
 | FR-011 | `--base-url` flag (fallback: `~/.config/ga/config.yml`) |
 | FR-012 | `--co-author` flag (fallback: `GA_CO_AUTHOR`): appended as `Co-Authored-By:` footer |
 | FR-013 | `--dry-run` flag: generate message, skip commit |
+| FR-013b| `--all / -a` flag: automatically stage all changes (`git add -A`) before generating commit |
 | FR-014 | `--max-diff-lines` flag (fallback: `GA_MAX_DIFF_LINES`, default: 500) |
 | FR-015 | Zero-config default: no user credential required; uses project-maintained free endpoint |
 | FR-016 | User config home follows XDG: `$XDG_CONFIG_HOME/ga` (fallback: `~/.config/ga`) |
@@ -155,6 +157,8 @@ infrastructure/config: flags → ~/.config/ga/config.yml → .ga/project.yml →
      ▼
 application/CommitService.Execute()
      │
+     ├─[0]─► infrastructure/git: git add -A (if --all is set)
+     │              ↓
      ├─[1]─► infrastructure/git: git diff --staged
      │              ↓
      ├─[2]─► domain/diff: filter (lock files, binaries)
@@ -186,6 +190,7 @@ ga-cli/
 ├── cmd/
 │   ├── root.go                      # root command, global flags
 │   ├── commit.go                    # `ga commit` — flag parsing, I/O
+│   ├── add.go                       # `ga add` — wrapper around git add
 │   └── init.go                      # `ga init` — flag parsing, I/O
 ├── domain/
 │   ├── commit/
@@ -266,6 +271,7 @@ CommitInput.Intent     = --intent         → ""
 CommitInput.CoAuthor   = --co-author      → ""
 CommitInput.MaxLines   = --max-diff-lines → 500
 CommitInput.DryRun     = --dry-run (boolean)
+CommitInput.AutoStage  = --all / -a (boolean)
 CommitInput.Verbose    = --verbose        → false
 CommitInput.Scopes     =                  → .ga/project.yml scopes → [] (any scope allowed)
 ```
@@ -454,8 +460,10 @@ No other external dependencies in V1.
 1. `ga init` analyzes git history + dirs, generates `.ga/project.yml` with scopes
 2. `ga init` on existing config without `--force` exits 1 with clear error
 3. `ga commit` generates and applies a conventional commit message from staged diff
-4. `ga commit --intent "fix auth bug"` incorporates intent into LLM prompt
-5. `ga commit --dry-run` outputs outline without committing
+4. `ga commit -a` stages all modifications before generating the commit message
+5. `ga add <files>` successfully shells out to `git add`
+6. `ga commit --intent "fix auth bug"` incorporates intent into LLM prompt
+7. `ga commit --dry-run` outputs outline without committing
 6. `.ga/project.yml` scopes injected into LLM prompt and hook payload when present
 7. Pre-commit hook in `.ga/hooks/pre-commit` is executed with correct JSON payload (incl. `config`)
 8. Hook exit non-zero → exit code 2, no commit
