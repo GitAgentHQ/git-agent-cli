@@ -17,7 +17,6 @@ import (
 var validHooks = map[string]bool{
 	"empty":        true,
 	"conventional": true,
-	"commit-msg":   true,
 }
 
 var initCmd = &cobra.Command{
@@ -39,37 +38,39 @@ func runInit(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 
-	if _, err := os.Stat(configPath); err == nil && !force {
-		return fmt.Errorf("project.yml already exists at %s; use --force to overwrite", configPath)
+	_, statErr := os.Stat(configPath)
+	configExists := statErr == nil
+
+	// Write project config only on first init or when --force is set.
+	if !configExists || force {
+		providerCfg, _ := infraConfig.Resolve(infraConfig.ProviderConfig{}, userConfigPath())
+		if providerCfg != nil && providerCfg.APIKey != "" {
+			svc := application.NewInitService(
+				infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
+				infraGit.NewClient(),
+			)
+			if err := svc.Init(cmd.Context(), application.InitRequest{
+				ProjectYMLPath: configPath,
+				HookName:       hookName,
+				Force:          force,
+				MaxCommits:     maxCommits,
+			}); err != nil {
+				return err
+			}
+		} else {
+			// No API key — write minimal config with empty scopes.
+			if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+				return fmt.Errorf("creating config dir: %w", err)
+			}
+			if err := os.WriteFile(configPath, []byte("scopes: []\n"), 0644); err != nil {
+				return fmt.Errorf("writing project.yml: %w", err)
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "initialized ga in %s\n", filepath.Dir(configPath))
 	}
 
-	// Attempt LLM-based scope generation if API key is available.
-	providerCfg, _ := infraConfig.Resolve(infraConfig.ProviderConfig{}, userConfigPath())
-	if providerCfg != nil && providerCfg.APIKey != "" {
-		svc := application.NewInitService(
-			infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
-			infraGit.NewClient(),
-		)
-		if err := svc.Init(cmd.Context(), application.InitRequest{
-			ProjectYMLPath: configPath,
-			HookName:       hookName,
-			Force:          force,
-			MaxCommits:     maxCommits,
-		}); err != nil {
-			return err
-		}
-	} else {
-		// No API key — write minimal config with empty scopes.
-		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-			return fmt.Errorf("creating config dir: %w", err)
-		}
-		if err := os.WriteFile(configPath, []byte("scopes: []\n"), 0644); err != nil {
-			return fmt.Errorf("writing project.yml: %w", err)
-		}
-	}
-
-	// Install hook template.
-	hookPath := ".ga/hooks/pre-commit"
+	// Install hook template — always, independent of whether config was (re)written.
+	hookPath := filepath.Join(filepath.Dir(configPath), "hooks", "pre-commit")
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0755); err != nil {
 		return fmt.Errorf("creating hooks dir: %w", err)
 	}
@@ -80,10 +81,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := os.WriteFile(hookPath, hookContent, 0755); err != nil {
 		return fmt.Errorf("installing hook: %w", err)
 	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "initialized ga in %s\n", filepath.Dir(configPath))
 	if hookName != "" && hookName != "empty" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "installed hook: %s\n", hookName)
+		fmt.Fprintf(cmd.OutOrStdout(), "installed hook: %s\n", hookName)
 	}
 
 	return nil
@@ -91,7 +90,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 func init() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config")
-	initCmd.Flags().String("hook", "empty", "hook template to install (empty, conventional, commit-msg)")
+	initCmd.Flags().String("hook", "empty", "hook template to install (empty, conventional)")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze")
 	initCmd.Flags().String("config", "", "path to project.yml")
 	rootCmd.AddCommand(initCmd)

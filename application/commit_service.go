@@ -35,7 +35,8 @@ type CommitRequest struct {
 	Config    *project.Config
 	MaxLines  int
 	Verbose   bool
-	LogWriter io.Writer
+	LogWriter io.Writer // verbose-only output
+	OutWriter io.Writer // always-visible output (hook block context, retries)
 }
 
 type CommitService struct {
@@ -54,6 +55,14 @@ func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
 	}
 }
 
+func (s *CommitService) out(req CommitRequest, format string, args ...any) {
+	if req.OutWriter != nil {
+		fmt.Fprintf(req.OutWriter, format+"\n", args...)
+	}
+}
+
+const maxHookRetries = 3
+
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
 	if req.All {
 		if err := s.git.AddAll(ctx); err != nil {
@@ -71,50 +80,65 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 
 	s.vlog(req, "staged files: %v", staged.Files)
 	s.vlog(req, "diff lines: %d", staged.Lines)
-	s.vlog(req, "calling LLM...")
 
-	msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
-		Diff:   staged,
-		Intent: req.Intent,
-		Config: req.Config,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("generate commit message: %w", err)
-	}
-	s.vlog(req, "LLM response received")
+	var hookFeedback string
 
-	assembled := msg.Title
-	if msg.Body != "" {
-		assembled += "\n\n" + msg.Body
-	}
-	if req.CoAuthor != "" {
-		assembled += "\n\nCo-Authored-By: " + req.CoAuthor
-	}
+	for attempt := 1; attempt <= maxHookRetries; attempt++ {
+		s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
 
-	if req.HookPath != "" {
-		hookResult, err := s.hookExec.Execute(ctx, req.HookPath, hook.HookInput{
-			Diff:          staged.Content,
-			CommitMessage: assembled,
-			Intent:        req.Intent,
-			StagedFiles:   staged.Files,
-			Config:        *req.Config,
+		msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
+			Diff:         staged,
+			Intent:       req.Intent,
+			Config:       req.Config,
+			HookFeedback: hookFeedback,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("hook execute: %w", err)
+			return nil, fmt.Errorf("generate commit message: %w", err)
 		}
-		if hookResult.ExitCode != 0 {
-			return nil, ErrHookBlocked
+		s.vlog(req, "LLM response received")
+
+		assembled := msg.Title
+		if msg.Body != "" {
+			assembled += "\n\n" + msg.Body
 		}
-	}
+		if req.CoAuthor != "" {
+			assembled += "\n\nCo-Authored-By: " + req.CoAuthor
+		}
 
-	result := &CommitResult{Outline: msg.Outline, DryRun: req.DryRun}
+		if req.HookPath != "" {
+			hookResult, err := s.hookExec.Execute(ctx, req.HookPath, hook.HookInput{
+				Diff:          staged.Content,
+				CommitMessage: assembled,
+				Intent:        req.Intent,
+				StagedFiles:   staged.Files,
+				Config:        *req.Config,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("hook execute: %w", err)
+			}
+			if hookResult.ExitCode != 0 {
+				s.out(req, "hook blocked (attempt %d/%d)", attempt, maxHookRetries)
+				s.out(req, "commit message was:\n%s", assembled)
+				if hookResult.Stderr != "" {
+					s.out(req, "reason: %s", hookResult.Stderr)
+				}
+				hookFeedback = hookResult.Stderr
+				if attempt < maxHookRetries {
+					s.out(req, "retrying with hook feedback...")
+				}
+				continue
+			}
+		}
 
-	if req.DryRun {
+		result := &CommitResult{Outline: msg.Outline, DryRun: req.DryRun}
+		if req.DryRun {
+			return result, nil
+		}
+		if err := s.git.Commit(ctx, assembled); err != nil {
+			return nil, err
+		}
 		return result, nil
 	}
 
-	if err := s.git.Commit(ctx, assembled); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return nil, ErrHookBlocked
 }

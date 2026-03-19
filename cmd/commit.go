@@ -71,11 +71,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		MaxLines:  maxDiffLines,
 		Verbose:   verbose,
 		LogWriter: logWriter,
+		OutWriter: cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "error: commit blocked by pre-commit hook")
-			return gaErrors.NewExitCodeError(2, "hook blocked")
+			return gaErrors.NewExitCodeError(2, "error: commit blocked after retries")
 		}
 		return err
 	}

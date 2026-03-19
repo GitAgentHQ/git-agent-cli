@@ -10,12 +10,13 @@ import (
 )
 
 type LLMClient interface {
-	GenerateScopes(ctx context.Context, commits []string, dirs []string) ([]string, string, error)
+	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error)
 }
 
 type GitReader interface {
 	CommitSubjects(ctx context.Context, max int) ([]string, error)
 	TopLevelDirs(ctx context.Context) ([]string, error)
+	ProjectFiles(ctx context.Context) ([]string, error)
 	IsGitRepo(ctx context.Context) bool
 }
 
@@ -30,7 +31,6 @@ type InitRequest struct {
 var knownHooks = map[string]bool{
 	"empty":        true,
 	"conventional": true,
-	"commit-msg":   true,
 }
 
 type InitService struct {
@@ -65,7 +65,12 @@ func (s *InitService) Init(ctx context.Context, req InitRequest) error {
 		return fmt.Errorf("reading dirs: %w", err)
 	}
 
-	scopes, _, err := s.llm.GenerateScopes(ctx, commits, dirs)
+	files, err := s.git.ProjectFiles(ctx)
+	if err != nil {
+		return fmt.Errorf("reading project files: %w", err)
+	}
+
+	scopes, _, err := s.llm.GenerateScopes(ctx, commits, dirs, files)
 	if err != nil {
 		return fmt.Errorf("generating scopes: %w", err)
 	}

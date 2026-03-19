@@ -58,6 +58,9 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	if req.Config != nil && len(req.Config.Scopes) > 0 {
 		userPrompt += "\n\nValid scopes: " + strings.Join(req.Config.Scopes, ", ")
 	}
+	if req.HookFeedback != "" {
+		userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
+	}
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
 		Model: c.model,
@@ -71,15 +74,21 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 				Content: userPrompt,
 			},
 		},
-		Temperature: 0,
-		MaxTokens:   800,
+		Temperature:         0,
+		MaxCompletionTokens: 32768,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
 
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("LLM returned empty response")
+		return nil, fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
+			len(resp.Choices), func() string {
+				if len(resp.Choices) > 0 {
+					return string(resp.Choices[0].FinishReason)
+				}
+				return "n/a"
+			}())
 	}
 
 	raw := extractJSON(resp.Choices[0].Message.Content)
@@ -99,10 +108,11 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	}, nil
 }
 
-func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string) ([]string, string, error) {
-	userPrompt := fmt.Sprintf("Recent commits:\n%s\n\nDirectories:\n%s",
+func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {
+	userPrompt := fmt.Sprintf("Recent commits:\n%s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
 		strings.Join(commits, "\n"),
 		strings.Join(dirs, "\n"),
+		strings.Join(files, "\n"),
 	)
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
@@ -110,22 +120,39 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Analyze git commit history and directory structure to suggest commit scopes. Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}. Suggest 3-8 short lowercase scope identifiers.`,
+				Content: `You are an expert software engineer. Derive commit scopes strictly from the top-level directories of the project.
+
+Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
+
+Rules (STRICTLY enforce):
+- Each scope MUST correspond to an actual top-level directory listed in "Top-level directories"
+- Use commit history and tracked files only to understand intent, NOT to invent extra scopes
+- Single-word directory names: use as-is (e.g. "cmd" → "cli" if it holds CLI code, "pkg", "docs", "domain", "hooks")
+- Multi-word or long names: abbreviate to a well-known short form (e.g. "application" → "app", "infrastructure" → "infra")
+- NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
+- NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
+- All scopes lowercase, no hyphens`,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
 				Content: userPrompt,
 			},
 		},
-		Temperature: 0,
-		MaxTokens:   400,
+		Temperature:         0,
+		MaxCompletionTokens: 32768,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("openai chat completion: %w", err)
 	}
 
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, "", fmt.Errorf("LLM returned empty response")
+		return nil, "", fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
+			len(resp.Choices), func() string {
+				if len(resp.Choices) > 0 {
+					return string(resp.Choices[0].FinishReason)
+				}
+				return "n/a"
+			}())
 	}
 
 	raw := extractJSON(resp.Choices[0].Message.Content)

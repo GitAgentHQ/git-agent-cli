@@ -16,7 +16,7 @@ type mockLLMClient struct {
 	err       error
 }
 
-func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string) ([]string, string, error) {
+func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {
 	return m.scopes, m.reasoning, m.err
 }
 
@@ -24,6 +24,7 @@ func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, di
 type mockGitReader struct {
 	commits   []string
 	dirs      []string
+	files     []string
 	isGitRepo bool
 	err       error
 }
@@ -36,6 +37,10 @@ func (m *mockGitReader) TopLevelDirs(ctx context.Context) ([]string, error) {
 	return m.dirs, m.err
 }
 
+func (m *mockGitReader) ProjectFiles(ctx context.Context) ([]string, error) {
+	return m.files, m.err
+}
+
 func (m *mockGitReader) IsGitRepo(ctx context.Context) bool {
 	return m.isGitRepo
 }
@@ -43,7 +48,7 @@ func (m *mockGitReader) IsGitRepo(ctx context.Context) bool {
 func TestInitService_WritesProjectYML(t *testing.T) {
 	dir := t.TempDir()
 	ymlPath := filepath.Join(dir, "project.yml")
-	hookPath := filepath.Join(dir, "commit-msg")
+	hookPath := filepath.Join(dir, "conventional")
 
 	llm := &mockLLMClient{scopes: []string{"cmd", "application"}, reasoning: "top dirs"}
 	git := &mockGitReader{commits: []string{"feat: add init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
@@ -52,7 +57,7 @@ func TestInitService_WritesProjectYML(t *testing.T) {
 	req := application.InitRequest{
 		ProjectYMLPath: ymlPath,
 		HookPath:       hookPath,
-		HookName:       "commit-msg",
+		HookName:       "conventional",
 		Force:          false,
 		MaxCommits:     20,
 	}
@@ -78,8 +83,8 @@ func TestInitService_ErrorIfProjectYMLExists(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: ymlPath,
-		HookPath:       filepath.Join(dir, "commit-msg"),
-		HookName:       "commit-msg",
+		HookPath:       filepath.Join(dir, "conventional"),
+		HookName:       "conventional",
 		Force:          false,
 		MaxCommits:     20,
 	}
@@ -101,8 +106,8 @@ func TestInitService_ForceOverwrites(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: ymlPath,
-		HookPath:       filepath.Join(dir, "commit-msg"),
-		HookName:       "commit-msg",
+		HookPath:       filepath.Join(dir, "conventional"),
+		HookName:       "conventional",
 		Force:          true,
 		MaxCommits:     20,
 	}
@@ -147,8 +152,8 @@ func TestInitService_NotGitRepo(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: filepath.Join(dir, "project.yml"),
-		HookPath:       filepath.Join(dir, "commit-msg"),
-		HookName:       "commit-msg",
+		HookPath:       filepath.Join(dir, "conventional"),
+		HookName:       "conventional",
 		Force:          false,
 		MaxCommits:     20,
 	}

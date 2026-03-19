@@ -87,6 +87,25 @@ func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 	return dirs, nil
 }
 
+func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", "ls-files").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var files []string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	// Cap to avoid overwhelming the LLM prompt.
+	if len(files) > 300 {
+		files = files[:300]
+	}
+	return files, nil
+}
+
 func (c *Client) IsGitRepo(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "git", "rev-parse", "--git-dir").Run() == nil
 }

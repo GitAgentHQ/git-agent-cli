@@ -1,0 +1,9 @@
+scopes:
+    - app
+    - cli
+    - docs
+    - domain
+    - e2e
+    - hooks
+    - infra
+    - pkg
