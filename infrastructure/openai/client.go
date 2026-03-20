@@ -128,7 +128,8 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 
 	var scopeRule string
 	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		scopeRule = "\nREQUIRED scope — every title MUST use one of these scopes (choose the most appropriate per group): " + strings.Join(req.Config.Scopes, ", ") + "."
+		scopeRule = "\nREQUIRED scope — every title MUST use one of these scopes (choose the most appropriate per group): " + strings.Join(req.Config.Scopes, ", ") + "." +
+			"\nFiles that map to different scopes MUST be placed in separate groups — never mix scopes within one group."
 	} else {
 		scopeRule = "\nScope is optional; omit if no clear scope applies."
 	}
