@@ -20,9 +20,9 @@ func NewScopeService(llm LLMClient, git GitReader) *ScopeService {
 }
 
 func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]string, error) {
-	commits, err := s.git.CommitSubjects(ctx, maxCommits)
+	commits, err := s.git.CommitLog(ctx, maxCommits)
 	if err != nil {
-		return nil, fmt.Errorf("reading commits: %w", err)
+		return nil, fmt.Errorf("reading commit log: %w", err)
 	}
 
 	dirs, err := s.git.TopLevelDirs(ctx)

@@ -11,6 +11,9 @@ type LLMClient interface {
 
 type GitReader interface {
 	CommitSubjects(ctx context.Context, max int) ([]string, error)
+	// CommitLog returns one entry per commit: the subject line followed by the
+	// list of changed files, formatted as "subject\n  file1\n  file2".
+	CommitLog(ctx context.Context, max int) ([]string, error)
 	TopLevelDirs(ctx context.Context) ([]string, error)
 	ProjectFiles(ctx context.Context) ([]string, error)
 	IsGitRepo(ctx context.Context) bool
