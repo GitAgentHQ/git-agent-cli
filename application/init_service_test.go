@@ -34,6 +34,10 @@ func (m *mockGitReader) CommitSubjects(ctx context.Context, max int) ([]string, 
 	return m.commits, m.err
 }
 
+func (m *mockGitReader) CommitLog(ctx context.Context, max int) ([]string, error) {
+	return m.commits, m.err
+}
+
 func (m *mockGitReader) TopLevelDirs(ctx context.Context) ([]string, error) {
 	return m.dirs, m.err
 }
