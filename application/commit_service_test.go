@@ -162,7 +162,7 @@ func TestCommitService_CoAuthor(t *testing.T) {
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
 	svc := newSvc(gen, git, noopHook())
 
-	req := application.CommitRequest{CoAuthor: "Alice <alice@example.com>", Config: &project.Config{}}
+	req := application.CommitRequest{CoAuthors: []string{"Alice <alice@example.com>"}, Config: &project.Config{}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

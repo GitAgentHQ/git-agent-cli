@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/diff"
@@ -38,7 +39,7 @@ type CommitGitClient interface {
 
 type CommitRequest struct {
 	Intent    string
-	CoAuthor  string
+	CoAuthors []string
 	HookPath  string
 	DryRun    bool
 	Config    *project.Config // nil = trigger auto-scope if scopeSvc provided
@@ -185,8 +186,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if msg.Body != "" {
 				assembled += "\n\n" + msg.Body
 			}
-			if req.CoAuthor != "" {
-				assembled += "\n\nCo-Authored-By: " + req.CoAuthor
+			if len(req.CoAuthors) > 0 {
+				var trailers []string
+				for _, a := range req.CoAuthors {
+					trailers = append(trailers, "Co-Authored-By: "+a)
+				}
+				assembled += "\n\n" + strings.Join(trailers, "\n")
 			}
 
 			if req.HookPath == "" {

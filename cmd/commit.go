@@ -30,9 +30,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
 	intent, _ := cmd.Flags().GetString("intent")
-	coAuthor, _ := cmd.Flags().GetString("co-author")
+	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
+	noGitAgent, _ := cmd.Flags().GetBool("no-git-agent")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
+
+	if !noGitAgent {
+		coAuthors = append(coAuthors, "Git Agent <noreply@git-agent.dev>")
+	}
 
 	providerCfg, err := infraConfig.Resolve(infraConfig.ProviderConfig{
 		APIKey:  apiKey,
@@ -72,7 +77,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:    intent,
-		CoAuthor:  coAuthor,
+		CoAuthors: coAuthors,
 		HookPath:  ".git-agent/hooks/pre-commit",
 		DryRun:    dryRun,
 		Config:    projCfg,
@@ -122,7 +127,8 @@ func loadProjectConfig() *project.Config {
 func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
-	commitCmd.Flags().String("co-author", "", "add a co-author to the commit message")
+	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
+	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
 	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
