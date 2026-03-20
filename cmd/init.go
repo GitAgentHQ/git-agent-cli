@@ -186,11 +186,7 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 
 	// Merge hook_type into project YAML, preserving existing keys.
 	rawMap := readProjectYAMLMap(ymlPath)
-	if hookTypeVal == "empty" || hookTypeVal == "" {
-		delete(rawMap, "hook_type")
-	} else {
-		rawMap["hook_type"] = hookTypeVal
-	}
+	rawMap["hook_type"] = hookTypeVal
 
 	data, err := yaml.Marshal(rawMap)
 	if err != nil {
