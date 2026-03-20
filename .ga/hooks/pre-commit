@@ -24,6 +24,7 @@ if ! printf '%s' "$HEADER" | grep -qE \
   '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-zA-Z0-9._/ -]+\))?!?: .+'; then
   echo "ga: commit message does not follow Conventional Commits format" >&2
   echo "ga: expected: <type>[optional scope][!]: <description>" >&2
+  echo "ga: valid types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert" >&2
   exit 1
 fi
 

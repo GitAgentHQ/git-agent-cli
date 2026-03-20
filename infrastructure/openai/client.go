@@ -67,7 +67,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title is conventional commits format ALL LOWERCASE ≤50 chars imperative mood; body has bullet points then explanation paragraph; outline is a human-readable summary of changes.`,
+				Content: `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; body has bullet points then explanation paragraph; outline is a human-readable summary of changes.`,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
