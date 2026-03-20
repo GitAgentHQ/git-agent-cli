@@ -67,7 +67,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; body has bullet points then explanation paragraph; outline is a human-readable summary of changes.`,
+				Content: `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; body has bullet points then explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
@@ -147,7 +147,8 @@ Each group should be a cohesive unit of change.
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
 
-Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.`,
+Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
