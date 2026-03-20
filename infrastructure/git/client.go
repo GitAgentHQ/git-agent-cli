@@ -79,6 +79,44 @@ func (c *Client) CommitSubjects(ctx context.Context, max int) ([]string, error) 
 	return subjects, nil
 }
 
+// CommitLog returns one entry per commit formatted as "subject\n  file1\n  file2",
+// giving the scope generator both the commit message and the files it touched.
+func (c *Client) CommitLog(ctx context.Context, max int) ([]string, error) {
+	// --format="<subject>" followed by --name-only emits:
+	//   <subject>\n\nfile1\nfile2\n\n<subject>\n\n...
+	// We use a sentinel to delimit commits reliably.
+	out, err := exec.CommandContext(ctx, "git", "log",
+		"--format=COMMIT_START%s", "--name-only", "--max-count", strconv.Itoa(max),
+	).Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	var entries []string
+	var current strings.Builder
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "COMMIT_START") {
+			if current.Len() > 0 {
+				entries = append(entries, strings.TrimRight(current.String(), "\n"))
+				current.Reset()
+			}
+			current.WriteString(line[len("COMMIT_START"):])
+			continue
+		}
+		if line != "" {
+			current.WriteString("\n  ")
+			current.WriteString(line)
+		}
+	}
+	if current.Len() > 0 {
+		entries = append(entries, strings.TrimRight(current.String(), "\n"))
+	}
+	return entries, nil
+}
+
 func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
