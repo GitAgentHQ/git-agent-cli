@@ -219,7 +219,12 @@ func (c *Client) StageFiles(ctx context.Context, files []string) error {
 }
 
 func (c *Client) UnstageAll(ctx context.Context) error {
-	return exec.CommandContext(ctx, "git", "reset", "HEAD").Run()
+	if err := exec.CommandContext(ctx, "git", "reset", "HEAD").Run(); err == nil {
+		return nil
+	}
+	// In a repo with no commits yet HEAD cannot be resolved; remove everything
+	// from the index instead.
+	return exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").Run()
 }
 
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {

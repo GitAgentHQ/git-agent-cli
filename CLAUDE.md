@@ -46,7 +46,7 @@ cmd → application → domain ← infrastructure
 **`application/`** — services wired to domain interfaces:
 - `CommitService`: gets staged+unstaged diffs → auto-scope if no config → plan commits → for each group: unstage-all, stage-group, generate message, hook-retry (3 attempts), re-plan on hook failure (max 2 re-plans) → commit
 - `InitService`: delegates scope generation and file writing to `ScopeService`
-- `ScopeService`: `Generate(ctx, maxCommits)` calls LLM+git; `MergeAndSave(ctx, path, scopes)` reads existing yaml, deduplicates (case-insensitive), writes merged result
+- `ScopeService`: `Generate(ctx, maxCommits)` calls LLM+git (`CommitLog` provides subject+files per commit); `MergeAndSave(ctx, path, scopes)` reads existing yaml, deduplicates (case-insensitive), writes merged result
 - `GitignoreService`: calls `TechDetector` (LLM) to identify technologies, fetches content from `ContentGenerator` (Toptal), merges into `.gitignore` preserving a `### custom rules ###` section below the auto-generated block
 - `AddService`: thin wrapper around `git.Add`; no CLI exposure
 
@@ -54,7 +54,7 @@ cmd → application → domain ← infrastructure
 - `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default); `gitconfig.go` reads `git-agent.*` keys from local git config via `ReadGitConfig`/`ReadGitConfigBool`
 - `infrastructure/diff/`: filters lock files and binaries from diffs
 - `infrastructure/hook/`: `ShellHookExecutor` runs `.git-agent/hooks/pre-commit` as a subprocess; `CompositeHookExecutor` runs the built-in Go conventional-commit validator first, then delegates to the shell executor
-- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AddAll`, `CommitSubjects`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `HooksPath`, `RepoRoot`
+- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AmendCommit`, `AddAll`, `FormatTrailers`, `LastCommitDiff`, `CommitSubjects`, `CommitLog`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `HooksPath`, `RepoRoot`, `GitDir`
 - `infrastructure/openai/`: implements `CommitMessageGenerator` (`Generate`), `CommitPlanner` (`Plan`), and `TechDetector` (`DetectTechnologies`) — the same `*Client` satisfies all three interfaces
 - `infrastructure/gitignore/`: `ToptalClient` implements `ContentGenerator`; fetches `.gitignore` content from the Toptal API for a list of technology names
 
@@ -68,8 +68,10 @@ cmd → application → domain ← infrastructure
 - `shim.sh`: installed as `.git/hooks/commit-msg` by `--install-hook`; delegates to `git-agent hook run commit-msg <file>`
 
 **`cmd/`** — cobra wiring only; no business logic:
-- `init` — flags: `--scope` (AI-generate scopes), `--hook` (`conventional`, `empty`, or file path), `--gitignore` (AI-generate `.gitignore`), `--install-hook` (install commit-msg shim into `.git/hooks/`), `--force`, `--max-commits`. No flags → defaults to `--scope --hook empty --gitignore`.
-- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--api-key`, `--model`, `--base-url`, `--max-diff-lines`.
+- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`), `--hook-script` (path), `--gitignore`, `--install-hook`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
+- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--api-key`, `--model`, `--base-url`, `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive.
+- `config show` — display resolved provider config (api-key masked, model, base-url).
+- `config scopes` — list scopes from `.git-agent/project.yml`.
 - `hook run <hook-name> [args...]` — hidden command invoked by the `shim.sh` git hook; currently handles `commit-msg <file>` by running `CompositeHookExecutor` against the message file.
 
 **`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
@@ -80,7 +82,11 @@ cmd → application → domain ← infrastructure
 
 **Hook protocol**: hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block. On block, `git-agent` exits with code 2. The composite executor runs the native Go validator before the shell hook.
 
-**Multi-commit flow**: `CommitService` calls `planner.Plan()` to get a `CommitPlan`, then for each `CommitGroup` it calls `git.UnstageAll()` + `git.StageFiles(group.Files)` before generating and committing. Hook failures after 3 retries trigger a re-plan of the remaining files (capped at 2 re-plans to avoid infinite loops).
+**Multi-commit flow**: `CommitService` calls `planner.Plan()` to get a `CommitPlan`, then for each `CommitGroup` it calls `git.UnstageAll()` + `git.StageFiles(group.Files)` before generating and committing. Hook failures after 3 retries trigger a re-plan of the remaining files (capped at 2 re-plans to avoid infinite loops). If any planned group title lacks a scope, scopes are refreshed and the plan is regenerated once.
+
+**Amend flow**: `--amend` calls `git.LastCommitDiff()`, generates a new message, and calls `git.AmendCommit()`. No planning or hook execution occurs.
+
+**Trailer handling**: `--co-author` and `--trailer` flags are collected into `[]commit.Trailer` and appended via `git interpret-trailers`. The default `Co-Authored-By: Git Agent` trailer is added unless `--no-attribution` is set.
 
 **Auto-scope**: if `CommitRequest.Config` is nil or has no scopes, `CommitService` calls `ScopeService.Generate()` and `MergeAndSave()` automatically before planning. Pass `Config: &project.Config{}` (non-nil, empty) to suppress this.
 
