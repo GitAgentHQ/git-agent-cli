@@ -1,6 +1,8 @@
 name = "git-agent-proxy"
 main = "src/index.js"
 compatibility_date = "2025-03-20"
+# account_id = "YOUR_ACCOUNT_ID"  # uncomment after wrangler login
 
 [vars]
 ALLOWED_MODELS = "gpt-4o-mini"
+AI_GATEWAY_URL = "https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/openai"

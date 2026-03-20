@@ -1,6 +1,3 @@
-const AI_GATEWAY_URL =
-  "https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/openai";
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -44,7 +41,7 @@ export default {
       body.max_completion_tokens = 4096;
     }
 
-    const upstream = new Request(AI_GATEWAY_URL + "/chat/completions", {
+    const upstream = new Request(env.AI_GATEWAY_URL + "/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

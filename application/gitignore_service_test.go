@@ -157,6 +157,36 @@ func TestGitignoreService_Generate_ForceOverwrites(t *testing.T) {
 	}
 }
 
+func TestGitignoreService_Generate_IdempotentCustomSection(t *testing.T) {
+	svc, _, cleanup := setupGitignoreTest(t)
+	defer cleanup()
+
+	// Seed file with a previous auto-gen block and custom rules.
+	initial := "### git-agent auto-generated — DO NOT EDIT this block ###\n# Technologies: go, macos\n*.o\n### end git-agent ###\n\n### custom rules ###\nmy-rule.txt\n"
+	os.WriteFile(".gitignore", []byte(initial), 0644)
+
+	// Run twice; the output must be identical on the second run.
+	for i := 0; i < 2; i++ {
+		_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+		if err != nil {
+			t.Fatalf("run %d: unexpected error: %v", i+1, err)
+		}
+	}
+
+	data, _ := os.ReadFile(".gitignore")
+	content := string(data)
+
+	// custom section header must appear exactly once.
+	if strings.Count(content, "### custom rules ###") != 1 {
+		t.Errorf("### custom rules ### should appear exactly once, got %d occurrences", strings.Count(content, "### custom rules ###"))
+	}
+
+	// There must be no consecutive blank lines after the custom section header.
+	if strings.Contains(content, "### custom rules ###\n\n") {
+		t.Error("blank line accumulation detected after ### custom rules ###")
+	}
+}
+
 func TestGitignoreService_Generate_WritesToCorrectPath(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()
