@@ -58,3 +58,25 @@ func TestAddCmd_Removed(t *testing.T) {
 		t.Fatal("expected non-zero exit for removed 'add' command, got 0")
 	}
 }
+
+func TestCommitCmd_TrailerFlag_Accepted(t *testing.T) {
+	out, code := gitAgent(t, t.TempDir(), "commit", "--help")
+	if code != 0 {
+		t.Fatalf("git-agent commit --help: exit code %d\noutput: %s", code, out)
+	}
+	if !strings.Contains(out, "--trailer") {
+		t.Errorf("expected --trailer flag in help output, got: %s", out)
+	}
+}
+
+func TestCommitCmd_InvalidTrailerFormat_Returns1(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "commit", "--dry-run",
+		"--api-key", "test-key",
+		"--base-url", "http://127.0.0.1:19999/v1",
+		"--trailer", "badformat",
+	)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for invalid trailer format, got %d\noutput: %s", code, out)
+	}
+}

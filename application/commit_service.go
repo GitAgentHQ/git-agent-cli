@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/diff"
@@ -35,11 +34,12 @@ type CommitGitClient interface {
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) error
 	AddAll(ctx context.Context) error
+	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 }
 
 type CommitRequest struct {
 	Intent    string
-	CoAuthors []string
+	Trailers  []commit.Trailer
 	HookPath  string
 	DryRun    bool
 	Config    *project.Config // nil = trigger auto-scope if scopeSvc provided
@@ -186,12 +186,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if msg.Body != "" {
 				assembled += "\n\n" + msg.Body
 			}
-			if len(req.CoAuthors) > 0 {
-				var trailers []string
-				for _, a := range req.CoAuthors {
-					trailers = append(trailers, "Co-Authored-By: "+a)
+			if len(req.Trailers) > 0 {
+				var err2 error
+				assembled, err2 = s.git.FormatTrailers(ctx, assembled, req.Trailers)
+				if err2 != nil {
+					return nil, fmt.Errorf("format trailers: %w", err2)
 				}
-				assembled += "\n\n" + strings.Join(trailers, "\n")
 			}
 
 			if req.HookPath == "" {

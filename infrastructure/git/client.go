@@ -1,12 +1,14 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
+	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/diff"
 )
 
@@ -144,4 +146,20 @@ func (c *Client) StageFiles(ctx context.Context, files []string) error {
 
 func (c *Client) UnstageAll(ctx context.Context) error {
 	return exec.CommandContext(ctx, "git", "reset", "HEAD").Run()
+}
+
+// FormatTrailers pipes message into `git interpret-trailers` and returns the
+// formatted message with trailers appended according to git's trailer rules.
+func (c *Client) FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error) {
+	args := []string{"interpret-trailers"}
+	for _, t := range trailers {
+		args = append(args, "--trailer", t.Key+": "+t.Value)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Stdin = bytes.NewBufferString(message)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }

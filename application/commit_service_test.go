@@ -81,6 +81,13 @@ func (m *mockCommitGitClient) StageFiles(_ context.Context, files []string) erro
 	return nil
 }
 
+func (m *mockCommitGitClient) FormatTrailers(_ context.Context, message string, trailers []commit.Trailer) (string, error) {
+	for _, t := range trailers {
+		message += "\n" + t.Key + ": " + t.Value
+	}
+	return message, nil
+}
+
 type mockHookExecutor struct {
 	result *hook.HookResult
 	err    error
@@ -162,13 +169,40 @@ func TestCommitService_CoAuthor(t *testing.T) {
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
 	svc := newSvc(gen, git, noopHook())
 
-	req := application.CommitRequest{CoAuthors: []string{"Alice <alice@example.com>"}, Config: &project.Config{}}
+	req := application.CommitRequest{
+		Trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Alice <alice@example.com>"}},
+		Config:   &project.Config{},
+	}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if !strings.Contains(git.commitMessage, "Co-Authored-By: Alice <alice@example.com>") {
 		t.Errorf("commit message missing co-author footer, got: %q", git.commitMessage)
+	}
+}
+
+func TestCommitService_MixedTrailers(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{
+		Trailers: []commit.Trailer{
+			{Key: "Co-Authored-By", Value: "Alice <alice@example.com>"},
+			{Key: "Signed-off-by", Value: "Bob <bob@example.com>"},
+		},
+		Config: &project.Config{},
+	}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(git.commitMessage, "Co-Authored-By: Alice <alice@example.com>") {
+		t.Errorf("commit message missing co-author trailer, got: %q", git.commitMessage)
+	}
+	if !strings.Contains(git.commitMessage, "Signed-off-by: Bob <bob@example.com>") {
+		t.Errorf("commit message missing signed-off-by trailer, got: %q", git.commitMessage)
 	}
 }
 

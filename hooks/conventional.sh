@@ -88,7 +88,7 @@ fi
 
 # Rule 7: body lines <=72 chars (excluding footers)
 LONG_LINES=$(printf '%s' "$MSG" | awk '
-  NR>=3 && !/^Co-Authored-By:/ && !/^BREAKING CHANGE:/ && !/^BREAKING-CHANGE:/ && length($0)>72 {
+  NR>=3 && !/^[A-Za-z][A-Za-z0-9 -]*: / && length($0)>72 {
     count++
   }
   END { print count+0 }
@@ -107,9 +107,7 @@ if [ "$BULLET_COUNT" -gt 0 ]; then
       if (last_bullet==0) { print 0; exit }
       for (i=last_bullet+1; i<=NR; i++) {
         if (lines[i]!="" && lines[i]!~/^- / &&
-            lines[i]!~/^Co-Authored-By:/ &&
-            lines[i]!~/^BREAKING CHANGE:/ &&
-            lines[i]!~/^BREAKING-CHANGE:/) {
+            lines[i]!~/^[A-Za-z][A-Za-z0-9 -]*: /) {
           print 1; exit
         }
       }

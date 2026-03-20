@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/fradser/git-agent/application"
+	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/project"
 	infraConfig "github.com/fradser/git-agent/infrastructure/config"
 	infraGit "github.com/fradser/git-agent/infrastructure/git"
@@ -31,12 +33,24 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	baseURL, _ := cmd.Flags().GetString("base-url")
 	intent, _ := cmd.Flags().GetString("intent")
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
+	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
 	noGitAgent, _ := cmd.Flags().GetBool("no-git-agent")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
 
+	var trailers []commit.Trailer
+	for _, a := range coAuthors {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
+	}
+	for _, t := range trailerFlags {
+		key, value, ok := strings.Cut(t, ": ")
+		if !ok {
+			return fmt.Errorf("invalid --trailer format %q: expected \"Key: Value\"", t)
+		}
+		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
+	}
 	if !noGitAgent {
-		coAuthors = append(coAuthors, "Git Agent <noreply@git-agent.dev>")
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
 	providerCfg, err := infraConfig.Resolve(infraConfig.ProviderConfig{
@@ -76,9 +90,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
-		Intent:    intent,
-		CoAuthors: coAuthors,
-		HookPath:  ".git-agent/hooks/pre-commit",
+		Intent:   intent,
+		Trailers: trailers,
+		HookPath: ".git-agent/hooks/pre-commit",
 		DryRun:    dryRun,
 		Config:    projCfg,
 		MaxLines:  maxDiffLines,
@@ -128,6 +142,7 @@ func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
 	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
+	commitCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
 	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
 	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
 	commitCmd.Flags().String("model", "", "model to use for generation")

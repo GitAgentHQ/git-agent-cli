@@ -174,6 +174,36 @@ func TestValidateConventional(t *testing.T) {
 			wantErrors:   false,
 			warnContains: "past-tense",
 		},
+
+		// --- generic trailers: 72-char exemption ---
+		{
+			name:       "signed-off-by allowed to exceed 72 chars",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nSigned-off-by: A Very Long Name With Extra Detail <longname@subdomain.example.com>",
+			wantErrors: false,
+		},
+		{
+			name:       "reviewed-by allowed to exceed 72 chars",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nReviewed-by: Another Long Reviewer Name <reviewer@subdomain.example.com>",
+			wantErrors: false,
+		},
+		{
+			name:       "custom trailer allowed to exceed 72 chars",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nX-Custom-Trailer: some-very-long-value-that-exceeds-seventy-two-characters-no-error",
+			wantErrors: false,
+		},
+
+		// --- generic trailers: explanation paragraph logic ---
+		{
+			name:        "only signed-off-by after bullets is not explanation",
+			msg:         "feat: add login endpoint\n\n- add route handler\n\nSigned-off-by: Bob <bob@example.com>",
+			wantErrors:  true,
+			errContains: "explanation paragraph",
+		},
+		{
+			name:       "explanation present before signed-off-by",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nSigned-off-by: Bob <bob@example.com>",
+			wantErrors: false,
+		},
 	}
 
 	for _, tc := range cases {
