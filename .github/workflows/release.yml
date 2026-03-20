@@ -52,12 +52,18 @@ jobs:
           tar -czf git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz git-agent
           rm git-agent
 
+      - name: Create zip (Windows)
+        if: matrix.ext == '.exe'
+        run: |
+          cp git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.exe git-agent.exe
+          zip git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.zip git-agent.exe
+          rm git-agent.exe
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
-            ${{ matrix.ext == '' && format('git-agent-{0}-{1}.tar.gz', matrix.goos, matrix.goarch) || '' }}
+            ${{ matrix.ext == '' && format('git-agent-{0}-{1}.tar.gz', matrix.goos, matrix.goarch) || format('git-agent-{0}-{1}.zip', matrix.goos, matrix.goarch) }}
 
   update-homebrew:
     name: Update Homebrew formula
