@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT="git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build \
+            -ldflags "\
+              -s -w \
+              -X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=${{ secrets.FREE_API_KEY }} \
+              -X github.com/fradser/git-agent/infrastructure/config.BuildBaseURL=${{ secrets.FREE_BASE_URL }} \
+              -X github.com/fradser/git-agent/infrastructure/config.BuildModel=${{ secrets.FREE_MODEL }}" \
+            -o "$OUTPUT" .
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}

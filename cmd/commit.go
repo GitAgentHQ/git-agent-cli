@@ -63,7 +63,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	if providerCfg.APIKey == "" {
-		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag or add api_key to ~/.config/git-agent/config.yml")
+		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag, add api_key to ~/.config/git-agent/config.yml, or use an official release binary with a built-in key")
 	}
 
 	projCfg := loadProjectConfig()

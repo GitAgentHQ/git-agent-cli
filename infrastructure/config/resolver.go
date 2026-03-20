@@ -9,6 +9,13 @@ import (
 const DefaultBaseURL = "https://api.anthropic.com/v1"
 const DefaultModel = "claude-3-5-haiku-20241022"
 
+// Build-time defaults injected via -ldflags "-X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=..."
+var (
+	BuildAPIKey  = ""
+	BuildBaseURL = ""
+	BuildModel   = ""
+)
+
 type ProviderConfig struct {
 	APIKey  string
 	BaseURL string
@@ -42,14 +49,18 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 
 	if flags.APIKey != "" {
 		result.APIKey = flags.APIKey
-	} else {
+	} else if file.APIKey != "" {
 		result.APIKey = file.APIKey
+	} else {
+		result.APIKey = BuildAPIKey
 	}
 
 	if flags.BaseURL != "" {
 		result.BaseURL = flags.BaseURL
 	} else if file.BaseURL != "" {
 		result.BaseURL = file.BaseURL
+	} else if BuildBaseURL != "" {
+		result.BaseURL = BuildBaseURL
 	} else {
 		result.BaseURL = DefaultBaseURL
 	}
@@ -58,6 +69,8 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 		result.Model = flags.Model
 	} else if file.Model != "" {
 		result.Model = file.Model
+	} else if BuildModel != "" {
+		result.Model = BuildModel
 	} else {
 		result.Model = DefaultModel
 	}
