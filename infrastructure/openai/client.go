@@ -270,14 +270,15 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
 
 Rules (STRICTLY enforce):
-- Each scope MUST correspond to an actual top-level directory listed in "Top-level directories"
+- Generate one scope per meaningful source directory listed in "Top-level directories"
+- Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
-- Single-word directory names: use as-is (e.g. "cmd" → "cli" if it holds CLI code, "pkg", "docs", "domain", "hooks")
-- Multi-word or long names: abbreviate to a well-known short form (e.g. "application" → "app", "infrastructure" → "infra")
+- Single-word directory names: use as-is or a well-known abbreviation (e.g. "cmd" -> "cli", "application" -> "app", "infrastructure" -> "infra")
+- Hyphenated or compound names: use the distinguishing part or a well-known short form (e.g. "agentbook-skill" -> "skill", "my-frontend" -> "frontend")
 - If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
-- All scopes lowercase, no hyphens`,
+- All scopes lowercase`,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
