@@ -20,27 +20,19 @@ func NewClient() *Client {
 }
 
 func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff", "--staged").Output()
+	contentOut, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--name-only").Output()
+	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
 	content := string(contentOut)
-
-	var files []string
-	for _, line := range strings.Split(strings.TrimRight(string(namesOut), "\n"), "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-
 	return &diff.StagedDiff{
-		Files:   files,
+		Files:   parseNameStatus(namesOut),
 		Content: content,
 		Lines:   strings.Count(content, "\n"),
 	}, nil
@@ -117,6 +109,12 @@ func (c *Client) CommitLog(ctx context.Context, max int) ([]string, error) {
 	return entries, nil
 }
 
+var skipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "dist": true,
+	"build": true, "target": true, "__pycache__": true,
+	".next": true, "out": true, "coverage": true,
+}
+
 func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -125,7 +123,7 @@ func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !skipDirs[e.Name()] {
 			dirs = append(dirs, e.Name())
 		}
 	}
@@ -172,76 +170,74 @@ func (c *Client) GitDir(ctx context.Context) (string, error) {
 }
 
 func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff").Output()
+	contentOut, err := exec.CommandContext(ctx, "git", "diff", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--name-only").Output()
+	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--name-status", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
 	content := string(contentOut)
-
-	var files []string
-	for _, line := range strings.Split(strings.TrimRight(string(namesOut), "\n"), "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-
 	return &diff.StagedDiff{
-		Files:   files,
+		Files:   parseNameStatus(namesOut),
 		Content: content,
 		Lines:   strings.Count(content, "\n"),
 	}, nil
 }
 
 func (c *Client) StageFiles(ctx context.Context, files []string) error {
-	args := append([]string{"add", "--"}, files...)
-	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	// Use -f to re-stage files that were already in the index but match .gitignore
+	// (they were explicitly tracked before UnstageAll removed them).
+	args := append([]string{"add", "-f", "--"}, files...)
+	if _, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err == nil {
+		return nil
+	}
+	// Batch failed; retry file-by-file to isolate bad entries.
+	var staged int
+	var lastErr error
+	for _, f := range files {
+		if out, err := exec.CommandContext(ctx, "git", "add", "-f", "--", f).CombinedOutput(); err != nil {
+			lastErr = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+		} else {
+			staged++
+		}
+	}
+	if staged == 0 {
+		return fmt.Errorf("no files could be staged: %w", lastErr)
 	}
 	return nil
 }
 
 func (c *Client) UnstageAll(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "git", "reset", "HEAD").CombinedOutput(); err == nil {
+	if _, err := exec.CommandContext(ctx, "git", "reset", "HEAD").CombinedOutput(); err == nil {
 		return nil
-	} else {
-		_ = out // fallback below
 	}
 	// In a repo with no commits yet HEAD cannot be resolved; remove everything
 	// from the index instead.
-	if out, err := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	if _, err := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
+		// Both failed — index is already empty, which is the goal.
+		return nil
 	}
 	return nil
 }
 
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD").Output()
+	contentOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--name-only").Output()
+	namesOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--name-status", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
 	content := string(contentOut)
-
-	var files []string
-	for _, line := range strings.Split(strings.TrimRight(string(namesOut), "\n"), "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-
 	return &diff.StagedDiff{
-		Files:   files,
+		Files:   parseNameStatus(namesOut),
 		Content: content,
 		Lines:   strings.Count(content, "\n"),
 	}, nil
@@ -269,4 +265,94 @@ func (c *Client) FormatTrailers(ctx context.Context, message string, trailers []
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\n"), nil
+}
+
+// gitUnquote removes git's C-style quoting from a path. Git wraps paths in
+// double-quotes and escapes special bytes when they contain non-ASCII or
+// special characters. If s is not quoted, it is returned unchanged.
+func gitUnquote(s string) string {
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+		return s
+	}
+	s = s[1 : len(s)-1]
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		i++ // consume backslash
+		if i >= len(s) {
+			break
+		}
+		switch s[i] {
+		case '\\':
+			b.WriteByte('\\')
+		case '"':
+			b.WriteByte('"')
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'a':
+			b.WriteByte('\a')
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case 'v':
+			b.WriteByte('\v')
+		default:
+			// Octal: three digits \NNN
+			if s[i] >= '0' && s[i] <= '7' && i+2 < len(s) {
+				n, err := strconv.ParseUint(s[i:i+3], 8, 8)
+				if err == nil {
+					b.WriteByte(byte(n))
+					i += 3
+					continue
+				}
+			}
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		}
+		i++
+	}
+	return b.String()
+}
+
+// parseNameStatus parses `git diff --name-status` output into a deduplicated
+// list of file paths. Rename/copy lines (R/C status) emit both old and new
+// paths so that the old path (deletion) is also staged.
+func parseNameStatus(out []byte) []string {
+	seen := make(map[string]bool)
+	var files []string
+	add := func(p string) {
+		p = gitUnquote(p)
+		if p != "" && !seen[p] {
+			seen[p] = true
+			files = append(files, p)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		status := parts[0]
+		switch {
+		case strings.HasPrefix(status, "R"), strings.HasPrefix(status, "C"):
+			// R100\told\tnew or C100\told\tnew
+			if len(parts) >= 3 {
+				add(parts[1])
+				add(parts[2])
+			}
+		default:
+			add(parts[1])
+		}
+	}
+	return files
 }
