@@ -9,6 +9,7 @@ import (
 	goopenai "github.com/sashabaranov/go-openai"
 
 	"github.com/fradser/git-agent/domain/commit"
+	domainGitignore "github.com/fradser/git-agent/domain/gitignore"
 )
 
 type Client struct {
@@ -196,6 +197,57 @@ Rules for body: bullet points then closing explanation paragraph — body text M
 		})
 	}
 	return plan, nil
+}
+
+func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.DetectRequest) ([]string, error) {
+	userPrompt := fmt.Sprintf("OS: %s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
+		req.OS,
+		strings.Join(req.Dirs, "\n"),
+		strings.Join(req.Files, "\n"),
+	)
+
+	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+		Model: c.model,
+		Messages: []goopenai.ChatCompletionMessage{
+			{
+				Role: goopenai.ChatMessageRoleSystem,
+				Content: `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
+
+Return a JSON object with a "technologies" array containing only valid Toptal gitignore API identifiers.
+Respond ONLY with valid JSON: {"technologies": ["go", "node", "visualstudiocode"]}
+
+Rules:
+- Include the OS identifier (e.g. "macos", "linux", "windows")
+- Include programming languages detected from file extensions
+- Include build tools, editors, and IDEs if evidence exists
+- Use lowercase Toptal API identifiers only (e.g. "go", "node", "python", "rust", "jetbrains", "visualstudiocode")
+- Do NOT include technologies with no evidence in the project files`,
+			},
+			{
+				Role:    goopenai.ChatMessageRoleUser,
+				Content: userPrompt,
+			},
+		},
+		Temperature:         0,
+		MaxCompletionTokens: 1024,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai chat completion: %w", err)
+	}
+
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("LLM returned empty response")
+	}
+
+	raw := extractJSON(resp.Choices[0].Message.Content)
+	var result struct {
+		Technologies []string `json:"technologies"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+	}
+
+	return result.Technologies, nil
 }
 
 func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {

@@ -25,16 +25,19 @@ var initCmd = &cobra.Command{
 func runInit(cmd *cobra.Command, args []string) error {
 	scopeChanged := cmd.Flags().Changed("scope")
 	hookChanged := cmd.Flags().Changed("hook")
+	gitignoreChanged := cmd.Flags().Changed("gitignore")
 
 	doScope, _ := cmd.Flags().GetBool("scope")
 	hookVal, _ := cmd.Flags().GetString("hook")
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
+	doGitignore, _ := cmd.Flags().GetBool("gitignore")
 
-	// Default: no flags → scope + empty hook (current default behavior).
-	if !scopeChanged && !hookChanged {
+	// Default: no flags → scope + empty hook + gitignore.
+	if !scopeChanged && !hookChanged && !gitignoreChanged {
 		doScope = true
 		hookVal = "empty"
+		doGitignore = true
 	}
 
 	if doScope {
@@ -45,6 +48,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if hookVal != "" {
 		if err := runInitHook(cmd, hookVal, force); err != nil {
+			return err
+		}
+	}
+
+	if doGitignore {
+		if err := runGitignore(cmd.Context(), force, cmd.OutOrStdout()); err != nil {
 			return err
 		}
 	}
@@ -143,7 +152,8 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 func init() {
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
 	initCmd.Flags().String("hook", "", "hook to install: conventional, empty, or path to script")
-	initCmd.Flags().Bool("force", false, "overwrite existing config/hook")
+	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
+	initCmd.Flags().Bool("force", false, "overwrite existing config/hook/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	rootCmd.AddCommand(initCmd)
 }
