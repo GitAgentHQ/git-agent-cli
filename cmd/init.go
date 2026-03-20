@@ -26,19 +26,40 @@ var initCmd = &cobra.Command{
 
 func runInit(cmd *cobra.Command, args []string) error {
 	scopeChanged := cmd.Flags().Changed("scope")
+	hookTypeChanged := cmd.Flags().Changed("hook-type")
+	hookScriptChanged := cmd.Flags().Changed("hook-script")
 	hookChanged := cmd.Flags().Changed("hook")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	installHookChanged := cmd.Flags().Changed("install-hook")
 
 	doScope, _ := cmd.Flags().GetBool("scope")
-	hookVal, _ := cmd.Flags().GetString("hook")
+	hookType, _ := cmd.Flags().GetString("hook-type")
+	hookScript, _ := cmd.Flags().GetString("hook-script")
+	hookLegacy, _ := cmd.Flags().GetString("hook")
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
 	doInstallHook, _ := cmd.Flags().GetBool("install-hook")
 
+	if hookTypeChanged && hookScriptChanged {
+		return fmt.Errorf("--hook-type and --hook-script are mutually exclusive")
+	}
+	if hookTypeChanged && hookType != "conventional" && hookType != "empty" {
+		return fmt.Errorf("--hook-type must be \"conventional\" or \"empty\", got %q", hookType)
+	}
+
+	// Compute resolved hook value.
+	var hookVal string
+	if hookTypeChanged {
+		hookVal = hookType
+	} else if hookScriptChanged {
+		hookVal = hookScript
+	} else if hookChanged {
+		hookVal = hookLegacy
+	}
+
 	// Default: no flags → scope + empty hook + gitignore.
-	if !scopeChanged && !hookChanged && !gitignoreChanged && !installHookChanged {
+	if !scopeChanged && !hookTypeChanged && !hookScriptChanged && !hookChanged && !gitignoreChanged && !installHookChanged {
 		doScope = true
 		hookVal = "empty"
 		doGitignore = true
@@ -202,10 +223,13 @@ func runInstallHook(cmd *cobra.Command, force bool) error {
 
 func init() {
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
-	initCmd.Flags().String("hook", "", "hook to install: conventional, empty, or path to script")
+	initCmd.Flags().String("hook-type", "", "built-in hook template: conventional or empty (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
+	initCmd.Flags().String("hook-script", "", "path to custom hook script (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
+	initCmd.Flags().String("hook", "", "hook to install: conventional, empty, or path to script (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
+	_ = initCmd.Flags().MarkDeprecated("hook", "use --hook-type or --hook-script instead")
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
 	initCmd.Flags().Bool("force", false, "overwrite existing config/hook/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
-	initCmd.Flags().Bool("install-hook", false, "install a commit-msg shim into .git/hooks/ that delegates to git-agent")
+	initCmd.Flags().Bool("install-hook", false, "install a commit-msg shim into .git/hooks/commit-msg that delegates to 'git-agent hook run'")
 	rootCmd.AddCommand(initCmd)
 }
