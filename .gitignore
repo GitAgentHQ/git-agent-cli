@@ -62,4 +62,6 @@ Temporary Items
 ### end git-agent ###
 
 ### custom rules ###
+
 git-agent
+git-agent-proxy/node_modules
