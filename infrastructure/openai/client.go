@@ -48,16 +48,18 @@ func extractJSON(s string) string {
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	content := truncateLines(req.Diff.Content, 500)
 
-	userPrompt := fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
+	var promptParts []string
+	if req.Intent != "" {
+		promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
+	}
+	promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
 		content,
 		strings.Join(req.Diff.Files, ", "),
-	)
-	if req.Intent != "" {
-		userPrompt += "\n\nUser intent: " + req.Intent
-	}
+	))
 	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		userPrompt += "\n\nValid scopes: " + strings.Join(req.Config.Scopes, ", ")
+		promptParts = append(promptParts, "Valid scopes: "+strings.Join(req.Config.Scopes, ", "))
 	}
+	userPrompt := strings.Join(promptParts, "\n\n")
 	if req.HookFeedback != "" {
 		userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
 	}
@@ -125,13 +127,15 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		))
 	}
 
-	userPrompt := strings.Join(parts, "\n\n")
+	var planParts []string
 	if req.Intent != "" {
-		userPrompt += "\n\nUser intent: " + req.Intent
+		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 	}
+	planParts = append(planParts, parts...)
 	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		userPrompt += "\n\nValid scopes: " + strings.Join(req.Config.Scopes, ", ")
+		planParts = append(planParts, "Valid scopes: "+strings.Join(req.Config.Scopes, ", "))
 	}
+	userPrompt := strings.Join(planParts, "\n\n")
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
 		Model: c.model,
@@ -140,8 +144,9 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 				Role: goopenai.ChatMessageRoleSystem,
 				Content: `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
 
-If there are staged files, they MUST be group 0 (respect user intent).
-Split unstaged changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
+If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
+Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
