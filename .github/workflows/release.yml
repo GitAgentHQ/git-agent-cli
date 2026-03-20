@@ -44,8 +44,8 @@ jobs:
           go build \
             -ldflags "\
               -s -w \
-              -X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=${{ secrets.FREE_API_KEY }} \
-              -X github.com/fradser/git-agent/infrastructure/config.BuildBaseURL=${{ secrets.FREE_BASE_URL }} \
+              -X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=${{ secrets.CLIENT_TOKEN }} \
+              -X github.com/fradser/git-agent/infrastructure/config.BuildBaseURL=${{ secrets.WORKER_URL }} \
               -X github.com/fradser/git-agent/infrastructure/config.BuildModel=${{ secrets.FREE_MODEL }}" \
             -o "$OUTPUT" .
 
