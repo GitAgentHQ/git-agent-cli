@@ -45,8 +45,13 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	}, nil
 }
 
-func (c *Client) Commit(ctx context.Context, message string) error {
-	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+func (c *Client) Commit(ctx context.Context, message string, skipHooks bool) error {
+	args := []string{"commit", "-m", message}
+	if skipHooks {
+		args = append(args, "--no-verify")
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -110,6 +115,37 @@ func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
 
 func (c *Client) IsGitRepo(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "git", "rev-parse", "--git-dir").Run() == nil
+}
+
+func (c *Client) RepoRoot(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
+func (c *Client) GitDir(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
+func (c *Client) HooksPath(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "config", "core.hooksPath").Output()
+	if err == nil {
+		p := strings.TrimRight(string(out), "\n")
+		if p != "" {
+			return p, nil
+		}
+	}
+	gitDir, err := c.GitDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return gitDir + "/hooks", nil
 }
 
 func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {

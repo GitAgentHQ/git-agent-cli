@@ -53,7 +53,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
-	providerCfg, err := infraConfig.Resolve(infraConfig.ProviderConfig{
+	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
 		APIKey:  apiKey,
 		Model:   model,
 		BaseURL: baseURL,
@@ -66,10 +66,16 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag, add api_key to ~/.config/git-agent/config.yml, or use an official release binary with a built-in key")
 	}
 
-	projCfg := loadProjectConfig()
+	gitClient := infraGit.NewClient()
+	root, err := gitClient.RepoRoot(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+
+	projCfgPath := filepath.Join(root, ".git-agent", "project.yml")
+	projCfg := loadProjectConfig(projCfgPath)
 
 	llmClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
-	gitClient := infraGit.NewClient()
 
 	var scopeSvc *application.ScopeService
 	if projCfg == nil || len(projCfg.Scopes) == 0 {
@@ -90,15 +96,16 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
-		Intent:   intent,
-		Trailers: trailers,
-		HookPath: ".git-agent/hooks/pre-commit",
-		DryRun:    dryRun,
-		Config:    projCfg,
-		MaxLines:  maxDiffLines,
-		Verbose:   verbose,
-		LogWriter: logWriter,
-		OutWriter: cmd.ErrOrStderr(),
+		Intent:            intent,
+		Trailers:          trailers,
+		HookPath:          filepath.Join(root, ".git-agent", "hooks", "pre-commit"),
+		DryRun:            dryRun,
+		Config:            projCfg,
+		MaxLines:          maxDiffLines,
+		Verbose:           verbose,
+		LogWriter:         logWriter,
+		OutWriter:         cmd.ErrOrStderr(),
+		ProjectConfigPath: projCfgPath,
 	})
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
@@ -124,8 +131,8 @@ func userConfigPath() string {
 	return filepath.Join(home, ".config", "git-agent", "config.yml")
 }
 
-func loadProjectConfig() *project.Config {
-	data, err := os.ReadFile(".git-agent/project.yml")
+func loadProjectConfig(path string) *project.Config {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}

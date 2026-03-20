@@ -59,7 +59,7 @@ func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff,
 	return m.unstagedDiff, m.unstagedErr
 }
 
-func (m *mockCommitGitClient) Commit(_ context.Context, message string) error {
+func (m *mockCommitGitClient) Commit(_ context.Context, message string, _ bool) error {
 	m.commitCalled = true
 	m.commitMessage = message
 	return m.commitErr
@@ -86,6 +86,10 @@ func (m *mockCommitGitClient) FormatTrailers(_ context.Context, message string, 
 		message += "\n" + t.Key + ": " + t.Value
 	}
 	return message, nil
+}
+
+func (m *mockCommitGitClient) RepoRoot(_ context.Context) (string, error) {
+	return ".", nil
 }
 
 type mockHookExecutor struct {

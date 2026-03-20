@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestResolve_FlagAPIKeyTakesPrecedenceOverFile(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
 
 	flags := config.ProviderConfig{APIKey: "flag-key"}
-	got, err := config.Resolve(flags, path)
+	got, err := config.Resolve(context.Background(), flags, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
 
 	flags := config.ProviderConfig{}
-	got, err := config.Resolve(flags, path)
+	got, err := config.Resolve(context.Background(), flags, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 
 func TestResolve_ZeroConfigUsesDefaults(t *testing.T) {
 	flags := config.ProviderConfig{}
-	got, err := config.Resolve(flags, "")
+	got, err := config.Resolve(context.Background(), flags, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestResolve_FlagModelOverridesFile(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nmodel: \"gpt-4\"\n")
 
 	flags := config.ProviderConfig{Model: "claude-3-5-haiku-20241022"}
-	got, err := config.Resolve(flags, path)
+	got, err := config.Resolve(context.Background(), flags, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestResolve_EnvVarExpandedInAPIKey(t *testing.T) {
 	t.Setenv("TEST_GIT_AGENT_API_KEY", "secret-from-env")
 	path := writeTempConfig(t, "api_key: \"${TEST_GIT_AGENT_API_KEY}\"\n")
 
-	got, err := config.Resolve(config.ProviderConfig{}, path)
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestResolve_EnvVarExpandedInBaseURL(t *testing.T) {
 	t.Setenv("TEST_GIT_AGENT_BASE_URL", "https://env.example.com/v1")
 	path := writeTempConfig(t, "api_key: \"key\"\nbase_url: \"${TEST_GIT_AGENT_BASE_URL}\"\n")
 
-	got, err := config.Resolve(config.ProviderConfig{}, path)
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestResolve_UnsetEnvVarExpandsToEmpty(t *testing.T) {
 	os.Unsetenv("TEST_GIT_AGENT_UNSET_VAR")
 	path := writeTempConfig(t, "api_key: \"${TEST_GIT_AGENT_UNSET_VAR}\"\n")
 
-	got, err := config.Resolve(config.ProviderConfig{}, path)
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestResolve_FlagBaseURLOverridesFile(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\n")
 
 	flags := config.ProviderConfig{BaseURL: "https://custom.api.com/v1"}
-	got, err := config.Resolve(flags, path)
+	got, err := config.Resolve(context.Background(), flags, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

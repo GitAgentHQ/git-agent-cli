@@ -14,7 +14,7 @@ import (
 )
 
 func runGitignore(ctx context.Context, force bool, out io.Writer) error {
-	providerCfg, err := infraConfig.Resolve(infraConfig.ProviderConfig{}, userConfigPath())
+	providerCfg, err := infraConfig.Resolve(ctx, infraConfig.ProviderConfig{}, userConfigPath())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}

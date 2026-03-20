@@ -32,21 +32,23 @@ type CommitGitClient interface {
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
-	Commit(ctx context.Context, message string) error
+	Commit(ctx context.Context, message string, skipHooks bool) error
 	AddAll(ctx context.Context) error
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
+	RepoRoot(ctx context.Context) (string, error)
 }
 
 type CommitRequest struct {
-	Intent    string
-	Trailers  []commit.Trailer
-	HookPath  string
-	DryRun    bool
-	Config    *project.Config // nil = trigger auto-scope if scopeSvc provided
-	MaxLines  int
-	Verbose   bool
-	LogWriter io.Writer // verbose-only output
-	OutWriter io.Writer // always-visible output (hook block context, retries)
+	Intent            string
+	Trailers          []commit.Trailer
+	HookPath          string
+	DryRun            bool
+	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided
+	MaxLines          int
+	Verbose           bool
+	LogWriter         io.Writer // verbose-only output
+	OutWriter         io.Writer // always-visible output (hook block context, retries)
+	ProjectConfigPath string    // path to .git-agent/project.yml; empty = use default
 }
 
 type CommitService struct {
@@ -119,7 +121,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if err != nil {
 				s.vlog(req, "scope generation failed (continuing without scopes): %v", err)
 			} else {
-				_ = s.scopeSvc.MergeAndSave(ctx, ".git-agent/project.yml", scopes)
+				configPath := req.ProjectConfigPath
+				if configPath == "" {
+					configPath = ".git-agent/project.yml"
+				}
+				_ = s.scopeSvc.MergeAndSave(ctx, configPath, scopes)
 				req.Config = &project.Config{Scopes: scopes}
 				s.vlog(req, "scopes: %v", scopes)
 			}
@@ -267,7 +273,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			committed = append(committed, result)
 			continue
 		}
-		if err := s.git.Commit(ctx, assembled); err != nil {
+		if err := s.git.Commit(ctx, assembled, req.HookPath != ""); err != nil {
 			return nil, err
 		}
 		committed = append(committed, result)

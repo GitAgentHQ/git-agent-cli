@@ -1,0 +1,6 @@
+name = "git-agent-proxy"
+main = "src/index.js"
+compatibility_date = "2025-03-20"
+
+[vars]
+ALLOWED_MODELS = "gpt-4o-mini"

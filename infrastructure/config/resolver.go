@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -28,7 +29,9 @@ type fileConfig struct {
 	Model   string `yaml:"model"`
 }
 
-func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
+// Resolve merges config from (highest to lowest priority):
+// CLI flags > git config --local git-agent.* > YAML file > build-time defaults > hardcoded defaults.
+func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	var file fileConfig
 
 	if configPath != "" {
@@ -45,6 +48,9 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 		}
 	}
 
+	gitModel, _ := ReadGitConfig(ctx, "model")
+	gitBaseURL, _ := ReadGitConfig(ctx, "base-url")
+
 	result := &ProviderConfig{}
 
 	if flags.APIKey != "" {
@@ -57,6 +63,8 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 
 	if flags.BaseURL != "" {
 		result.BaseURL = flags.BaseURL
+	} else if gitBaseURL != "" {
+		result.BaseURL = gitBaseURL
 	} else if file.BaseURL != "" {
 		result.BaseURL = file.BaseURL
 	} else if BuildBaseURL != "" {
@@ -67,6 +75,8 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 
 	if flags.Model != "" {
 		result.Model = flags.Model
+	} else if gitModel != "" {
+		result.Model = gitModel
 	} else if file.Model != "" {
 		result.Model = file.Model
 	} else if BuildModel != "" {
