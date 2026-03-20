@@ -48,14 +48,14 @@ jobs:
       - name: Create tarball
         if: matrix.ext == ''
         run: |
-          cp git-agent-${{ matrix.goos }}-${{ matrix.goarch }} git-agent
+          mv git-agent-${{ matrix.goos }}-${{ matrix.goarch }} git-agent
           tar -czf git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz git-agent
           rm git-agent
 
       - name: Create zip (Windows)
         if: matrix.ext == '.exe'
         run: |
-          cp git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.exe git-agent.exe
+          mv git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.exe git-agent.exe
           zip git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.zip git-agent.exe
           rm git-agent.exe
 
