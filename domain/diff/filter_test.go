@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fradser/ga-cli/domain/diff"
-	infradiff "github.com/fradser/ga-cli/infrastructure/diff"
+	"github.com/fradser/git-agent/domain/diff"
+	infradiff "github.com/fradser/git-agent/infrastructure/diff"
 )
 
 func newFilter() diff.DiffFilter {

@@ -8,12 +8,12 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v jq >/dev/null 2>&1; then
   MSG=$(jq -r '.commit_message')
 else
-  echo "ga: pre-commit hook requires python3 or jq" >&2
+  echo "git-agent: pre-commit hook requires python3 or jq" >&2
   exit 1
 fi
 
 if [ -z "$MSG" ]; then
-  echo "ga: failed to extract commit_message from payload" >&2
+  echo "git-agent: failed to extract commit_message from payload" >&2
   exit 1
 fi
 
@@ -25,22 +25,22 @@ HEADER=$(printf '%s' "$MSG" | head -n1)
 # Rule 1: format
 if ! printf '%s' "$HEADER" | grep -qE \
   '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+'; then
-  echo "ga: header must match: <type>[(<scope>)][!]: <description>" >&2
-  echo "ga: valid types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert" >&2
+  echo "git-agent: header must match: <type>[(<scope>)][!]: <description>" >&2
+  echo "git-agent: valid types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
 # Rule 3: title <=50 chars
 HEADER_LEN=$(printf '%s' "$HEADER" | awk '{print length}')
 if [ "$HEADER_LEN" -gt 50 ]; then
-  printf 'ga: title must be 50 characters or less (got %d)\n' "$HEADER_LEN" >&2
+  printf 'git-agent: title must be 50 characters or less (got %d)\n' "$HEADER_LEN" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
 # Rule 4: title must not end with '.'
 case "$HEADER" in
   *.)
-    echo "ga: title must not end with a period" >&2
+    echo "git-agent: title must not end with a period" >&2
     ERRORS=$((ERRORS + 1))
     ;;
 esac
@@ -49,7 +49,7 @@ esac
 DESC="${HEADER#*: }"
 DESC_LOWER=$(printf '%s' "$DESC" | tr '[:upper:]' '[:lower:]')
 if [ "$DESC" != "$DESC_LOWER" ]; then
-  echo "ga: description must be all lowercase" >&2
+  echo "git-agent: description must be all lowercase" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
@@ -59,14 +59,14 @@ case "$FIRST_WORD" in
   added|removed|updated|changed|fixed|created|deleted|modified|implemented|\
 refactored|renamed|moved|replaced|improved|enhanced|upgraded|downgraded|\
 reverted|resolved)
-    printf 'ga: warning: description starts with past-tense verb "%s" — prefer imperative mood\n' "$FIRST_WORD" >&2
+    printf 'git-agent: warning: description starts with past-tense verb "%s" — prefer imperative mood\n' "$FIRST_WORD" >&2
     ;;
 esac
 
 # --- body validation ---
 LINE_COUNT=$(printf '%s' "$MSG" | wc -l | tr -d ' ')
 if [ "$LINE_COUNT" -lt 1 ]; then
-  echo "ga: body is required: add bullet points followed by an explanation paragraph" >&2
+  echo "git-agent: body is required: add bullet points followed by an explanation paragraph" >&2
   ERRORS=$((ERRORS + 1))
   [ "$ERRORS" -gt 0 ] && exit 1
   exit 0
@@ -75,14 +75,14 @@ fi
 # blank line after header
 SECOND_LINE=$(printf '%s' "$MSG" | sed -n '2p')
 if [ -n "$SECOND_LINE" ]; then
-  echo "ga: blank line required between header and body" >&2
+  echo "git-agent: blank line required between header and body" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
 # Rule 6: body must contain bullet points
 BULLET_COUNT=$(printf '%s' "$MSG" | awk 'NR>=3 && /^- /{count++} END{print count+0}')
 if [ "$BULLET_COUNT" -eq 0 ]; then
-  echo "ga: body must contain at least one bullet point starting with '- '" >&2
+  echo "git-agent: body must contain at least one bullet point starting with '- '" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
@@ -94,7 +94,7 @@ LONG_LINES=$(printf '%s' "$MSG" | awk '
   END { print count+0 }
 ')
 if [ "$LONG_LINES" -gt 0 ]; then
-  echo "ga: body contains line(s) exceeding 72 characters" >&2
+  echo "git-agent: body contains line(s) exceeding 72 characters" >&2
   ERRORS=$((ERRORS + 1))
 fi
 
@@ -117,7 +117,7 @@ if [ "$BULLET_COUNT" -gt 0 ]; then
     }
   ')
   if [ "$HAS_EXPLANATION" -eq 0 ]; then
-    echo "ga: explanation paragraph required after bullet points" >&2
+    echo "git-agent: explanation paragraph required after bullet points" >&2
     ERRORS=$((ERRORS + 1))
   fi
 fi
@@ -125,7 +125,7 @@ fi
 # Rule 9: Co-Authored-By format when present
 if printf '%s' "$MSG" | grep -q '^Co-Authored-By:'; then
   if ! printf '%s' "$MSG" | grep -qE '^Co-Authored-By: .+ <[^>]+@[^>]+>$'; then
-    echo "ga: Co-Authored-By must be: Co-Authored-By: Name <email@domain>" >&2
+    echo "git-agent: Co-Authored-By must be: Co-Authored-By: Name <email@domain>" >&2
     ERRORS=$((ERRORS + 1))
   fi
 fi
@@ -135,7 +135,7 @@ printf '%s' "$MSG" | awk '
   NR>=3 && /^- / {
     word=tolower($2)
     if (word ~ /^(added|removed|updated|changed|fixed|created|deleted|modified|implemented|refactored|renamed|moved|replaced|improved|enhanced|upgraded|downgraded|reverted|resolved)$/) {
-      printf "ga: warning: bullet starts with past-tense verb \"%s\" \342\200\224 prefer imperative mood\n", word > "/dev/stderr"
+      printf "git-agent: warning: bullet starts with past-tense verb \"%s\" \342\200\224 prefer imperative mood\n", word > "/dev/stderr"
     }
   }
 ' 2>&1 >&2 || true

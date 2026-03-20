@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fradser/ga-cli/domain/diff"
+	"github.com/fradser/git-agent/domain/diff"
 )
 
 type Client struct{}
@@ -108,4 +108,40 @@ func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
 
 func (c *Client) IsGitRepo(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "git", "rev-parse", "--git-dir").Run() == nil
+}
+
+func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
+	contentOut, err := exec.CommandContext(ctx, "git", "diff").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--name-only").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	content := string(contentOut)
+
+	var files []string
+	for _, line := range strings.Split(strings.TrimRight(string(namesOut), "\n"), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+
+	return &diff.StagedDiff{
+		Files:   files,
+		Content: content,
+		Lines:   strings.Count(content, "\n"),
+	}, nil
+}
+
+func (c *Client) StageFiles(ctx context.Context, files []string) error {
+	args := append([]string{"add", "--"}, files...)
+	return exec.CommandContext(ctx, "git", args...).Run()
+}
+
+func (c *Client) UnstageAll(ctx context.Context) error {
+	return exec.CommandContext(ctx, "git", "reset", "HEAD").Run()
 }

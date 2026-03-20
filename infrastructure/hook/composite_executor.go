@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	domainCommit "github.com/fradser/ga-cli/domain/commit"
-	domainHook "github.com/fradser/ga-cli/domain/hook"
+	domainCommit "github.com/fradser/git-agent/domain/commit"
+	domainHook "github.com/fradser/git-agent/domain/hook"
 )
 
 type compositeHookExecutor struct {

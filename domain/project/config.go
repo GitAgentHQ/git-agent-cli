@@ -1,6 +1,6 @@
 package project
 
-// Config holds project-level configuration for ga.
+// Config holds project-level configuration for git-agent.
 type Config struct {
 	Scopes []string
 }

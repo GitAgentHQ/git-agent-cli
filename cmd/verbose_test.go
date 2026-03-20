@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/cmd"
+	"github.com/fradser/git-agent/cmd"
 )
 
 func TestVerboseFlag_Accepted(t *testing.T) {

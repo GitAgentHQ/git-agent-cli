@@ -113,10 +113,10 @@ tasks:
 - [Task 002: Define domain layer interfaces](./task-002-define-domain-interfaces.md)
 - [Task 003: Config resolver test](./task-003-config-resolver-test.md)
 - [Task 004: Config resolver implementation](./task-004-config-resolver-impl.md)
-- [Task 005: ga init command test](./task-005-ga-init-test.md)
-- [Task 006: ga init command implementation](./task-006-ga-init-impl.md)
-- [Task 007: ga commit core flow test](./task-007-ga-commit-core-test.md)
-- [Task 008: ga commit core flow implementation](./task-008-ga-commit-core-impl.md)
+- [Task 005: git agent init command test](./task-005-ga-init-test.md)
+- [Task 006: git agent init command implementation](./task-006-ga-init-impl.md)
+- [Task 007: git agent commit core flow test](./task-007-ga-commit-core-test.md)
+- [Task 008: git agent commit core flow implementation](./task-008-ga-commit-core-impl.md)
 - [Task 009: Diff filter test](./task-009-diff-filter-test.md)
 - [Task 010: Diff filter implementation](./task-010-diff-filter-impl.md)
 - [Task 011: Hook executor test](./task-011-hook-executor-test.md)
@@ -125,8 +125,8 @@ tasks:
 - [Task 014: Verbose mode and output contract implementation](./task-014-verbose-output-impl.md)
 - Task 015: Error handling and exit codes test](./task-015-error-handling-test.md)
 - [Task 016: Integration tests](./task-016-integration-tests.md)
-- [Task 017: ga add command test](./task-017-ga-add-test.md)
-- [Task 018: ga add command implementation](./task-018-ga-add-impl.md)
+- [Task 017: git agent add command test](./task-017-ga-add-test.md)
+- [Task 018: git agent add command implementation](./task-018-ga-add-impl.md)
 
 ## BDD Coverage
 
@@ -134,13 +134,13 @@ All BDD scenarios from the design are covered by these tasks:
 
 | Feature | Scenarios Covered | Task IDs |
 |---------|------------------|----------|
-| ga init - Happy Path | Init with default empty hook, Init with built-in conventional hook, Unknown hook name, Fresh repo, Custom max-commits | 005, 006 |
-| ga init - Error Scenarios | Config exists, Hook exists, --force, Not git repo, Missing API key | 005, 006, 015 |
-| ga commit - Happy Path | Generate commit, Scopes from config, Co-Author-By, User intent, Dry-run, Auto-stage (--all) | 007, 008 |
-| ga commit - Diff Filtering | Lock files excluded, Binary excluded, Truncation | 009, 010 |
-| ga commit - Config Resolution | Flag precedence, XDG user config file, zero-config free endpoint | 003, 004 |
-| ga add - Core Flow | Stage specific files, Wrapper around git add | 017, 018 |
-| ga commit - Error Scenarios | No staged changes, Missing API key, LLM errors | 015 |
+| git agent init - Happy Path | Init with default empty hook, Init with built-in conventional hook, Unknown hook name, Fresh repo, Custom max-commits | 005, 006 |
+| git agent init - Error Scenarios | Config exists, Hook exists, --force, Not git repo, Missing API key | 005, 006, 015 |
+| git agent commit - Happy Path | Generate commit, Scopes from config, Co-Author-By, User intent, Dry-run, Auto-stage (--all) | 007, 008 |
+| git agent commit - Diff Filtering | Lock files excluded, Binary excluded, Truncation | 009, 010 |
+| git agent commit - Config Resolution | Flag precedence, XDG user config file, zero-config free endpoint | 003, 004 |
+| git agent add - Core Flow | Stage specific files, Wrapper around git add | 017, 018 |
+| git agent commit - Error Scenarios | No staged changes, Missing API key, LLM errors | 015 |
 | Hook System | Hook passes, Hook blocks, No hook, Not executable | 011, 012 |
 | Verbose Mode | Verbose output, Truncation info | 013, 014 |
 | Exit Codes | Success (0), Error (1), Hook block (2) | 015 |

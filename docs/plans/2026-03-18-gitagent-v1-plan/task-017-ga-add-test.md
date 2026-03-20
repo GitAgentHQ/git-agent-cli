@@ -1,10 +1,10 @@
-# Task 017: ga add command test
+# Task 017: git agent add command test
 
 **depends-on**: task-002
 
 ## Description
 
-Write tests for the `ga add` command, which acts as a headless wrapper around `git add` to allow full takeover of the staging process.
+Write tests for the `git agent add` command, which acts as a headless wrapper around `git add` to allow full takeover of the staging process.
 
 ## Execution Context
 

@@ -15,7 +15,7 @@ Create the initial Go project structure with dependencies and folder layout. Thi
 ## Steps
 
 ### Step 1: Initialize Go module
-- Create `go.mod` with module name `github.com/fradser/ga-cli`
+- Create `go.mod` with module name `github.com/fradser/git-agent`
 - Set Go version to 1.21
 
 ### Step 2: Add dependencies
@@ -58,16 +58,16 @@ ga-cli/
 
 ### Step 6: Verify
 - Run `go mod tidy`
-- Run `go build -o ga .` to verify compilation
+- Run `go build -o git-agent .` to verify compilation
 
 ## Verification Commands
 
 ```bash
-go mod init github.com/fradser/ga-cli
+go mod init github.com/fradser/git-agent
 go get github.com/spf13/cobra@v1.8.0
 go get github.com/sashabaranov/go-openai@v1.24.0
 go mod tidy
-go build -o ga .
+go build -o git-agent .
 ./ga --help
 ```
 

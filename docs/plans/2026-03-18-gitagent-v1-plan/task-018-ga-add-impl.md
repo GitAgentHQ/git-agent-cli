@@ -1,16 +1,16 @@
-# Task 018: ga add command implementation
+# Task 018: git agent add command implementation
 
 **depends-on**: task-017
 
 ## Description
 
-Implement the `ga add` command and AddService logic to pass tests created in task 017.
+Implement the `git agent add` command and AddService logic to pass tests created in task 017.
 
 ## Execution Context
 
 **Task Number**: 18 of 18
 **Phase**: Staging Integration
-**Prerequisites**: ga add test scenarios written
+**Prerequisites**: git agent add test scenarios written
 
 ## Files to Modify/Create
 
@@ -40,5 +40,5 @@ go test ./application/... -v -run TestAdd
 
 ## Success Criteria
 
-- All `ga add` tests from task 017 pass
-- `ga add` works as a functional wrapper over `git add`
+- All `git agent add` tests from task 017 pass
+- `git agent add` works as a functional wrapper over `git add`

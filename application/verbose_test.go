@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/application"
-	"github.com/fradser/ga-cli/domain/project"
+	"github.com/fradser/git-agent/application"
+	"github.com/fradser/git-agent/domain/project"
 )
 
 func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	var buf bytes.Buffer
 	req := application.CommitRequest{
@@ -43,7 +43,7 @@ func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 func TestCommitService_Verbose_False_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	var buf bytes.Buffer
 	req := application.CommitRequest{
@@ -63,7 +63,7 @@ func TestCommitService_Verbose_False_NoOutput(t *testing.T) {
 func TestCommitService_Verbose_NilLogWriter_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{
 		Config:    &project.Config{},

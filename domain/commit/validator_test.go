@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/domain/commit"
+	"github.com/fradser/git-agent/domain/commit"
 )
 
 func validMsg() string {

@@ -18,20 +18,20 @@ Write end-to-end integration tests that verify the full CLI workflow with real g
 - Create temp git repo
 - Stage files
 - Start mock LLM server
-- Run `ga commit`
+- Run `git agent commit`
 - Verify git log shows commit
 
-### 2. ga init flow with mock LLM
+### 2. git agent init flow with mock LLM
 - Create temp git repo with commit history
 - Start mock LLM server
-- Run `ga init`
-- Verify .ga/project.yml created
-- Verify .ga/hooks/pre-commit created and executable
+- Run `git agent init`
+- Verify .git-agent/project.yml created
+- Verify .git-agent/hooks/pre-commit created and executable
 
 ### 3. Hook blocking integration
 - Create temp repo
 - Create pre-commit hook that exits 1
-- Run `ga commit`
+- Run `git agent commit`
 - Verify exit code 2
 - Verify no commit created
 
@@ -60,12 +60,12 @@ Write end-to-end integration tests that verify the full CLI workflow with real g
 - Create mock HTTP server helper
 - Create test fixtures
 
-### Step 2: Write ga init integration tests
+### Step 2: Write git agent init integration tests
 - Test full init flow
 - Test init with --hook conventional
 - Test init with --force
 
-### Step 3: Write ga commit integration tests
+### Step 3: Write git agent commit integration tests
 - Test full commit flow
 - Test hook blocking
 - Test dry-run

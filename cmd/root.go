@@ -6,20 +6,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gaErrors "github.com/fradser/ga-cli/pkg/errors"
+	agentErrors "github.com/fradser/git-agent/pkg/errors"
 )
 
 var verbose bool
 
 var rootCmd = &cobra.Command{
-	Use:          "ga",
+	Use:          "git-agent",
 	Short:        "AI-first Git CLI for automated commit message generation",
 	SilenceUsage: true,
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		var exitErr *gaErrors.ExitCodeError
+		var exitErr *agentErrors.ExitCodeError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code)
 		}

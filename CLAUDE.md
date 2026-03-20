@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build
-go build -o ga .
+go build -o git-agent .
 
 # Run all tests
-go test ./...
+go test -count=1 ./application/... ./domain/... ./infrastructure/... ./cmd/... ./e2e/...
 
 # Run a single package's tests
 go test ./application/...
@@ -27,38 +27,51 @@ go test ./... -v
 
 ## Architecture
 
-`ga` follows Clean Architecture with strict inward dependency flow:
+`git-agent` follows Clean Architecture with strict inward dependency flow:
 
 ```
 cmd → application → domain ← infrastructure
 ```
 
-**`domain/`** — pure Go, zero external imports. Defines value objects and interfaces only: `commit.CommitMessageGenerator`, `diff.DiffFilter`, `diff.StagedDiff`, `hook.HookExecutor`, `hook.HookInput`, `project.Config`.
+**`domain/`** — pure Go, zero external imports. Interfaces and value objects only:
+- `commit.CommitMessageGenerator` — generates a single commit message from a diff
+- `commit.CommitPlanner` / `PlanRequest` / `CommitPlan` / `CommitGroup` — splits changes into atomic commit groups
+- `diff.StagedDiff`, `diff.DiffFilter`
+- `hook.HookExecutor`, `hook.HookInput`
+- `project.Config`
 
 **`application/`** — two services wired to domain interfaces:
-- `CommitService`: AddAll → StagedDiff → (empty check) → Generate → assemble message → hook → Commit
-- `InitService`: stubbed; not yet wired to real LLM or file writer
+- `CommitService`: gets staged+unstaged diffs → auto-scope if no config → plan commits → for each group: unstage-all, stage-group, generate message, hook-retry (3 attempts), re-plan on hook failure (max 2 re-plans) → commit
+- `InitService`: delegates scope generation and file writing to `ScopeService`
+- `ScopeService`: `Generate(ctx, maxCommits)` calls LLM+git; `MergeAndSave(ctx, path, scopes)` reads existing yaml, deduplicates (case-insensitive), writes merged result
 
-**`infrastructure/`** — implements domain interfaces with real I/O:
-- `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/ga/config.yml` → default)
+**`infrastructure/`** — implements domain interfaces:
+- `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default)
 - `infrastructure/diff/`: filters lock files and binaries from diffs
-- `infrastructure/hook/`: runs `.ga/hooks/pre-commit` as a subprocess, passing `HookInput` as JSON via stdin
+- `infrastructure/hook/`: `ShellHookExecutor` runs `.git-agent/hooks/pre-commit` as a subprocess; `CompositeHookExecutor` runs the built-in Go conventional-commit validator first, then delegates to the shell executor
+- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AddAll`, `CommitSubjects`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`
+- `infrastructure/openai/`: implements both `CommitMessageGenerator` (`Generate`) and `CommitPlanner` (`Plan`) — the same `*Client` satisfies both interfaces
 
-**`cmd/`** — cobra wiring only; no business logic. Currently `commit.go` and `init.go` are stubs (RunE returns nil without calling application services). `add.go` is fully wired.
+**`cmd/`** — cobra wiring only; no business logic:
+- `init` — `--scope` (bool, AI-generate scopes) + `--hook` (string: `conventional`, `empty`, or file path) + `--force` + `--max-commits`. No flags → defaults to `--scope --hook empty`.
+- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--api-key`, `--model`, `--base-url`, `--max-diff-lines`.
+- `add` command does not exist (removed).
 
-**`pkg/`** — shared utilities: `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
+**`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
 
-**`e2e/`** — integration tests that build the `ga` binary via `TestMain` and invoke it as a subprocess. This avoids cobra flag state leaking between tests.
+**`e2e/`** — builds the `git-agent` binary via `TestMain` and invokes it as a subprocess. Avoids cobra flag-state leakage between tests.
 
 ## Key Design Decisions
 
-**Hook protocol**: hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block (exit code 2 from `ga`).
+**Hook protocol**: hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block. On block, `git-agent` exits with code 2. The composite executor runs the native Go validator before the shell hook.
 
-**Config precedence**: CLI flag > `~/.config/ga/config.yml` > zero-config default. The `infrastructure/config/Resolver` handles this; project config (`.ga/project.yml`) provides scopes but not credentials.
+**Multi-commit flow**: `CommitService` calls `planner.Plan()` to get a `CommitPlan`, then for each `CommitGroup` it calls `git.UnstageAll()` + `git.StageFiles(group.Files)` before generating and committing. Hook failures after 3 retries trigger a re-plan of the remaining files (capped at 2 re-plans to avoid infinite loops).
 
-**Diff filtering**: `pkg/filter.SkipPatterns` defines lock files and binary extensions excluded before sending to the LLM. `domain/diff/Truncator` caps at `--max-diff-lines` (default 500).
+**Auto-scope**: if `CommitRequest.Config` is nil or has no scopes, `CommitService` calls `ScopeService.Generate()` and `MergeAndSave()` automatically before planning. Pass `Config: &project.Config{}` (non-nil, empty) to suppress this.
 
-**`cmd` is not yet wired**: `cmd/commit.go` and `cmd/init.go` parse flags but do not call the application services. The application layer (`CommitService`, `InitService`) is complete and tested in isolation. Wiring them to real infrastructure adapters and the cmd layer is the next implementation step.
+**Config precedence**: CLI flag > `~/.config/git-agent/config.yml` > zero-config default. Project config (`.git-agent/project.yml`) provides scopes; credentials never go there.
+
+**Diff filtering**: `pkg/filter.SkipPatterns` defines lock files and binary extensions excluded before LLM calls. `domain/diff/Truncator` caps at `--max-diff-lines` (default 500).
 
 ## Commit Conventions
 

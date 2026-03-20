@@ -8,25 +8,25 @@ import (
 	"testing"
 )
 
-var gaBin string
+var agentBin string
 
 func TestMain(m *testing.M) {
 	bin, err := buildBinary()
 	if err != nil {
-		panic("failed to build ga binary: " + err.Error())
+		panic("failed to build git-agent binary: " + err.Error())
 	}
-	gaBin = bin
+	agentBin = bin
 	defer os.Remove(bin)
 	os.Exit(m.Run())
 }
 
 func buildBinary() (string, error) {
-	tmp, err := os.MkdirTemp("", "ga-e2e-*")
+	tmp, err := os.MkdirTemp("", "git-agent-e2e-*")
 	if err != nil {
 		return "", err
 	}
-	bin := filepath.Join(tmp, "ga")
-	c := exec.Command("go", "build", "-o", bin, "github.com/fradser/ga-cli")
+	bin := filepath.Join(tmp, "git-agent")
+	c := exec.Command("go", "build", "-o", bin, "github.com/fradser/git-agent")
 	if out, err := c.CombinedOutput(); err != nil {
 		os.RemoveAll(tmp)
 		return "", fmt.Errorf("%w\n%s", err, out)
@@ -34,17 +34,17 @@ func buildBinary() (string, error) {
 	return bin, nil
 }
 
-// ga runs the ga binary with the given args in the given directory, with no user config.
+// gitAgent runs the git-agent binary with the given args in the given directory, with no user config.
 // Returns combined output and exit code.
-func ga(t *testing.T, dir string, args ...string) (string, int) {
+func gitAgent(t *testing.T, dir string, args ...string) (string, int) {
 	t.Helper()
-	return gaEnv(t, dir, nil, args...)
+	return gitAgentEnv(t, dir, nil, args...)
 }
 
-// gaEnv runs the ga binary with additional environment variables.
-func gaEnv(t *testing.T, dir string, env []string, args ...string) (string, int) {
+// gitAgentEnv runs the git-agent binary with additional environment variables.
+func gitAgentEnv(t *testing.T, dir string, env []string, args ...string) (string, int) {
 	t.Helper()
-	c := exec.Command(gaBin, args...)
+	c := exec.Command(agentBin, args...)
 	c.Dir = dir
 	// Isolate from user config by default.
 	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
@@ -55,7 +55,7 @@ func gaEnv(t *testing.T, dir string, env []string, args ...string) (string, int)
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
 		} else {
-			t.Fatalf("unexpected error running ga: %v", err)
+			t.Fatalf("unexpected error running git-agent: %v", err)
 		}
 	}
 	return string(out), code

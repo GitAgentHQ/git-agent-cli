@@ -107,7 +107,7 @@ Create minimal struct implementations that satisfy interfaces (for compilation)
 ## Verification Commands
 
 ```bash
-go build -o ga .
+go build -o git-agent .
 ```
 
 ## Success Criteria

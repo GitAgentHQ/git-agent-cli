@@ -16,7 +16,7 @@ Write tests for error handling scenarios and exit code verification.
 
 ```gherkin
 Scenario: Success exits with code 0
-  Given a successful `ga commit` run
+  Given a successful `git agent commit` run
   Then the process exits with code 0
   And stdout contains the outline
 
@@ -34,23 +34,23 @@ Scenario: Hook block exits with code 2
 
 Scenario: No staged changes
   Given I have no staged changes in the repository
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: no staged changes to commit"
   And no LLM call is made
   And `git commit` is NOT executed
   And exit code is 1
 
 Scenario: Missing API key with custom endpoint
-  Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
+  Given ~/.config/git-agent/config.yml has base_url "https://api.openai.com/v1" and no api_key
   And no --api-key flag is provided
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: api_key required when using custom base_url"
   And exit code is 1
 
 Scenario: LLM API returns HTTP error
   Given I have staged changes
   And the OpenAI API returns HTTP 500
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: failed to generate commit message: <details>"
   And `git commit` is NOT executed
   And exit code is 1
@@ -58,41 +58,41 @@ Scenario: LLM API returns HTTP error
 Scenario: LLM API timeout
   Given I have staged changes
   And the OpenAI API does not respond within 30 seconds
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: API request timed out"
   And exit code is 1
 
 Scenario: LLM returns malformed JSON
   Given I have staged changes
   And the LLM returns a response that is not valid JSON
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: invalid LLM response format"
   And exit code is 1
 
 Scenario: LLM returns JSON missing commit_message
   Given I have staged changes
   And the LLM returns {"outline": "..."} without commit_message or body
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: LLM response missing required field: commit_message"
   And exit code is 1
 
 Scenario: LLM returns JSON missing body
   Given I have staged changes
   And the LLM returns {"commit_message": "feat: x", "outline": "..."} without body
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: LLM response missing required field: body"
   And exit code is 1
 
 Scenario: Not in a git repository
   Given the current directory is not a git repository
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: not a git repository"
   And no LLM call is made
   And exit code is 1
 
 Scenario: git binary not found
   Given `git` is not installed or not in PATH
-  When I run `ga commit`
+  When I run `git agent commit`
   Then stderr prints "error: git not found in PATH"
   And no LLM call is made
   And exit code is 1

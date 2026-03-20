@@ -129,7 +129,7 @@ fmt.Println("Error: " + err.Error())
 | `--dry-run` | — | `false` |
 | `--verbose` | — | `false` |
 
-Flags override `~/.config/ga/config.yml` values. Env vars are only used for `GA_CO_AUTHOR` and `GA_MAX_DIFF_LINES`.
+Flags override `~/.config/git-agent/config.yml` values. Env vars are only used for `GA_CO_AUTHOR` and `GA_MAX_DIFF_LINES`.
 
 ### Cobra Wiring Pattern
 
@@ -186,7 +186,7 @@ cmd := exec.CommandContext(hookCtx, absHookPath)
 
 ```bash
 #!/bin/bash
-# .ga/hooks/pre-commit
+# .git-agent/hooks/pre-commit
 # Blocks WIP commits; commit_message contains the full assembled message
 
 INPUT=$(cat)
@@ -287,7 +287,7 @@ func maskKey(key string) string {
 
 ### Diff Content Warning
 
-Document in README: staged diffs may contain secrets (API keys, passwords, tokens). Recommend using `git-secrets`, `detect-secrets`, or a custom `.ga/hooks/pre-commit` that scans for patterns.
+Document in README: staged diffs may contain secrets (API keys, passwords, tokens). Recommend using `git-secrets`, `detect-secrets`, or a custom `.git-agent/hooks/pre-commit` that scans for patterns.
 
 `ga` itself does not scan for secrets in V1 (avoid false positives from legitimate code).
 
@@ -359,7 +359,7 @@ func TestCommitIntegration(t *testing.T) {
     os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
     exec.Command("git", "-C", dir, "add", "main.go").Run()
 
-    // Run ga commit with mock OpenAI endpoint
+    // Run git agent commit with mock OpenAI endpoint
     // ... verify git log
 }
 ```

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fradser/ga-cli/application"
+	"github.com/fradser/git-agent/application"
 )
 
 type mockGitClient struct {

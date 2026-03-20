@@ -10,18 +10,18 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fradser/ga-cli/application"
-	"github.com/fradser/ga-cli/domain/project"
-	infraConfig "github.com/fradser/ga-cli/infrastructure/config"
-	infraGit "github.com/fradser/ga-cli/infrastructure/git"
-	infraHook "github.com/fradser/ga-cli/infrastructure/hook"
-	infraOpenAI "github.com/fradser/ga-cli/infrastructure/openai"
-	gaErrors "github.com/fradser/ga-cli/pkg/errors"
+	"github.com/fradser/git-agent/application"
+	"github.com/fradser/git-agent/domain/project"
+	infraConfig "github.com/fradser/git-agent/infrastructure/config"
+	infraGit "github.com/fradser/git-agent/infrastructure/git"
+	infraHook "github.com/fradser/git-agent/infrastructure/hook"
+	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
+	agentErrors "github.com/fradser/git-agent/pkg/errors"
 )
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
-	Short: "Generate and create a commit with an AI-generated message",
+	Short: "Generate and create commit(s) with AI-generated messages",
 	RunE:  runCommit,
 }
 
@@ -32,7 +32,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	intent, _ := cmd.Flags().GetString("intent")
 	coAuthor, _ := cmd.Flags().GetString("co-author")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	all, _ := cmd.Flags().GetBool("all")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
 
 	providerCfg, err := infraConfig.Resolve(infraConfig.ProviderConfig{
@@ -45,15 +44,25 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	if providerCfg.APIKey == "" {
-		return gaErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag or add api_key to ~/.config/ga/config.yml")
+		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag or add api_key to ~/.config/git-agent/config.yml")
 	}
 
 	projCfg := loadProjectConfig()
 
+	llmClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
+	gitClient := infraGit.NewClient()
+
+	var scopeSvc *application.ScopeService
+	if projCfg == nil || len(projCfg.Scopes) == 0 {
+		scopeSvc = application.NewScopeService(llmClient, gitClient)
+	}
+
 	svc := application.NewCommitService(
-		infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
-		infraGit.NewClient(),
+		llmClient,
+		llmClient,
+		gitClient,
 		infraHook.NewCompositeHookExecutor(),
+		scopeSvc,
 	)
 
 	var logWriter io.Writer
@@ -64,9 +73,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:    intent,
 		CoAuthor:  coAuthor,
-		HookPath:  ".ga/hooks/pre-commit",
+		HookPath:  ".git-agent/hooks/pre-commit",
 		DryRun:    dryRun,
-		All:       all,
 		Config:    projCfg,
 		MaxLines:  maxDiffLines,
 		Verbose:   verbose,
@@ -75,13 +83,15 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
-			return gaErrors.NewExitCodeError(2, "error: commit blocked after retries")
+			return agentErrors.NewExitCodeError(2, "error: commit blocked after retries")
 		}
 		return err
 	}
 
-	if result.Outline != "" {
-		fmt.Fprintln(cmd.OutOrStdout(), result.Outline)
+	for _, c := range result.Commits {
+		if c.Outline != "" {
+			fmt.Fprintln(cmd.OutOrStdout(), c.Outline)
+		}
 	}
 
 	return nil
@@ -89,22 +99,22 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 func userConfigPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ga", "config.yml")
+		return filepath.Join(xdg, "git-agent", "config.yml")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "ga", "config.yml")
+	return filepath.Join(home, ".config", "git-agent", "config.yml")
 }
 
 func loadProjectConfig() *project.Config {
-	data, err := os.ReadFile(".ga/project.yml")
+	data, err := os.ReadFile(".git-agent/project.yml")
 	if err != nil {
-		return &project.Config{}
+		return nil
 	}
 	var raw struct {
 		Scopes []string `yaml:"scopes"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return &project.Config{}
+		return nil
 	}
 	return &project.Config{Scopes: raw.Scopes}
 }
@@ -113,7 +123,6 @@ func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
 	commitCmd.Flags().String("co-author", "", "add a co-author to the commit message")
-	commitCmd.Flags().BoolP("all", "a", false, "stage all tracked changes before committing")
 	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")

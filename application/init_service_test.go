@@ -4,9 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/application"
+	"github.com/fradser/git-agent/application"
 )
 
 // mockLLMClient implements application.LLMClient.
@@ -48,7 +49,6 @@ func (m *mockGitReader) IsGitRepo(ctx context.Context) bool {
 func TestInitService_WritesProjectYML(t *testing.T) {
 	dir := t.TempDir()
 	ymlPath := filepath.Join(dir, "project.yml")
-	hookPath := filepath.Join(dir, "conventional")
 
 	llm := &mockLLMClient{scopes: []string{"cmd", "application"}, reasoning: "top dirs"}
 	git := &mockGitReader{commits: []string{"feat: add init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
@@ -56,9 +56,6 @@ func TestInitService_WritesProjectYML(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: ymlPath,
-		HookPath:       hookPath,
-		HookName:       "conventional",
-		Force:          false,
 		MaxCommits:     20,
 	}
 	if err := svc.Init(context.Background(), req); err != nil {
@@ -70,33 +67,10 @@ func TestInitService_WritesProjectYML(t *testing.T) {
 	}
 }
 
-func TestInitService_ErrorIfProjectYMLExists(t *testing.T) {
+func TestInitService_MergesExistingScopes(t *testing.T) {
 	dir := t.TempDir()
 	ymlPath := filepath.Join(dir, "project.yml")
-	if err := os.WriteFile(ymlPath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	llm := &mockLLMClient{scopes: []string{"cmd"}}
-	git := &mockGitReader{isGitRepo: true}
-	svc := application.NewInitService(llm, git)
-
-	req := application.InitRequest{
-		ProjectYMLPath: ymlPath,
-		HookPath:       filepath.Join(dir, "conventional"),
-		HookName:       "conventional",
-		Force:          false,
-		MaxCommits:     20,
-	}
-	if err := svc.Init(context.Background(), req); err == nil {
-		t.Fatal("expected error when project.yml exists and Force=false")
-	}
-}
-
-func TestInitService_ForceOverwrites(t *testing.T) {
-	dir := t.TempDir()
-	ymlPath := filepath.Join(dir, "project.yml")
-	if err := os.WriteFile(ymlPath, []byte("old content"), 0644); err != nil {
+	if err := os.WriteFile(ymlPath, []byte("scopes:\n- existing\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,40 +80,21 @@ func TestInitService_ForceOverwrites(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: ymlPath,
-		HookPath:       filepath.Join(dir, "conventional"),
-		HookName:       "conventional",
-		Force:          true,
 		MaxCommits:     20,
 	}
 	if err := svc.Init(context.Background(), req); err != nil {
-		t.Fatalf("unexpected error with Force=true: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
 	data, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) == "old content" {
-		t.Fatal("expected project.yml to be overwritten")
-	}
-}
-
-func TestInitService_UnknownHook(t *testing.T) {
-	dir := t.TempDir()
-
-	llm := &mockLLMClient{scopes: []string{"cmd"}}
-	git := &mockGitReader{isGitRepo: true}
-	svc := application.NewInitService(llm, git)
-
-	req := application.InitRequest{
-		ProjectYMLPath: filepath.Join(dir, "project.yml"),
-		HookPath:       filepath.Join(dir, "unknown-hook"),
-		HookName:       "unknown-hook",
-		Force:          false,
-		MaxCommits:     20,
-	}
-	if err := svc.Init(context.Background(), req); err == nil {
-		t.Fatal("expected error for unknown hook name")
+	content := string(data)
+	for _, want := range []string{"existing", "cmd", "application"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected %q in merged config, got:\n%s", want, content)
+		}
 	}
 }
 
@@ -152,12 +107,10 @@ func TestInitService_NotGitRepo(t *testing.T) {
 
 	req := application.InitRequest{
 		ProjectYMLPath: filepath.Join(dir, "project.yml"),
-		HookPath:       filepath.Join(dir, "conventional"),
-		HookName:       "conventional",
-		Force:          false,
 		MaxCommits:     20,
 	}
 	if err := svc.Init(context.Background(), req); err == nil {
 		t.Fatal("expected error when not in a git repo")
 	}
 }
+

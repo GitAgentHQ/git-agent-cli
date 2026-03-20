@@ -35,7 +35,7 @@ Scenario: Verbose flag shows truncation info
   And exit code is 0
 
 Scenario: stdout contains only the outline on success
-  Given a successful `ga commit` run
+  Given a successful `git agent commit` run
   Then stdout contains exactly the outline text and nothing else
   And stdout does not contain the commit message
   And stdout does not contain debug info

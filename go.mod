@@ -1,4 +1,4 @@
-module github.com/fradser/ga-cli
+module github.com/fradser/git-agent
 
 go 1.26.1
 

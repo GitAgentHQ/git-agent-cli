@@ -1,10 +1,10 @@
-# Task 005: ga init command test
+# Task 005: git agent init command test
 
 **depends-on**: task-004
 
 ## Description
 
-Write tests for the `ga init` command that generates .ga/project.yml from git history and top-level directories using an LLM.
+Write tests for the `git agent init` command that generates .git-agent/project.yml from git history and top-level directories using an LLM.
 
 ## Execution Context
 
@@ -18,24 +18,24 @@ Write tests for the `ga init` command that generates .ga/project.yml from git hi
 Scenario: Init with default empty hook
   Given the repository has 50+ commits with conventional commit subjects
   
-  And .ga/project.yml does not exist
-  When I run `ga init`
+  And .git-agent/project.yml does not exist
+  When I run `git agent init`
   Then git log subjects (up to 200) are read
   And top-level directories are scanned
   And the LLM returns {"scopes": ["api", "core", "auth"], "reasoning": "..."}
-  And .ga/project.yml is written with the scopes list
-  And .ga/hooks/pre-commit is created as an empty executable placeholder (exit 0)
-  And stdout contains the generated .ga/project.yml content
+  And .git-agent/project.yml is written with the scopes list
+  And .git-agent/hooks/pre-commit is created as an empty executable placeholder (exit 0)
+  And stdout contains the generated .git-agent/project.yml content
   And stderr contains the LLM reasoning
   And exit code is 0
 
 Scenario: Init with built-in conventional hook
-  Given .ga/project.yml does not exist
+  Given .git-agent/project.yml does not exist
   
   When I run `ga init --hook conventional`
-  Then .ga/project.yml is written
-  And .ga/hooks/pre-commit is installed from the embedded conventional template
-  And .ga/hooks/pre-commit is executable (chmod +x)
+  Then .git-agent/project.yml is written
+  And .git-agent/hooks/pre-commit is installed from the embedded conventional template
+  And .git-agent/hooks/pre-commit is executable (chmod +x)
   And stderr prints "installed hook: conventional"
   And exit code is 0
 
@@ -48,10 +48,10 @@ Scenario: Unknown hook name
 Scenario: Init on fresh repository with no commit history
   Given the repository has 0 commits
   
-  When I run `ga init`
+  When I run `git agent init`
   Then only top-level directories are used as hints
   And the LLM generates scopes from directory names
-  And .ga/project.yml is written
+  And .git-agent/project.yml is written
   And exit code is 0
 
 Scenario: Custom max-commits depth
@@ -61,33 +61,33 @@ Scenario: Custom max-commits depth
   And exit code is 0
 
 Scenario: Config already exists without --force
-  Given .ga/project.yml already exists
-  When I run `ga init`
-  Then stderr prints "error: .ga/project.yml already exists (use --force to overwrite)"
+  Given .git-agent/project.yml already exists
+  When I run `git agent init`
+  Then stderr prints "error: .git-agent/project.yml already exists (use --force to overwrite)"
   And the existing file is not modified
   And exit code is 1
 
 Scenario: Hook already exists without --force
-  Given .ga/hooks/pre-commit already exists
-  When I run `ga init`
-  Then stderr prints "error: .ga/hooks/pre-commit already exists (use --force to overwrite)"
+  Given .git-agent/hooks/pre-commit already exists
+  When I run `git agent init`
+  Then stderr prints "error: .git-agent/hooks/pre-commit already exists (use --force to overwrite)"
   And exit code is 1
 
 Scenario: Config and hook overwritten with --force
-  Given .ga/project.yml and .ga/hooks/pre-commit already exist
+  Given .git-agent/project.yml and .git-agent/hooks/pre-commit already exist
   When I run `ga init --force`
   Then both files are overwritten
   And exit code is 0
 
 Scenario: Not in a git repository
   Given the current directory is not a git repository
-  When I run `ga init`
+  When I run `git agent init`
   Then stderr prints "error: not a git repository"
   And exit code is 1
 
 Scenario: Missing API key with custom endpoint
-  Given ~/.config/ga/config.yml has base_url "https://api.openai.com/v1" and no api_key
-  When I run `ga init`
+  Given ~/.config/git-agent/config.yml has base_url "https://api.openai.com/v1" and no api_key
+  When I run `git agent init`
   Then stderr prints "error: api_key required when using custom base_url"
   And exit code is 1
 ```

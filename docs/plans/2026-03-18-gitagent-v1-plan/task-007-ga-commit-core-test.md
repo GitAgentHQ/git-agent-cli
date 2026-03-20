@@ -1,10 +1,10 @@
-# Task 007: ga commit core flow test
+# Task 007: git agent commit core flow test
 
 **depends-on**: task-004
 
 ## Description
 
-Write tests for the core `ga commit` flow that generates commit messages from staged diffs.
+Write tests for the core `git agent commit` flow that generates commit messages from staged diffs.
 
 ## Execution Context
 
@@ -17,21 +17,21 @@ Write tests for the core `ga commit` flow that generates commit messages from st
 ```gherkin
 Scenario: Generate and commit from staged changes
   Given I have staged changes in the repository
-  And no ~/.config/ga/config.yml exists (using built-in free endpoint)
-  When I run `ga commit`
+  And no ~/.config/git-agent/config.yml exists (using built-in free endpoint)
+  When I run `git agent commit`
   Then the staged diff is extracted via `git diff --staged`
   And the diff is sent to the LLM with a conventional commit prompt
   And the LLM returns {"commit_message": "feat(core): ...", "body": "- ...\n\n...", "outline": "..."}
   And ga assembles the full commit message (title + blank line + body)
-  And .ga/hooks/pre-commit (if present) receives the JSON payload and exits 0
+  And .git-agent/hooks/pre-commit (if present) receives the JSON payload and exits 0
   And `git commit -m "<full_commit_message>"` is executed
   And the outline is printed to stdout
   And exit code is 0
 
-Scenario: Commit with scopes from .ga/project.yml
-  Given .ga/project.yml exists with scopes [api, core, auth]
+Scenario: Commit with scopes from .git-agent/project.yml
+  Given .git-agent/project.yml exists with scopes [api, core, auth]
   And I have staged changes in src/api/handler.go
-  When I run `ga commit`
+  When I run `git agent commit`
   Then the LLM prompt includes "Valid scopes: api, core, auth"
   And the generated commit_message uses one of the valid scopes
   And the hook receives config.scopes = ["api", "core", "auth"]
@@ -40,7 +40,7 @@ Scenario: Commit with scopes from .ga/project.yml
 Scenario: Generate commit with Co-Authored-By footer
   Given I have staged changes
   And GA_CO_AUTHOR is set to "Claude Sonnet 4.6 <noreply@anthropic.com>"
-  When I run `ga commit`
+  When I run `git agent commit`
   Then the assembled commit message ends with "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
   And exit code is 0
 

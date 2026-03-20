@@ -3,8 +3,8 @@ package commit
 import (
 	"context"
 
-	"github.com/fradser/ga-cli/domain/diff"
-	"github.com/fradser/ga-cli/domain/project"
+	"github.com/fradser/git-agent/domain/diff"
+	"github.com/fradser/git-agent/domain/project"
 )
 
 // GenerateRequest contains everything needed to generate a commit message.

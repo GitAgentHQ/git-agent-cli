@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement the hook execution system that runs .ga/hooks/pre-commit with JSON payload.
+Implement the hook execution system that runs .git-agent/hooks/pre-commit with JSON payload.
 
 ## Execution Context
 
@@ -16,7 +16,7 @@ Implement the hook execution system that runs .ga/hooks/pre-commit with JSON pay
 
 ### 1. infrastructure/hook/executor.go
 Implement HookExecutor interface:
-- Check if .ga/hooks/pre-commit exists
+- Check if .git-agent/hooks/pre-commit exists
 - Check if file is executable (chmod +x)
 - Execute hook with JSON via stdin
 - Capture stdout/stderr

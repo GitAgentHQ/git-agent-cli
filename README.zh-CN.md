@@ -1,4 +1,4 @@
-# ga-cli ![](https://img.shields.io/badge/go-1.26+-00ADFF?logo=go)
+# git-agent ![](https://img.shields.io/badge/go-1.26+-00ADFF?logo=go)
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
@@ -10,62 +10,62 @@
 ## 安装
 
 ```bash
-go install github.com/fradser/ga-cli@latest
+go install github.com/fradser/git-agent@latest
 ```
 
-或从 [ releases ](https://github.com/fradser/ga-cli/releases) 下载预编译的二进制文件。
+或从 [ releases ](https://github.com/fradser/git-agent/releases) 下载预编译的二进制文件。
 
 ## 快速开始
 
 ```bash
-# 在当前仓库初始化 ga
-ga init
+# 在当前仓库初始化 git-agent
+git agent init
 
 # 暂存你的更改
-ga add .
+git agent add .
 
 # 生成并创建带有 AI 生成信息的提交
-ga commit
+git agent commit
 
 # 或一步完成暂存和提交
-ga commit --all
+git agent commit --all
 ```
 
 ## 命令
 
-### `ga init`
+### `git agent init`
 
-在当前仓库初始化 ga。分析 git 历史和目录结构，生成项目特定的提交作用域。
+在当前仓库初始化 git-agent。分析 git 历史和目录结构，生成项目特定的提交作用域。
 
 ```bash
-ga init                    # 使用默认的空钩子
-ga init --hook conventional  # 安装 Conventional Commits 验证器
-ga init --force            # 覆盖现有配置
+git agent init                    # 使用默认的空钩子
+git agent init --hook conventional  # 安装 Conventional Commits 验证器
+git agent init --force            # 覆盖现有配置
 ```
 
-### `ga commit`
+### `git agent commit`
 
 生成并创建带有 AI 生成信息的提交。
 
 ```bash
-ga commit                  # 提交暂存的更改
-ga commit --all           # 先暂存所有更改，再提交
-ga commit --dry-run       # 仅打印提交信息，不执行提交
-ga commit --intent "fix auth bug"  # 为 LLM 提供上下文提示
+git agent commit                  # 提交暂存的更改
+git agent commit --all           # 先暂存所有更改，再提交
+git agent commit --dry-run       # 仅打印提交信息，不执行提交
+git agent commit --intent "fix auth bug"  # 为 LLM 提供上下文提示
 ```
 
-### `ga add`
+### `git agent add`
 
 暂存文件以进行提交（`git add` 的封装）。
 
 ```bash
-ga add .
-ga add src/ utils/
+git agent add .
+git agent add src/ utils/
 ```
 
 ## 配置
 
-### 用户配置 (`~/.config/ga/config.yml`)
+### 用户配置 (`~/.config/git-agent/config.yml`)
 
 可选。指向任意 OpenAI 兼容端点：
 
@@ -90,9 +90,9 @@ base_url: http://localhost:11434/v1
 model: llama3
 ```
 
-### 项目配置 (`.ga/project.yml`)
+### 项目配置 `.git-agent/project.yml`
 
-由 `ga init` 生成。定义团队范围的提交类型：
+由 `git agent init` 生成。定义团队范围的提交类型：
 
 ```yaml
 scopes:
@@ -104,14 +104,14 @@ scopes:
 
 ### 钩子
 
-内置钩子（由 `ga init --hook <name>` 安装）：
+内置钩子（由 `git agent init --hook <name>` 安装）：
 
 | 钩子 | 描述 |
 |------|-------------|
 | `empty` | 默认空占位符，始终通过 |
 | `conventional` | 验证 Conventional Commits 格式 |
 
-自定义钩子是位于 `.ga/hooks/pre-commit` 的可执行脚本。它们通过 stdin 接收 JSON，退出 0 表示继续，非 0 表示阻止。
+自定义钩子是位于 `.git-agent/hooks/pre-commit` 的可执行脚本。它们通过 stdin 接收 JSON，退出 0 表示继续，非 0 表示阻止。
 
 ## 标志
 

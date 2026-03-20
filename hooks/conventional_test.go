@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/hooks"
+	"github.com/fradser/git-agent/hooks"
 )
 
 func TestConventionalHook(t *testing.T) {

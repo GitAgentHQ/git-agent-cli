@@ -1,10 +1,10 @@
-# Task 006: ga init command implementation
+# Task 006: git agent init command implementation
 
 **depends-on**: task-005
 
 ## Description
 
-Implement the `ga init` command that generates .ga/project.yml from git history and top-level directories using an LLM.
+Implement the `git agent init` command that generates .git-agent/project.yml from git history and top-level directories using an LLM.
 
 ## Execution Context
 
@@ -26,7 +26,7 @@ Implement the `ga init` command that generates .ga/project.yml from git history 
   3. Scan top-level directories
   4. Build LLM prompt with subjects + dirs
   5. Call LLM, receive scopes + reasoning
-  6. Write .ga/project.yml
+  6. Write .git-agent/project.yml
   7. Install hook (or empty placeholder)
 
 ### 3. infrastructure/openai/prompt_builder.go
@@ -36,10 +36,10 @@ Implement the `ga init` command that generates .ga/project.yml from git history 
   - Request for scopes array
 
 ### 4. infrastructure/fs/config_writer.go
-- Write .ga/project.yml with scopes list
+- Write .git-agent/project.yml with scopes list
 
 ### 5. infrastructure/fs/hook_installer.go
-- Create .ga/hooks/pre-commit
+- Create .git-agent/hooks/pre-commit
 - chmod +x
 - Install from embed or empty placeholder
 

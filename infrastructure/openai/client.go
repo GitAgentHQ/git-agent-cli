@@ -8,7 +8,7 @@ import (
 
 	goopenai "github.com/sashabaranov/go-openai"
 
-	"github.com/fradser/ga-cli/domain/commit"
+	"github.com/fradser/git-agent/domain/commit"
 )
 
 type Client struct {
@@ -106,6 +106,90 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		Body:    result.Body,
 		Outline: result.Outline,
 	}, nil
+}
+
+func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {
+	var parts []string
+
+	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
+		parts = append(parts, fmt.Sprintf("Staged diff (already staged by user — keep as group 0):\n<staged>\n%s\n</staged>\nStaged files: %s",
+			truncateLines(req.StagedDiff.Content, 300),
+			strings.Join(req.StagedDiff.Files, ", "),
+		))
+	}
+
+	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
+		parts = append(parts, fmt.Sprintf("Unstaged diff:\n<unstaged>\n%s\n</unstaged>\nUnstaged files: %s",
+			truncateLines(req.UnstagedDiff.Content, 300),
+			strings.Join(req.UnstagedDiff.Files, ", "),
+		))
+	}
+
+	userPrompt := strings.Join(parts, "\n\n")
+	if req.Intent != "" {
+		userPrompt += "\n\nUser intent: " + req.Intent
+	}
+	if req.Config != nil && len(req.Config.Scopes) > 0 {
+		userPrompt += "\n\nValid scopes: " + strings.Join(req.Config.Scopes, ", ")
+	}
+
+	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+		Model: c.model,
+		Messages: []goopenai.ChatCompletionMessage{
+			{
+				Role: goopenai.ChatMessageRoleSystem,
+				Content: `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
+
+If there are staged files, they MUST be group 0 (respect user intent).
+Split unstaged changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+Each group should be a cohesive unit of change.
+
+Respond ONLY with valid JSON:
+{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
+
+Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.`,
+			},
+			{
+				Role:    goopenai.ChatMessageRoleUser,
+				Content: userPrompt,
+			},
+		},
+		Temperature:         0,
+		MaxCompletionTokens: 32768,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai chat completion: %w", err)
+	}
+
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("LLM returned empty response")
+	}
+
+	raw := extractJSON(resp.Choices[0].Message.Content)
+	var result struct {
+		Groups []struct {
+			Files   []string `json:"files"`
+			Title   string   `json:"title"`
+			Body    string   `json:"body"`
+			Outline string   `json:"outline"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+	}
+
+	plan := &commit.CommitPlan{}
+	for _, g := range result.Groups {
+		plan.Groups = append(plan.Groups, commit.CommitGroup{
+			Files: g.Files,
+			Message: commit.CommitMessage{
+				Title:   g.Title,
+				Body:    g.Body,
+				Outline: g.Outline,
+			},
+		})
+	}
+	return plan, nil
 }
 
 func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {

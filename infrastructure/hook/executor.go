@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	domainHook "github.com/fradser/ga-cli/domain/hook"
+	domainHook "github.com/fradser/git-agent/domain/hook"
 )
 
 type shellHookExecutor struct{}

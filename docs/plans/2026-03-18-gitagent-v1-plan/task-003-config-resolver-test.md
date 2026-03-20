@@ -4,7 +4,7 @@
 
 ## Description
 
-Write tests for the configuration resolution system that handles CLI flags, `~/.config/ga/config.yml` user config, and `.ga/project.yml` precedence.
+Write tests for the configuration resolution system that handles CLI flags, `~/.config/git-agent/config.yml` user config, and `.git-agent/project.yml` precedence.
 
 ## Execution Context
 
@@ -16,21 +16,21 @@ Write tests for the configuration resolution system that handles CLI flags, `~/.
 
 ```gherkin
 Scenario: API key from flag takes precedence over config file
-  Given ~/.config/ga/config.yml has api_key "file-key"
+  Given ~/.config/git-agent/config.yml has api_key "file-key"
   When I run `ga commit --api-key "flag-key"`
   Then the LLM request uses "flag-key" as the API key
   And exit code is 0
 
 Scenario: API key from config file when no flag provided
-  Given ~/.config/ga/config.yml has api_key "file-key"
+  Given ~/.config/git-agent/config.yml has api_key "file-key"
   And no --api-key flag is provided
-  When I run `ga commit`
+  When I run `git agent commit`
   Then the LLM request uses "file-key" as the API key
   And exit code is 0
 
 Scenario: Zero-config uses built-in free endpoint
   Given ~/.config/ga/ does not exist
-  When I run `ga commit`
+  When I run `git agent commit`
   Then base_url resolves to built-in free endpoint
   And no API key is required
   And exit code is 0

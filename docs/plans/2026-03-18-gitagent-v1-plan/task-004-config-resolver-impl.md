@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement the configuration resolution system that handles CLI flags, `~/.config/ga/config.yml` user config, and `.ga/project.yml` with proper precedence.
+Implement the configuration resolution system that handles CLI flags, `~/.config/git-agent/config.yml` user config, and `.git-agent/project.yml` with proper precedence.
 
 ## Execution Context
 
@@ -16,8 +16,8 @@ Implement the configuration resolution system that handles CLI flags, `~/.config
 
 ### Config Resolution Order (highest to lowest)
 1. CLI flag
-2. `~/.config/ga/config.yml` (or `$XDG_CONFIG_HOME/ga/config.yml`)
-3. `.ga/project.yml` (project)
+2. `~/.config/git-agent/config.yml` (or `$XDG_CONFIG_HOME/ga/config.yml`)
+3. `.git-agent/project.yml` (project)
 4. Built-in default (free endpoint)
 
 ### Fields to Resolve
@@ -29,7 +29,7 @@ Implement the configuration resolution system that handles CLI flags, `~/.config
 - MaxLines: flag --max-diff-lines, default 500
 - DryRun: flag --dry-run
 - Verbose: flag --verbose
-- Scopes: from .ga/project.yml only
+- Scopes: from .git-agent/project.yml only
 
 ### Built-in Defaults
 - base_url: project-maintained free endpoint
@@ -50,12 +50,12 @@ Implement the configuration resolution system that handles CLI flags, `~/.config
 - Create path helper for `config.yml`
 
 ### Step 2: Implement user config reader
-- Read `~/.config/ga/config.yml` if exists
+- Read `~/.config/git-agent/config.yml` if exists
 - Parse YAML for base_url, api_key, model
 - Return empty user config if file absent
 
 ### Step 3: Implement project config reader
-- Read `.ga/project.yml` if exists
+- Read `.git-agent/project.yml` if exists
 - Parse YAML for scopes
 
 ### Step 4: Implement resolver logic

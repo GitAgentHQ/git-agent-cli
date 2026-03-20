@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	domainDiff "github.com/fradser/ga-cli/domain/diff"
-	"github.com/fradser/ga-cli/pkg/filter"
+	domainDiff "github.com/fradser/git-agent/domain/diff"
+	"github.com/fradser/git-agent/pkg/filter"
 )
 
 type patternFilter struct{}

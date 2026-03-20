@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	domainHook "github.com/fradser/ga-cli/domain/hook"
-	domainProject "github.com/fradser/ga-cli/domain/project"
-	infraHook "github.com/fradser/ga-cli/infrastructure/hook"
+	domainHook "github.com/fradser/git-agent/domain/hook"
+	domainProject "github.com/fradser/git-agent/domain/project"
+	infraHook "github.com/fradser/git-agent/infrastructure/hook"
 )
 
 func newExecutor() domainHook.HookExecutor {
@@ -18,7 +18,7 @@ func newExecutor() domainHook.HookExecutor {
 
 func writeTempScript(t *testing.T, content string, mode os.FileMode) string {
 	t.Helper()
-	f, err := os.CreateTemp(os.TempDir(), "ga-hook-*.sh")
+	f, err := os.CreateTemp(os.TempDir(), "git-agent-hook-*.sh")
 	if err != nil {
 		t.Fatalf("create temp script: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestExecute_HookBlocks(t *testing.T) {
 
 func TestExecute_HookDoesNotExist(t *testing.T) {
 	exec := newExecutor()
-	missing := filepath.Join(os.TempDir(), "ga-hook-nonexistent-xyz.sh")
+	missing := filepath.Join(os.TempDir(), "git-agent-hook-nonexistent-xyz.sh")
 
 	result, err := exec.Execute(context.Background(), missing, sampleInput())
 	if err != nil {

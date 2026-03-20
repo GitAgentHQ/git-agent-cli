@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/ga-cli/application"
-	"github.com/fradser/ga-cli/domain/diff"
-	"github.com/fradser/ga-cli/domain/project"
+	"github.com/fradser/git-agent/application"
+	"github.com/fradser/git-agent/domain/diff"
+	"github.com/fradser/git-agent/domain/project"
 )
 
 func TestCommitService_NoStagedChanges(t *testing.T) {
@@ -16,7 +16,7 @@ func TestCommitService_NoStagedChanges(t *testing.T) {
 	git := &mockCommitGitClient{
 		stagedDiff: &diff.StagedDiff{Files: []string{}, Content: "", Lines: 0},
 	}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -33,7 +33,7 @@ func TestCommitService_LLMError(t *testing.T) {
 	llmErr := errors.New("LLM unavailable")
 	gen := &mockCommitGenerator{err: llmErr}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -53,7 +53,7 @@ func TestCommitService_GitCommitError(t *testing.T) {
 		stagedDiff: defaultDiff(),
 		commitErr:  commitErr,
 	}
-	svc := application.NewCommitService(gen, git, noopHook())
+	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)

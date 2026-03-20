@@ -1,10 +1,10 @@
-# Task 008: ga commit core flow implementation
+# Task 008: git agent commit core flow implementation
 
 **depends-on**: task-007
 
 ## Description
 
-Implement the core `ga commit` flow including LLM integration, message assembly, and git commit execution.
+Implement the core `git agent commit` flow including LLM integration, message assembly, and git commit execution.
 
 ## Execution Context
 
