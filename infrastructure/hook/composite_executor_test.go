@@ -25,7 +25,7 @@ func compositeInput(msg string) domainHook.HookInput {
 func TestCompositeExecutor_ValidMessage_NoShellHook(t *testing.T) {
 	exec := infraHook.NewCompositeHookExecutor()
 
-	result, err := exec.Execute(context.Background(), "/nonexistent/hook", compositeInput(validCommitMessage()))
+	result, err := exec.Execute(context.Background(), "conventional", compositeInput(validCommitMessage()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestCompositeExecutor_ValidMessage_NoShellHook(t *testing.T) {
 func TestCompositeExecutor_InvalidMessage_Blocked(t *testing.T) {
 	exec := infraHook.NewCompositeHookExecutor()
 
-	result, err := exec.Execute(context.Background(), "/nonexistent/hook", compositeInput("bad commit message"))
+	result, err := exec.Execute(context.Background(), "conventional", compositeInput("bad commit message"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,12 +53,36 @@ func TestCompositeExecutor_InvalidMessage_StderrContainsErrors(t *testing.T) {
 	exec := infraHook.NewCompositeHookExecutor()
 	input := compositeInput("bad commit: no body here")
 
-	result, err := exec.Execute(context.Background(), "/nonexistent/hook", input)
+	result, err := exec.Execute(context.Background(), "conventional", input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(result.Stderr, "error:") {
 		t.Errorf("expected 'error:' prefix in stderr, got: %s", result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_Empty_PassesWithoutValidation(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+
+	result, err := exec.Execute(context.Background(), "empty", compositeInput("bad commit message"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit code 0 for empty hook type, got %d", result.ExitCode)
+	}
+}
+
+func TestCompositeExecutor_BlankType_PassesWithoutValidation(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+
+	result, err := exec.Execute(context.Background(), "", compositeInput("bad commit message"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit code 0 for blank hook type, got %d", result.ExitCode)
 	}
 }
 
@@ -96,7 +120,7 @@ func TestCompositeExecutor_WarningsOnly_Passes(t *testing.T) {
 	msg := "feat: added user authentication\n\n- add login endpoint\n\nThis introduces authentication support."
 	exec := infraHook.NewCompositeHookExecutor()
 
-	result, err := exec.Execute(context.Background(), "/nonexistent/hook", compositeInput(msg))
+	result, err := exec.Execute(context.Background(), "conventional", compositeInput(msg))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -53,7 +53,7 @@ cmd → application → domain ← infrastructure
 **`infrastructure/`** — implements domain interfaces:
 - `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default); `gitconfig.go` reads `git-agent.*` keys from local git config via `ReadGitConfig`/`ReadGitConfigBool`
 - `infrastructure/diff/`: filters lock files and binaries from diffs
-- `infrastructure/hook/`: `ShellHookExecutor` runs `.git-agent/hooks/pre-commit` as a subprocess; `CompositeHookExecutor` runs the built-in Go conventional-commit validator first, then delegates to the shell executor
+- `infrastructure/hook/`: `ShellHookExecutor` runs a file path as a subprocess; `CompositeHookExecutor` dispatches by `hookType`: `""` or `"empty"` → pass immediately, `"conventional"` → Go-native `ValidateConventional` only, any other value → Go validation then `ShellHookExecutor`
 - `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AmendCommit`, `AddAll`, `FormatTrailers`, `LastCommitDiff`, `CommitSubjects`, `CommitLog`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `RepoRoot`, `GitDir`
 - `infrastructure/openai/`: implements `CommitMessageGenerator` (`Generate`), `CommitPlanner` (`Plan`), and `TechDetector` (`DetectTechnologies`) — the same `*Client` satisfies all three interfaces
 - `infrastructure/gitignore/`: `ToptalClient` implements `ContentGenerator`; fetches `.gitignore` content from the Toptal API for a list of technology names
@@ -63,11 +63,11 @@ cmd → application → domain ← infrastructure
 - `domain/gitignore/`: `TechDetector` and `ContentGenerator` interfaces
 
 **`hooks/`** (package at repo root) — embedded shell templates via `//go:embed`:
-- `empty.sh`: no-op hook installed by default
-- `conventional.sh`: standalone conventional-commit checker (used as `.git-agent/hooks/pre-commit`)
+- `empty.sh`: no-op hook (reference/test only)
+- `conventional.sh`: standalone conventional-commit checker (reference/test only; the built-in `"conventional"` hookType uses Go-native validation, not this script)
 
 **`cmd/`** — cobra wiring only; no business logic:
-- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`), `--hook-script` (path), `--gitignore`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
+- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`, writes `hook_type` to `project.yml`), `--hook-script` (path, copies script + writes absolute path as `hook_type`), `--gitignore`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
 - `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--api-key`, `--model`, `--base-url`, `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive.
 - `config show` — display resolved provider config (api-key masked, model, base-url).
 - `config scopes` — list scopes from `.git-agent/project.yml`.
@@ -78,7 +78,7 @@ cmd → application → domain ← infrastructure
 
 ## Key Design Decisions
 
-**Hook protocol**: hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block. On block, `git-agent` exits with code 2. The composite executor runs the native Go validator before the shell hook.
+**Hook dispatch**: `CommitRequest.Config.HookType` (from `project.yml` `hook_type`) drives hook execution. `""` or `"empty"` → skip validation entirely. `"conventional"` → Go-native `ValidateConventional` only, no shell script. Any other value → treat as file path: Go validation first, then `ShellHookExecutor`. Shell hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`); exit 0 = allow, non-zero = block. On block after retries, `git-agent` exits with code 2.
 
 **Multi-commit flow**: `CommitService` calls `planner.Plan()` to get a `CommitPlan`, then for each `CommitGroup` it calls `git.UnstageAll()` + `git.StageFiles(group.Files)` before generating and committing. Hook failures after 3 retries trigger a re-plan of the remaining files (capped at 2 re-plans to avoid infinite loops). If any planned group title lacks a scope, scopes are refreshed and the plan is regenerated once.
 

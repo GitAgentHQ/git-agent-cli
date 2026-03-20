@@ -244,7 +244,7 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
 	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil)
 
-	req := application.CommitRequest{HookPath: "/some/hook", Config: &project.Config{}}
+	req := application.CommitRequest{Config: &project.Config{HookType: "conventional"}}
 	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
@@ -260,8 +260,16 @@ func TestCommitService_HookBlocks(t *testing.T) {
 
 func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
-	git.unstagedDiff = &diff.StagedDiff{Files: []string{"b.go", "c.go"}, Content: "+b+c", Lines: 2}
+	// stagedDiffSeq: first call = preStagedDiff (user intent), second call = fullStagedDiff after AddAll.
+	// Subsequent calls (per-group) fall back to stagedDiff.
+	git := &mockCommitGitClient{
+		stagedDiff: defaultDiff(),
+		stagedDiffSeq: []*diff.StagedDiff{
+			{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1},
+			{Files: []string{"main.go", "b.go", "c.go"}, Content: "+func main(){}+b+c", Lines: 3},
+		},
+	}
+	_ = git.unstagedDiff // unused; unstaged is derived from stagedDiffSeq[1] vs stagedDiffSeq[0]
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
 		Groups: []commit.CommitGroup{
@@ -299,7 +307,13 @@ func TestCommitService_UntrackedFiles_AutoStaged(t *testing.T) {
 
 func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{Files: []string{}, Content: "", Lines: 0},                         // preStagedDiff (nothing pre-staged)
+			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2},      // fullStagedDiff after AddAll
+		},
+		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // per-group fallback
+	}
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
 		Groups: []commit.CommitGroup{
@@ -380,7 +394,18 @@ func TestCommitService_Amend_CallsAmendCommit(t *testing.T) {
 
 func TestCommitService_CapCommitGroups(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+
+	allFiles := make([]string, 8)
+	for i := range allFiles {
+		allFiles[i] = fmt.Sprintf("file%d.go", i)
+	}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{Files: []string{}, Content: "", Lines: 0},
+			{Files: allFiles, Content: "+all", Lines: 8},
+		},
+		stagedDiff: &diff.StagedDiff{Files: []string{"file0.go"}, Content: "+f", Lines: 1},
+	}
 
 	groups := make([]commit.CommitGroup, 8)
 	for i := range groups {

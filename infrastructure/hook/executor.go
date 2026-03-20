@@ -17,7 +17,8 @@ func NewShellHookExecutor() domainHook.HookExecutor {
 	return &shellHookExecutor{}
 }
 
-func (e *shellHookExecutor) Execute(ctx context.Context, hookPath string, input domainHook.HookInput) (*domainHook.HookResult, error) {
+func (e *shellHookExecutor) Execute(ctx context.Context, hookType string, input domainHook.HookInput) (*domainHook.HookResult, error) {
+	hookPath := hookType
 	info, err := os.Stat(hookPath)
 	if err != nil {
 		if os.IsNotExist(err) {

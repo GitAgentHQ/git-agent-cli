@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -54,7 +55,10 @@ func (c *Client) Commit(ctx context.Context, message string) error {
 }
 
 func (c *Client) AddAll(ctx context.Context) error {
-	return exec.CommandContext(ctx, "git", "add", "-A").Run()
+	if out, err := exec.CommandContext(ctx, "git", "add", "-A").CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
 }
 
 func (c *Client) CommitSubjects(ctx context.Context, max int) ([]string, error) {
@@ -196,16 +200,24 @@ func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 
 func (c *Client) StageFiles(ctx context.Context, files []string) error {
 	args := append([]string{"add", "--"}, files...)
-	return exec.CommandContext(ctx, "git", args...).Run()
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
 }
 
 func (c *Client) UnstageAll(ctx context.Context) error {
-	if err := exec.CommandContext(ctx, "git", "reset", "HEAD").Run(); err == nil {
+	if out, err := exec.CommandContext(ctx, "git", "reset", "HEAD").CombinedOutput(); err == nil {
 		return nil
+	} else {
+		_ = out // fallback below
 	}
 	// In a repo with no commits yet HEAD cannot be resolved; remove everything
 	// from the index instead.
-	return exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").Run()
+	if out, err := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
 }
 
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {

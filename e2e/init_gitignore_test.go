@@ -39,7 +39,12 @@ func TestInitGitignoreFlag_DoesNotBreakOtherFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("init --hook empty still works: exit code %d", code)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit")); err != nil {
-		t.Errorf("hook installed: %v", err)
+	projectYML := filepath.Join(dir, ".git-agent", "project.yml")
+	data, err := os.ReadFile(projectYML)
+	if err != nil {
+		t.Fatalf("project.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "hook_type: empty") {
+		t.Errorf("project.yml missing hook_type: empty, got:\n%s", data)
 	}
 }

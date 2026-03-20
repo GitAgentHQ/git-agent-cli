@@ -3,23 +3,26 @@ package e2e_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestInitCmd_DefaultBehavior_CreatesHookFile(t *testing.T) {
 	dir := newGitRepo(t)
 	// No flags → default to scope + empty hook. Without API key, scope is skipped
-	// but hook should still be installed.
+	// but hook_type should still be written to project.yml.
 	// Test the hook-only path directly.
 	_, code := gitAgent(t, dir, "init", "--hook-type", "empty")
 	if code != 0 {
 		t.Fatalf("git-agent init --hook-type empty: exit code %d", code)
 	}
-	info, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit"))
+	projectYML := filepath.Join(dir, ".git-agent", "project.yml")
+	data, err := os.ReadFile(projectYML)
 	if err != nil {
-		t.Errorf(".git-agent/hooks/pre-commit not created: %v", err)
-	} else if info.Mode()&0o111 == 0 {
-		t.Error("pre-commit hook is not executable")
+		t.Fatalf("project.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "hook_type: empty") {
+		t.Errorf("project.yml missing hook_type: empty, got:\n%s", data)
 	}
 }
 
@@ -29,11 +32,13 @@ func TestInitCmd_HookConventional_CreatesHook(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("git-agent init --hook-type conventional: exit code %d", code)
 	}
-	info, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit"))
+	projectYML := filepath.Join(dir, ".git-agent", "project.yml")
+	data, err := os.ReadFile(projectYML)
 	if err != nil {
-		t.Errorf(".git-agent/hooks/pre-commit not created: %v", err)
-	} else if info.Mode()&0o111 == 0 {
-		t.Error("pre-commit hook is not executable")
+		t.Fatalf("project.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "hook_type: conventional") {
+		t.Errorf("project.yml missing hook_type: conventional, got:\n%s", data)
 	}
 }
 
@@ -77,8 +82,13 @@ func TestInitCmd_HookTypeLegacy_StillWorks(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("git-agent init --hook conventional (legacy): exit code %d", code)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit")); err != nil {
-		t.Errorf(".git-agent/hooks/pre-commit not created: %v", err)
+	projectYML := filepath.Join(dir, ".git-agent", "project.yml")
+	data, err := os.ReadFile(projectYML)
+	if err != nil {
+		t.Fatalf("project.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "hook_type: conventional") {
+		t.Errorf("project.yml missing hook_type: conventional, got:\n%s", data)
 	}
 }
 

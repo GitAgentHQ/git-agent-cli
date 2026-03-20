@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/fradser/git-agent/application"
-	"github.com/fradser/git-agent/hooks"
 	infraConfig "github.com/fradser/git-agent/infrastructure/config"
 	infraGit "github.com/fradser/git-agent/infrastructure/git"
 	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
@@ -142,51 +142,83 @@ func writeScopes(path string, scopes []string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
+// runInitHook writes hook_type to project.yml.
+// For "conventional" and "empty": records the type in YAML, no file copy.
+// For a file path: copies the script to .git-agent/hooks/pre-commit and records the absolute path in YAML.
 func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 	gitClient := infraGit.NewClient()
 	root, err := gitClient.RepoRoot(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
-	hookPath := filepath.Join(root, ".git-agent", "hooks", "pre-commit")
-	if err := os.MkdirAll(filepath.Dir(hookPath), 0755); err != nil {
-		return fmt.Errorf("creating hooks dir: %w", err)
+
+	ymlPath := projectYMLPath(root)
+	if err := os.MkdirAll(filepath.Dir(ymlPath), 0755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	if _, err := os.Stat(hookPath); err == nil && !force {
-		// Hook already exists; overwrite silently (hooks should always be current).
-	}
-
-	var hookContent []byte
+	hookTypeVal := hookVal
 	switch hookVal {
-	case "conventional":
-		hookContent = hooks.Conventional
-	case "empty", "":
-		hookContent = hooks.Empty
+	case "conventional", "empty", "":
+		// built-in types — just record in YAML
+
 	default:
-		// Treat as file path.
+		// Treat as file path: copy to .git-agent/hooks/pre-commit.
+		absPath, err := filepath.Abs(hookVal)
+		if err != nil {
+			return fmt.Errorf("resolving hook path %q: %w", hookVal, err)
+		}
+		hookTypeVal = absPath
+
 		data, err := os.ReadFile(hookVal)
 		if err != nil {
 			return fmt.Errorf("reading hook file %q: %w", hookVal, err)
 		}
-		hookContent = data
+		hookDest := filepath.Join(root, ".git-agent", "hooks", "pre-commit")
+		if err := os.MkdirAll(filepath.Dir(hookDest), 0755); err != nil {
+			return fmt.Errorf("creating hooks dir: %w", err)
+		}
+		if err := os.WriteFile(hookDest, data, 0755); err != nil {
+			return fmt.Errorf("installing hook: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "installed hook: %s\n", hookVal)
 	}
 
-	if err := os.WriteFile(hookPath, hookContent, 0755); err != nil {
-		return fmt.Errorf("installing hook: %w", err)
+	// Merge hook_type into project YAML, preserving existing keys.
+	rawMap := readProjectYAMLMap(ymlPath)
+	rawMap["hook_type"] = hookTypeVal
+
+	data, err := yaml.Marshal(rawMap)
+	if err != nil {
+		return fmt.Errorf("marshalling yaml: %w", err)
+	}
+	if err := os.WriteFile(ymlPath, data, 0644); err != nil {
+		return fmt.Errorf("writing project config: %w", err)
 	}
 
 	if hookVal != "empty" && hookVal != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "installed hook: %s\n", hookVal)
+		fmt.Fprintf(cmd.OutOrStdout(), "hook type: %s\n", hookVal)
 	}
 	return nil
 }
 
+func readProjectYAMLMap(path string) map[string]any {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return make(map[string]any)
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil || m == nil {
+		return make(map[string]any)
+	}
+	return m
+}
+
 func init() {
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
-	initCmd.Flags().String("hook-type", "", "built-in hook template: conventional or empty (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
-	initCmd.Flags().String("hook-script", "", "path to custom hook script (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
-	initCmd.Flags().String("hook", "", "hook to install: conventional, empty, or path to script (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
+	initCmd.Flags().String("hook-type", "", "built-in hook template: conventional or empty (writes hook_type to project.yml)")
+	initCmd.Flags().String("hook-script", "", "path to custom hook script (copies to .git-agent/hooks/pre-commit, writes hook_type to project.yml)")
+	initCmd.Flags().String("hook", "", "hook to install: conventional, empty, or path to script")
 	_ = initCmd.Flags().MarkDeprecated("hook", "use --hook-type or --hook-script instead")
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
 	initCmd.Flags().Bool("force", false, "overwrite existing config/hook/.gitignore")

@@ -44,11 +44,10 @@ type CommitGitClient interface {
 type CommitRequest struct {
 	Intent            string
 	Trailers          []commit.Trailer
-	HookPath          string
 	DryRun            bool
 	NoStage           bool
 	Amend             bool
-	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided
+	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.HookType drives hook dispatch
 	MaxLines          int
 	Verbose           bool
 	LogWriter         io.Writer // verbose-only output
@@ -206,6 +205,15 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	s.vlog(req, "unstaged files: %v", unstaged.Files)
 	s.vlog(req, "diff lines: %d", staged.Lines+unstaged.Lines)
 
+	// Build the allowed-files set for planner output validation.
+	allowed := make(map[string]bool, len(staged.Files)+len(unstaged.Files))
+	for _, f := range staged.Files {
+		allowed[f] = true
+	}
+	for _, f := range unstaged.Files {
+		allowed[f] = true
+	}
+
 	// Auto-scope when no config or no scopes provided.
 	if req.Config == nil || len(req.Config.Scopes) == 0 {
 		if s.scopeSvc != nil {
@@ -238,6 +246,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	if err != nil {
 		return nil, fmt.Errorf("plan commits: %w", err)
 	}
+	if n := filterPlanFiles(plan, allowed); n > 0 {
+		s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
+	}
 	if len(plan.Groups) > maxCommitGroups {
 		s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 		plan.Groups = plan.Groups[:maxCommitGroups]
@@ -265,6 +276,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
+			}
+			if n := filterPlanFiles(plan, allowed); n > 0 {
+				s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
 			}
 			if len(plan.Groups) > maxCommitGroups {
 				s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
@@ -331,12 +345,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				}
 			}
 
-			if req.HookPath == "" {
+			if req.Config.HookType == "" || req.Config.HookType == "empty" {
 				hookPassed = true
 				break
 			}
 
-			hookResult, err := s.hookExec.Execute(ctx, req.HookPath, hook.HookInput{
+			hookResult, err := s.hookExec.Execute(ctx, req.Config.HookType, hook.HookInput{
 				Diff:          groupDiff.Content,
 				CommitMessage: assembled,
 				Intent:        req.Intent,
@@ -390,6 +404,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)
+			}
+			if n := filterPlanFiles(newPlan, allowed); n > 0 {
+				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
 			}
 			remaining = newPlan.Groups
 			continue
@@ -480,6 +497,29 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 		return nil, err
 	}
 	return &CommitResult{Commits: []SingleCommitResult{result}}, nil
+}
+
+// filterPlanFiles removes from each CommitGroup any file not in allowed, then
+// drops groups with no remaining files. Returns the number of dropped files.
+func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
+	filtered := 0
+	kept := plan.Groups[:0]
+	for i := range plan.Groups {
+		var valid []string
+		for _, f := range plan.Groups[i].Files {
+			if allowed[f] {
+				valid = append(valid, f)
+			} else {
+				filtered++
+			}
+		}
+		plan.Groups[i].Files = valid
+		if len(valid) > 0 {
+			kept = append(kept, plan.Groups[i])
+		}
+	}
+	plan.Groups = kept
+	return filtered
 }
 
 // hasUnscopedGroups reports whether any commit group title lacks a scope,

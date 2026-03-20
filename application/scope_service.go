@@ -44,14 +44,30 @@ func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]string, 
 }
 
 func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []string) error {
-	existing := readExistingScopes(path)
-	merged := mergeScopes(existing, newScopes)
+	// Read full YAML map to preserve all existing keys (e.g., hook_type).
+	rawMap := readExistingYAMLMap(path)
+
+	var existingScopes []string
+	if v, ok := rawMap["scopes"]; ok {
+		switch sv := v.(type) {
+		case []interface{}:
+			for _, item := range sv {
+				if str, ok := item.(string); ok {
+					existingScopes = append(existingScopes, str)
+				}
+			}
+		case []string:
+			existingScopes = sv
+		}
+	}
+
+	rawMap["scopes"] = mergeScopes(existingScopes, newScopes)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	data, err := yaml.Marshal(map[string]any{"scopes": merged})
+	data, err := yaml.Marshal(rawMap)
 	if err != nil {
 		return fmt.Errorf("marshalling yaml: %w", err)
 	}
@@ -59,18 +75,16 @@ func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes 
 	return os.WriteFile(path, data, 0644)
 }
 
-func readExistingScopes(path string) []string {
+func readExistingYAMLMap(path string) map[string]any {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return make(map[string]any)
 	}
-	var raw struct {
-		Scopes []string `yaml:"scopes"`
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil || m == nil {
+		return make(map[string]any)
 	}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	return raw.Scopes
+	return m
 }
 
 func mergeScopes(existing, newScopes []string) []string {

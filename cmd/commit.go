@@ -116,7 +116,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:            intent,
 		Trailers:          trailers,
-		HookPath:          filepath.Join(root, ".git-agent", "hooks", "pre-commit"),
 		DryRun:            dryRun,
 		NoStage:           noStage,
 		Amend:             amend,
@@ -160,12 +159,13 @@ func loadProjectConfig(path string) *project.Config {
 		return nil
 	}
 	var raw struct {
-		Scopes []string `yaml:"scopes"`
+		Scopes   []string `yaml:"scopes"`
+		HookType string   `yaml:"hook_type"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	return &project.Config{Scopes: raw.Scopes}
+	return &project.Config{Scopes: raw.Scopes, HookType: raw.HookType}
 }
 
 func init() {
