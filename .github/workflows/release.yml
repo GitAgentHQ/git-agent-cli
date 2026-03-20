@@ -45,7 +45,80 @@ jobs:
           OUTPUT: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
         run: bash scripts/build.sh
 
+      - name: Create tarball
+        if: matrix.ext == ''
+        run: |
+          cp git-agent-${{ matrix.goos }}-${{ matrix.goarch }} git-agent
+          tar -czf git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz git-agent
+          rm git-agent
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          files: |
+            git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            ${{ matrix.ext == '' && format('git-agent-{0}-{1}.tar.gz', matrix.goos, matrix.goarch) || '' }}
+
+  update-homebrew:
+    name: Update Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=${TAG#v}
+          declare -A SHAS
+          for platform in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            URL="https://github.com/FradSer/ga-cli/releases/download/${TAG}/git-agent-${platform}.tar.gz"
+            curl -fsSL "$URL" -o "git-agent-${platform}.tar.gz"
+            SHAS[$platform]=$(sha256sum "git-agent-${platform}.tar.gz" | cut -d' ' -f1)
+          done
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/FradSer/homebrew-brew.git" tap
+          cd tap
+
+          cat > Formula/git-agent.rb << FORMULA
+          class GitAgent < Formula
+            desc "AI-powered git commit agent"
+            homepage "https://github.com/FradSer/ga-cli"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/FradSer/ga-cli/releases/download/${TAG}/git-agent-darwin-arm64.tar.gz"
+                sha256 "${SHAS[darwin-arm64]}"
+              else
+                url "https://github.com/FradSer/ga-cli/releases/download/${TAG}/git-agent-darwin-amd64.tar.gz"
+                sha256 "${SHAS[darwin-amd64]}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/FradSer/ga-cli/releases/download/${TAG}/git-agent-linux-arm64.tar.gz"
+                sha256 "${SHAS[linux-arm64]}"
+              else
+                url "https://github.com/FradSer/ga-cli/releases/download/${TAG}/git-agent-linux-amd64.tar.gz"
+                sha256 "${SHAS[linux-amd64]}"
+              end
+            end
+
+            def install
+              bin.install "git-agent"
+            end
+
+            test do
+              system "#{bin}/git-agent", "--help"
+            end
+          end
+          FORMULA
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/git-agent.rb
+          git commit -m "chore: update git-agent to ${VERSION}"
+          git push
