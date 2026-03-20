@@ -33,13 +33,18 @@ export default {
       body.max_completion_tokens = 4096;
     }
 
+    const bodyStr = JSON.stringify(body);
+    if (bodyStr.length > 512 * 1024) {
+      return new Response("Payload Too Large", { status: 413 });
+    }
+
     const upstream = new Request(aiGatewayURL + "/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN}`,
       },
-      body: JSON.stringify(body),
+      body: bodyStr,
     });
 
     return fetch(upstream);
