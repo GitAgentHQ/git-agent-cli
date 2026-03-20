@@ -100,6 +100,7 @@ func (s *CommitService) out(req CommitRequest, format string, args ...any) {
 
 const maxHookRetries = 3
 const maxRePlans = 2
+const maxCommitGroups = 5
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
 	if req.Amend {
@@ -237,6 +238,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	if err != nil {
 		return nil, fmt.Errorf("plan commits: %w", err)
 	}
+	if len(plan.Groups) > maxCommitGroups {
+		s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
+		plan.Groups = plan.Groups[:maxCommitGroups]
+	}
 
 	// If any group has no scope and we can update scopes, do so and re-plan once.
 	if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
@@ -260,6 +265,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
+			}
+			if len(plan.Groups) > maxCommitGroups {
+				s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
+				plan.Groups = plan.Groups[:maxCommitGroups]
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -366,6 +367,28 @@ func TestCommitService_Amend_CallsAmendCommit(t *testing.T) {
 	}
 	if !strings.Contains(git.amendMessage, "feat: add feature") {
 		t.Errorf("amend message missing title, got: %q", git.amendMessage)
+	}
+}
+
+func TestCommitService_CapCommitGroups(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+
+	groups := make([]commit.CommitGroup, 8)
+	for i := range groups {
+		groups[i] = commit.CommitGroup{Files: []string{fmt.Sprintf("file%d.go", i)}}
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: groups}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Commits) != 5 {
+		t.Errorf("expected 5 commits (capped), got %d", len(result.Commits))
 	}
 }
 
