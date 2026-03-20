@@ -216,6 +216,32 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		return nil, fmt.Errorf("plan commits: %w", err)
 	}
 
+	// If any group has no scope and we can update scopes, do so and re-plan once.
+	if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
+		s.vlog(req, "unscoped groups detected — refreshing project scopes...")
+		newScopes, err := s.scopeSvc.Generate(ctx, 200)
+		if err != nil {
+			s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
+		} else {
+			configPath := req.ProjectConfigPath
+			if configPath == "" {
+				configPath = ".git-agent/project.yml"
+			}
+			_ = s.scopeSvc.MergeAndSave(ctx, configPath, newScopes)
+			req.Config = &project.Config{Scopes: newScopes}
+			s.vlog(req, "updated scopes: %v — re-planning...", newScopes)
+			plan, err = s.planner.Plan(ctx, commit.PlanRequest{
+				StagedDiff:   staged,
+				UnstagedDiff: unstaged,
+				Intent:       req.Intent,
+				Config:       req.Config,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
+			}
+		}
+	}
+
 	remaining := make([]commit.CommitGroup, len(plan.Groups))
 	copy(remaining, plan.Groups)
 	s.vlog(req, "planned %d commit(s)", len(remaining))
@@ -350,6 +376,17 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
+}
+
+// hasUnscopedGroups reports whether any commit group title lacks a scope,
+// i.e. matches "type: description" instead of "type(scope): description".
+func hasUnscopedGroups(plan *commit.CommitPlan) bool {
+	for _, g := range plan.Groups {
+		if !strings.Contains(g.Message.Title, "(") {
+			return true
+		}
+	}
+	return false
 }
 
 // filterDiffByFiles returns a new StagedDiff containing only the given files,
