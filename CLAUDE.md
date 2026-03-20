@@ -43,22 +43,34 @@ cmd → application → domain ← infrastructure
 - `hook.HookExecutor`, `hook.HookInput`
 - `project.Config`
 
-**`application/`** — two services wired to domain interfaces:
+**`application/`** — services wired to domain interfaces:
 - `CommitService`: gets staged+unstaged diffs → auto-scope if no config → plan commits → for each group: unstage-all, stage-group, generate message, hook-retry (3 attempts), re-plan on hook failure (max 2 re-plans) → commit
 - `InitService`: delegates scope generation and file writing to `ScopeService`
 - `ScopeService`: `Generate(ctx, maxCommits)` calls LLM+git; `MergeAndSave(ctx, path, scopes)` reads existing yaml, deduplicates (case-insensitive), writes merged result
+- `GitignoreService`: calls `TechDetector` (LLM) to identify technologies, fetches content from `ContentGenerator` (Toptal), merges into `.gitignore` preserving a `### custom rules ###` section below the auto-generated block
+- `AddService`: thin wrapper around `git.Add`; no CLI exposure
 
 **`infrastructure/`** — implements domain interfaces:
-- `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default)
+- `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default); `gitconfig.go` reads `git-agent.*` keys from local git config via `ReadGitConfig`/`ReadGitConfigBool`
 - `infrastructure/diff/`: filters lock files and binaries from diffs
 - `infrastructure/hook/`: `ShellHookExecutor` runs `.git-agent/hooks/pre-commit` as a subprocess; `CompositeHookExecutor` runs the built-in Go conventional-commit validator first, then delegates to the shell executor
-- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AddAll`, `CommitSubjects`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`
-- `infrastructure/openai/`: implements both `CommitMessageGenerator` (`Generate`) and `CommitPlanner` (`Plan`) — the same `*Client` satisfies both interfaces
+- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AddAll`, `CommitSubjects`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `HooksPath`, `RepoRoot`
+- `infrastructure/openai/`: implements `CommitMessageGenerator` (`Generate`), `CommitPlanner` (`Plan`), and `TechDetector` (`DetectTechnologies`) — the same `*Client` satisfies all three interfaces
+- `infrastructure/gitignore/`: `ToptalClient` implements `ContentGenerator`; fetches `.gitignore` content from the Toptal API for a list of technology names
+
+**`domain/`** additions beyond interfaces noted above:
+- `domain/commit/validator.go`: `ValidateConventional` enforces Conventional Commits 1.0.0 + project rules (≤50-char title, lowercase description, bullet points, ≤72-char body lines, explanation paragraph, `Co-Authored-By` format); returns `*ValidationResult` with typed `SeverityError`/`SeverityWarning` issues
+- `domain/gitignore/`: `TechDetector` and `ContentGenerator` interfaces
+
+**`hooks/`** (package at repo root) — embedded shell templates via `//go:embed`:
+- `empty.sh`: no-op hook installed by default
+- `conventional.sh`: standalone conventional-commit checker (used as `.git-agent/hooks/pre-commit`)
+- `shim.sh`: installed as `.git/hooks/commit-msg` by `--install-hook`; delegates to `git-agent hook run commit-msg <file>`
 
 **`cmd/`** — cobra wiring only; no business logic:
-- `init` — `--scope` (bool, AI-generate scopes) + `--hook` (string: `conventional`, `empty`, or file path) + `--force` + `--max-commits`. No flags → defaults to `--scope --hook empty`.
+- `init` — flags: `--scope` (AI-generate scopes), `--hook` (`conventional`, `empty`, or file path), `--gitignore` (AI-generate `.gitignore`), `--install-hook` (install commit-msg shim into `.git/hooks/`), `--force`, `--max-commits`. No flags → defaults to `--scope --hook empty --gitignore`.
 - `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--api-key`, `--model`, `--base-url`, `--max-diff-lines`.
-- `add` command does not exist (removed).
+- `hook run <hook-name> [args...]` — hidden command invoked by the `shim.sh` git hook; currently handles `commit-msg <file>` by running `CompositeHookExecutor` against the message file.
 
 **`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
 
