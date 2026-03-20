@@ -15,6 +15,7 @@ import (
 	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/project"
 	infraConfig "github.com/fradser/git-agent/infrastructure/config"
+	infraDiff "github.com/fradser/git-agent/infrastructure/diff"
 	infraGit "github.com/fradser/git-agent/infrastructure/git"
 	infraHook "github.com/fradser/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
@@ -88,6 +89,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		gitClient,
 		infraHook.NewCompositeHookExecutor(),
 		scopeSvc,
+		infraDiff.NewPatternFilter(),
+		infraDiff.NewLineTruncator(),
 	)
 
 	var logWriter io.Writer
@@ -154,7 +157,7 @@ func init() {
 	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
-	commitCmd.Flags().Int("max-diff-lines", 500, "maximum diff lines to send to the model")
+	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
 
 	rootCmd.AddCommand(commitCmd)
 }

@@ -52,11 +52,13 @@ type CommitRequest struct {
 }
 
 type CommitService struct {
-	gen      commit.CommitMessageGenerator
-	planner  commit.CommitPlanner
-	git      CommitGitClient
-	hookExec hook.HookExecutor
-	scopeSvc *ScopeService // nil = no auto-scope
+	gen       commit.CommitMessageGenerator
+	planner   commit.CommitPlanner
+	git       CommitGitClient
+	hookExec  hook.HookExecutor
+	scopeSvc  *ScopeService  // nil = no auto-scope
+	filter    diff.DiffFilter    // nil = no filtering
+	truncator diff.DiffTruncator // nil = no truncation
 }
 
 func NewCommitService(
@@ -65,13 +67,17 @@ func NewCommitService(
 	git CommitGitClient,
 	hookExec hook.HookExecutor,
 	scopeSvc *ScopeService,
+	filter diff.DiffFilter,
+	truncator diff.DiffTruncator,
 ) *CommitService {
 	return &CommitService{
-		gen:      gen,
-		planner:  planner,
-		git:      git,
-		hookExec: hookExec,
-		scopeSvc: scopeSvc,
+		gen:       gen,
+		planner:   planner,
+		git:       git,
+		hookExec:  hookExec,
+		scopeSvc:  scopeSvc,
+		filter:    filter,
+		truncator: truncator,
 	}
 }
 
@@ -107,6 +113,42 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 
 	if len(staged.Files) == 0 && len(unstaged.Files) == 0 {
 		return nil, fmt.Errorf("no changes")
+	}
+
+	if s.filter != nil {
+		if len(staged.Files) > 0 {
+			staged, err = s.filter.Filter(ctx, staged)
+			if err != nil {
+				return nil, fmt.Errorf("filter staged diff: %w", err)
+			}
+		}
+		if len(unstaged.Files) > 0 {
+			unstaged, err = s.filter.Filter(ctx, unstaged)
+			if err != nil {
+				s.vlog(req, "filter unstaged diff (ignoring): %v", err)
+				unstaged = &diff.StagedDiff{}
+			}
+		}
+	}
+
+	if s.truncator != nil && req.MaxLines > 0 {
+		var truncated bool
+		staged, truncated, err = s.truncator.Truncate(ctx, staged, req.MaxLines)
+		if err != nil {
+			return nil, fmt.Errorf("truncate staged diff: %w", err)
+		}
+		if truncated {
+			s.vlog(req, "staged diff truncated to %d lines", req.MaxLines)
+		}
+		if len(unstaged.Files) > 0 {
+			unstaged, truncated, err = s.truncator.Truncate(ctx, unstaged, req.MaxLines)
+			if err != nil {
+				return nil, fmt.Errorf("truncate unstaged diff: %w", err)
+			}
+			if truncated {
+				s.vlog(req, "unstaged diff truncated to %d lines", req.MaxLines)
+			}
+		}
 	}
 
 	s.vlog(req, "staged files: %v", staged.Files)

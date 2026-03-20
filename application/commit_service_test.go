@@ -123,7 +123,7 @@ func singleGroupPlan(files []string) *commit.CommitPlan {
 
 func newSvc(gen *mockCommitGenerator, git *mockCommitGitClient, hookExec *mockHookExecutor) *application.CommitService {
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
-	return application.NewCommitService(gen, planner, git, hookExec, nil)
+	return application.NewCommitService(gen, planner, git, hookExec, nil, nil, nil)
 }
 
 // --- tests ---
@@ -215,7 +215,7 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
 	blockingHook := &mockHookExecutor{result: &hook.HookResult{ExitCode: 1, Stderr: "blocked"}}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
-	svc := application.NewCommitService(gen, planner, git, blockingHook, nil)
+	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil)
 
 	req := application.CommitRequest{HookPath: "/some/hook", Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -242,7 +242,7 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 			{Files: []string{"b.go", "c.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -280,7 +280,7 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 			{Files: []string{"b.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {

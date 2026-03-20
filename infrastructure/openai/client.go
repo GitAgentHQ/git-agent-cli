@@ -28,14 +28,6 @@ func NewClient(apiKey, baseURL, model string) *Client {
 	}
 }
 
-func truncateLines(s string, max int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= max {
-		return s
-	}
-	return strings.Join(lines[:max], "\n")
-}
-
 // extractJSON finds the first {...} block in s, handling models that wrap JSON in prose.
 func extractJSON(s string) string {
 	start := strings.Index(s, "{")
@@ -47,7 +39,7 @@ func extractJSON(s string) string {
 }
 
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
-	content := truncateLines(req.Diff.Content, 500)
+	content := req.Diff.Content
 
 	var promptParts []string
 	if req.Intent != "" {
@@ -116,14 +108,14 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 
 	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
 		parts = append(parts, fmt.Sprintf("Staged diff (already staged by user — keep as group 0):\n<staged>\n%s\n</staged>\nStaged files: %s",
-			truncateLines(req.StagedDiff.Content, 300),
+			req.StagedDiff.Content,
 			strings.Join(req.StagedDiff.Files, ", "),
 		))
 	}
 
 	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
 		parts = append(parts, fmt.Sprintf("Unstaged diff:\n<unstaged>\n%s\n</unstaged>\nUnstaged files: %s",
-			truncateLines(req.UnstagedDiff.Content, 300),
+			req.UnstagedDiff.Content,
 			strings.Join(req.UnstagedDiff.Files, ", "),
 		))
 	}
