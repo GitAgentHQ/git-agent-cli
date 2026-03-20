@@ -54,7 +54,7 @@ cmd → application → domain ← infrastructure
 - `infrastructure/config/`: three-tier config resolver (CLI flag → `~/.config/git-agent/config.yml` → default); `gitconfig.go` reads `git-agent.*` keys from local git config via `ReadGitConfig`/`ReadGitConfigBool`
 - `infrastructure/diff/`: filters lock files and binaries from diffs
 - `infrastructure/hook/`: `ShellHookExecutor` runs `.git-agent/hooks/pre-commit` as a subprocess; `CompositeHookExecutor` runs the built-in Go conventional-commit validator first, then delegates to the shell executor
-- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AmendCommit`, `AddAll`, `FormatTrailers`, `LastCommitDiff`, `CommitSubjects`, `CommitLog`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `HooksPath`, `RepoRoot`, `GitDir`
+- `infrastructure/git/`: wraps git CLI — `StagedDiff`, `UnstagedDiff`, `StageFiles`, `UnstageAll`, `Commit`, `AmendCommit`, `AddAll`, `FormatTrailers`, `LastCommitDiff`, `CommitSubjects`, `CommitLog`, `TopLevelDirs`, `ProjectFiles`, `IsGitRepo`, `RepoRoot`, `GitDir`
 - `infrastructure/openai/`: implements `CommitMessageGenerator` (`Generate`), `CommitPlanner` (`Plan`), and `TechDetector` (`DetectTechnologies`) — the same `*Client` satisfies all three interfaces
 - `infrastructure/gitignore/`: `ToptalClient` implements `ContentGenerator`; fetches `.gitignore` content from the Toptal API for a list of technology names
 
@@ -65,14 +65,12 @@ cmd → application → domain ← infrastructure
 **`hooks/`** (package at repo root) — embedded shell templates via `//go:embed`:
 - `empty.sh`: no-op hook installed by default
 - `conventional.sh`: standalone conventional-commit checker (used as `.git-agent/hooks/pre-commit`)
-- `shim.sh`: installed as `.git/hooks/commit-msg` by `--install-hook`; delegates to `git-agent hook run commit-msg <file>`
 
 **`cmd/`** — cobra wiring only; no business logic:
-- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`), `--hook-script` (path), `--gitignore`, `--install-hook`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
+- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`), `--hook-script` (path), `--gitignore`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
 - `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--api-key`, `--model`, `--base-url`, `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive.
 - `config show` — display resolved provider config (api-key masked, model, base-url).
 - `config scopes` — list scopes from `.git-agent/project.yml`.
-- `hook run <hook-name> [args...]` — hidden command invoked by the `shim.sh` git hook; currently handles `commit-msg <file>` by running `CompositeHookExecutor` against the message file.
 
 **`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
 

@@ -45,7 +45,6 @@ git-agent init --scope                  # generate scopes only
 git-agent init --hook conventional      # install conventional commit validator
 git-agent init --hook /path/to/script   # install a custom hook script
 git-agent init --gitignore              # generate .gitignore only
-git-agent init --install-hook           # install commit-msg shim into .git/hooks/
 git-agent init --force                  # overwrite existing config/hook/.gitignore
 git-agent init --max-commits 50         # limit commits analyzed for scope generation
 ```

@@ -45,7 +45,6 @@ git-agent init --scope                  # 仅生成作用域
 git-agent init --hook conventional      # 安装 Conventional Commits 验证器
 git-agent init --hook /path/to/script   # 安装自定义钩子脚本
 git-agent init --gitignore              # 仅生成 .gitignore
-git-agent init --install-hook           # 将 commit-msg shim 安装到 .git/hooks/
 git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
 git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
 ```

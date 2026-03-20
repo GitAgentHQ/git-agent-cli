@@ -36,10 +36,12 @@ func (m *mockCommitPlanner) Plan(_ context.Context, _ commit.PlanRequest) (*comm
 
 type mockCommitGitClient struct {
 	stagedDiff        *diff.StagedDiff
+	stagedDiffSeq     []*diff.StagedDiff // if set, returned in order; falls back to stagedDiff
 	stagedErr         error
 	unstagedDiff      *diff.StagedDiff
 	unstagedErr       error
 	commitCalled      bool
+	commitCount       int
 	commitMessage     string
 	commitErr         error
 	addAllCalled      bool
@@ -55,6 +57,11 @@ type mockCommitGitClient struct {
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
+	if len(m.stagedDiffSeq) > 0 {
+		d := m.stagedDiffSeq[0]
+		m.stagedDiffSeq = m.stagedDiffSeq[1:]
+		return d, m.stagedErr
+	}
 	return m.stagedDiff, m.stagedErr
 }
 
@@ -65,8 +72,9 @@ func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff,
 	return m.unstagedDiff, m.unstagedErr
 }
 
-func (m *mockCommitGitClient) Commit(_ context.Context, message string, _ bool) error {
+func (m *mockCommitGitClient) Commit(_ context.Context, message string) error {
 	m.commitCalled = true
+	m.commitCount++
 	m.commitMessage = message
 	return m.commitErr
 }
@@ -105,7 +113,7 @@ func (m *mockCommitGitClient) LastCommitDiff(_ context.Context) (*diff.StagedDif
 	return m.lastCommitDiff, m.lastCommitDiffErr
 }
 
-func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string, _ bool) error {
+func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string) error {
 	m.amendCalled = true
 	m.amendMessage = message
 	return m.amendErr
@@ -403,5 +411,37 @@ func TestCommitService_Amend_NoPreviousCommit_ReturnsError(t *testing.T) {
 	_, err := svc.Commit(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error when no previous commit to amend, got nil")
+	}
+}
+
+func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	nonEmpty := &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}
+	empty := &diff.StagedDiff{}
+
+	git := &mockCommitGitClient{
+		// NoStage=true: call 1 (initial check), then call 2 (group 0), call 3 (group 1).
+		stagedDiffSeq: []*diff.StagedDiff{nonEmpty, nonEmpty, empty},
+	}
+
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{"a.go"}},
+			{Files: []string{"stale.go"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+
+	req := application.CommitRequest{NoStage: true, Config: &project.Config{}}
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Commits) != 1 {
+		t.Errorf("expected 1 commit (empty group skipped), got %d", len(result.Commits))
+	}
+	if git.commitCount != 1 {
+		t.Errorf("expected git.Commit called once, got %d", git.commitCount)
 	}
 }

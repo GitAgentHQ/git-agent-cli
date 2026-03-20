@@ -30,7 +30,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	hookScriptChanged := cmd.Flags().Changed("hook-script")
 	hookChanged := cmd.Flags().Changed("hook")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
-	installHookChanged := cmd.Flags().Changed("install-hook")
 
 	doScope, _ := cmd.Flags().GetBool("scope")
 	hookType, _ := cmd.Flags().GetString("hook-type")
@@ -39,7 +38,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
-	doInstallHook, _ := cmd.Flags().GetBool("install-hook")
 
 	if hookTypeChanged && hookScriptChanged {
 		return fmt.Errorf("--hook-type and --hook-script are mutually exclusive")
@@ -59,7 +57,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Default: no flags → scope + empty hook + gitignore.
-	if !scopeChanged && !hookTypeChanged && !hookScriptChanged && !hookChanged && !gitignoreChanged && !installHookChanged {
+	if !scopeChanged && !hookTypeChanged && !hookScriptChanged && !hookChanged && !gitignoreChanged {
 		doScope = true
 		hookVal = "empty"
 		doGitignore = true
@@ -73,12 +71,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if hookVal != "" {
 		if err := runInitHook(cmd, hookVal, force); err != nil {
-			return err
-		}
-	}
-
-	if doInstallHook {
-		if err := runInstallHook(cmd, force); err != nil {
 			return err
 		}
 	}
@@ -190,37 +182,6 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 	return nil
 }
 
-func runInstallHook(cmd *cobra.Command, force bool) error {
-	gitClient := infraGit.NewClient()
-	hooksDir, err := gitClient.HooksPath(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("hooks path: %w", err)
-	}
-
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		return fmt.Errorf("creating hooks dir: %w", err)
-	}
-
-	shimDest := filepath.Join(hooksDir, "commit-msg")
-	if _, err := os.Stat(shimDest); err == nil {
-		if !force {
-			return fmt.Errorf("commit-msg hook already exists; use --force to overwrite")
-		}
-		// Back up the existing hook before overwriting.
-		backup := shimDest + ".pre-git-agent"
-		if err := os.Rename(shimDest, backup); err != nil {
-			return fmt.Errorf("backing up existing hook: %w", err)
-		}
-	}
-
-	if err := os.WriteFile(shimDest, hooks.Shim, 0755); err != nil {
-		return fmt.Errorf("installing commit-msg shim: %w", err)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "installed commit-msg shim: %s\n", shimDest)
-	return nil
-}
-
 func init() {
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
 	initCmd.Flags().String("hook-type", "", "built-in hook template: conventional or empty (writes to .git-agent/hooks/pre-commit, invoked by git-agent during commit)")
@@ -230,6 +191,5 @@ func init() {
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
 	initCmd.Flags().Bool("force", false, "overwrite existing config/hook/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
-	initCmd.Flags().Bool("install-hook", false, "install a commit-msg shim into .git/hooks/commit-msg that delegates to 'git-agent hook run'")
 	rootCmd.AddCommand(initCmd)
 }

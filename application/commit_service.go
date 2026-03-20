@@ -33,12 +33,12 @@ type CommitGitClient interface {
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
-	Commit(ctx context.Context, message string, skipHooks bool) error
+	Commit(ctx context.Context, message string) error
 	AddAll(ctx context.Context) error
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
-	AmendCommit(ctx context.Context, message string, skipHooks bool) error
+	AmendCommit(ctx context.Context, message string) error
 }
 
 type CommitRequest struct {
@@ -295,6 +295,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if err != nil {
 			return nil, fmt.Errorf("staged diff for group: %w", err)
 		}
+		if len(groupDiff.Files) == 0 {
+			s.vlog(req, "skipping group (no diff after staging): %v", group.Files)
+			continue
+		}
 
 		var hookFeedback string
 		var assembled string
@@ -400,10 +404,14 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			committed = append(committed, result)
 			continue
 		}
-		if err := s.git.Commit(ctx, assembled, req.HookPath != ""); err != nil {
+		if err := s.git.Commit(ctx, assembled); err != nil {
 			return nil, err
 		}
 		committed = append(committed, result)
+	}
+
+	if len(committed) == 0 && !req.DryRun {
+		return nil, fmt.Errorf("no changes committed (all planned groups were empty)")
 	}
 
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
@@ -468,7 +476,7 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
 	}
-	if err := s.git.AmendCommit(ctx, assembled, req.HookPath != ""); err != nil {
+	if err := s.git.AmendCommit(ctx, assembled); err != nil {
 		return nil, err
 	}
 	return &CommitResult{Commits: []SingleCommitResult{result}}, nil

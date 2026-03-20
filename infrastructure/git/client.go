@@ -45,12 +45,8 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	}, nil
 }
 
-func (c *Client) Commit(ctx context.Context, message string, skipHooks bool) error {
-	args := []string{"commit", "-m", message}
-	if skipHooks {
-		args = append(args, "--no-verify")
-	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+func (c *Client) Commit(ctx context.Context, message string) error {
+	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -171,21 +167,6 @@ func (c *Client) GitDir(ctx context.Context) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-func (c *Client) HooksPath(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "config", "core.hooksPath").Output()
-	if err == nil {
-		p := strings.TrimRight(string(out), "\n")
-		if p != "" {
-			return p, nil
-		}
-	}
-	gitDir, err := c.GitDir(ctx)
-	if err != nil {
-		return "", err
-	}
-	return gitDir + "/hooks", nil
-}
-
 func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	contentOut, err := exec.CommandContext(ctx, "git", "diff").Output()
 	if err != nil {
@@ -254,12 +235,8 @@ func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	}, nil
 }
 
-func (c *Client) AmendCommit(ctx context.Context, message string, skipHooks bool) error {
-	args := []string{"commit", "--amend", "-m", message}
-	if skipHooks {
-		args = append(args, "--no-verify")
-	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+func (c *Client) AmendCommit(ctx context.Context, message string) error {
+	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", message)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
