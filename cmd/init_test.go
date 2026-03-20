@@ -18,6 +18,10 @@ func requireInitRegistered(t *testing.T, err error) {
 
 func TestInitCmd_HookConventional_NoAPIKey(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	t.Cleanup(func() { os.Chdir(origDir) })
+	os.Chdir(dir)
 	// --hook conventional does not require an API key.
 	err := cmd.ExecuteArgs([]string{"init", "--hook", "conventional"})
 	requireInitRegistered(t, err)
@@ -29,6 +33,10 @@ func TestInitCmd_HookConventional_NoAPIKey(t *testing.T) {
 
 func TestInitCmd_HookEmpty_NoAPIKey(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	t.Cleanup(func() { os.Chdir(origDir) })
+	os.Chdir(dir)
 	err := cmd.ExecuteArgs([]string{"init", "--hook", "empty"})
 	requireInitRegistered(t, err)
 	if err != nil && strings.Contains(err.Error(), "unknown flag") {
