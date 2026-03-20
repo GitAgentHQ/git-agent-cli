@@ -53,7 +53,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	svc := application.NewCommitService(
 		infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
 		infraGit.NewClient(),
-		infraHook.NewShellHookExecutor(),
+		infraHook.NewCompositeHookExecutor(),
 	)
 
 	var logWriter io.Writer
