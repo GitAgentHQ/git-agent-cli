@@ -25,7 +25,14 @@ import (
 var commitCmd = &cobra.Command{
 	Use:   "commit",
 	Short: "Generate and create commit(s) with AI-generated messages",
-	RunE:  runCommit,
+	Long: `Generate and create commit(s) with AI-generated messages.
+
+Configuration resolution (highest to lowest priority):
+  1. CLI flags (--api-key, --model, --base-url)
+  2. git config --local git-agent.{model,base-url}
+  3. ~/.config/git-agent/config.yml (supports $ENV_VAR expansion)
+  4. Build-time defaults`,
+	RunE: runCommit,
 }
 
 func runCommit(cmd *cobra.Command, args []string) error {
@@ -35,9 +42,17 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	intent, _ := cmd.Flags().GetString("intent")
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
-	noGitAgent, _ := cmd.Flags().GetBool("no-git-agent")
+	noAttribution, _ := cmd.Flags().GetBool("no-attribution")
+	noGitAgentLegacy, _ := cmd.Flags().GetBool("no-git-agent")
+	noGitAgent := noAttribution || noGitAgentLegacy
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	noStage, _ := cmd.Flags().GetBool("no-stage")
+	amend, _ := cmd.Flags().GetBool("amend")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
+
+	if amend && noStage {
+		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
+	}
 
 	var trailers []commit.Trailer
 	for _, a := range coAuthors {
@@ -103,6 +118,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Trailers:          trailers,
 		HookPath:          filepath.Join(root, ".git-agent", "hooks", "pre-commit"),
 		DryRun:            dryRun,
+		NoStage:           noStage,
+		Amend:             amend,
 		Config:            projCfg,
 		MaxLines:          maxDiffLines,
 		Verbose:           verbose,
@@ -117,6 +134,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if result.DryRun {
+		fmt.Fprintf(cmd.OutOrStdout(), "dry-run: %d commit(s) planned, nothing committed\n", len(result.Commits))
+	}
 	for _, c := range result.Commits {
 		if c.Outline != "" {
 			fmt.Fprintln(cmd.OutOrStdout(), c.Outline)
@@ -153,7 +173,11 @@ func init() {
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
 	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
 	commitCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
-	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
+	commitCmd.Flags().Bool("no-attribution", false, "omit the default Git Agent co-author trailer")
+	commitCmd.Flags().Bool("no-git-agent", false, "")
+	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
+	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
+	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
