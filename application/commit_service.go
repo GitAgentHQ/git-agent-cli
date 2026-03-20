@@ -37,6 +37,8 @@ type CommitGitClient interface {
 	AddAll(ctx context.Context) error
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
+	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
+	AmendCommit(ctx context.Context, message string, skipHooks bool) error
 }
 
 type CommitRequest struct {
@@ -44,6 +46,8 @@ type CommitRequest struct {
 	Trailers          []commit.Trailer
 	HookPath          string
 	DryRun            bool
+	NoStage           bool
+	Amend             bool
 	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided
 	MaxLines          int
 	Verbose           bool
@@ -98,51 +102,69 @@ const maxHookRetries = 3
 const maxRePlans = 2
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
-	// Capture user's staging intent before AddAll erases the distinction.
-	preStagedDiff, err := s.git.StagedDiff(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("staged diff: %w", err)
-	}
-	userStagedFiles := make(map[string]bool, len(preStagedDiff.Files))
-	for _, f := range preStagedDiff.Files {
-		userStagedFiles[f] = true
+	if req.Amend {
+		return s.commitAmend(ctx, req)
 	}
 
-	if err := s.git.AddAll(ctx); err != nil {
-		return nil, fmt.Errorf("git add --all: %w", err)
-	}
-
-	fullStagedDiff, err := s.git.StagedDiff(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("staged diff: %w", err)
-	}
-
-	if len(fullStagedDiff.Files) == 0 {
-		return nil, fmt.Errorf("no changes")
-	}
-
-	// Split into staged (user intent = group 0) vs unstaged (free to split).
-	// If the user had nothing pre-staged, treat everything as unstaged so the
-	// planner can create multiple atomic commits without the "group 0" constraint.
 	var staged, unstaged *diff.StagedDiff
-	if len(userStagedFiles) == 0 {
-		staged = &diff.StagedDiff{}
-		unstaged = fullStagedDiff
+
+	if req.NoStage {
+		fullStagedDiff, err := s.git.StagedDiff(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("staged diff: %w", err)
+		}
+		if len(fullStagedDiff.Files) == 0 {
+			return nil, fmt.Errorf("no staged changes (hint: stage files with git add, or remove --no-stage)")
+		}
+		staged = fullStagedDiff
+		unstaged = &diff.StagedDiff{}
 	} else {
-		staged = preStagedDiff
-		var newFiles []string
-		for _, f := range fullStagedDiff.Files {
-			if !userStagedFiles[f] {
-				newFiles = append(newFiles, f)
+		// Capture user's staging intent before AddAll erases the distinction.
+		preStagedDiff, err := s.git.StagedDiff(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("staged diff: %w", err)
+		}
+		userStagedFiles := make(map[string]bool, len(preStagedDiff.Files))
+		for _, f := range preStagedDiff.Files {
+			userStagedFiles[f] = true
+		}
+
+		if err := s.git.AddAll(ctx); err != nil {
+			return nil, fmt.Errorf("git add --all: %w", err)
+		}
+
+		fullStagedDiff, err := s.git.StagedDiff(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("staged diff: %w", err)
+		}
+
+		if len(fullStagedDiff.Files) == 0 {
+			return nil, fmt.Errorf("no changes")
+		}
+
+		// Split into staged (user intent = group 0) vs unstaged (free to split).
+		// If the user had nothing pre-staged, treat everything as unstaged so the
+		// planner can create multiple atomic commits without the "group 0" constraint.
+		if len(userStagedFiles) == 0 {
+			staged = &diff.StagedDiff{}
+			unstaged = fullStagedDiff
+		} else {
+			staged = preStagedDiff
+			var newFiles []string
+			for _, f := range fullStagedDiff.Files {
+				if !userStagedFiles[f] {
+					newFiles = append(newFiles, f)
+				}
+			}
+			if len(newFiles) > 0 {
+				unstaged = filterDiffByFiles(fullStagedDiff, newFiles)
+			} else {
+				unstaged = &diff.StagedDiff{}
 			}
 		}
-		if len(newFiles) > 0 {
-			unstaged = filterDiffByFiles(fullStagedDiff, newFiles)
-		} else {
-			unstaged = &diff.StagedDiff{}
-		}
 	}
 
+	var err error
 	if s.filter != nil {
 		if len(staged.Files) > 0 {
 			staged, err = s.filter.Filter(ctx, staged)
@@ -376,6 +398,71 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
+}
+
+func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*CommitResult, error) {
+	amendDiff, err := s.git.LastCommitDiff(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("last commit diff: %w", err)
+	}
+	if len(amendDiff.Files) == 0 {
+		return nil, fmt.Errorf("no previous commit to amend")
+	}
+
+	if s.filter != nil {
+		amendDiff, err = s.filter.Filter(ctx, amendDiff)
+		if err != nil {
+			return nil, fmt.Errorf("filter diff: %w", err)
+		}
+	}
+
+	if s.truncator != nil && req.MaxLines > 0 {
+		var truncated bool
+		amendDiff, truncated, err = s.truncator.Truncate(ctx, amendDiff, req.MaxLines)
+		if err != nil {
+			return nil, fmt.Errorf("truncate diff: %w", err)
+		}
+		if truncated {
+			s.vlog(req, "diff truncated to %d lines", req.MaxLines)
+		}
+	}
+
+	if req.Config == nil {
+		req.Config = &project.Config{}
+	}
+
+	msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
+		Diff:   amendDiff,
+		Intent: req.Intent,
+		Config: req.Config,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate commit message: %w", err)
+	}
+
+	assembled := msg.Title
+	if msg.Body != "" {
+		assembled += "\n\n" + msg.Body
+	}
+	if len(req.Trailers) > 0 {
+		assembled, err = s.git.FormatTrailers(ctx, assembled, req.Trailers)
+		if err != nil {
+			return nil, fmt.Errorf("format trailers: %w", err)
+		}
+	}
+
+	result := SingleCommitResult{
+		Outline: msg.Outline,
+		Files:   amendDiff.Files,
+		Title:   msg.Title,
+	}
+	if req.DryRun {
+		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
+	}
+	if err := s.git.AmendCommit(ctx, assembled, req.HookPath != ""); err != nil {
+		return nil, err
+	}
+	return &CommitResult{Commits: []SingleCommitResult{result}}, nil
 }
 
 // hasUnscopedGroups reports whether any commit group title lacks a scope,

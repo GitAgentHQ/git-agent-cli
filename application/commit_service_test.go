@@ -34,18 +34,23 @@ func (m *mockCommitPlanner) Plan(_ context.Context, _ commit.PlanRequest) (*comm
 }
 
 type mockCommitGitClient struct {
-	stagedDiff      *diff.StagedDiff
-	stagedErr       error
-	unstagedDiff    *diff.StagedDiff
-	unstagedErr     error
-	commitCalled    bool
-	commitMessage   string
-	commitErr       error
-	addAllCalled    bool
-	addAllErr       error
-	unstageAllCalls int
-	stageFilesCalls int
-	stagedFiles     [][]string // tracks each StageFiles call
+	stagedDiff        *diff.StagedDiff
+	stagedErr         error
+	unstagedDiff      *diff.StagedDiff
+	unstagedErr       error
+	commitCalled      bool
+	commitMessage     string
+	commitErr         error
+	addAllCalled      bool
+	addAllErr         error
+	unstageAllCalls   int
+	stageFilesCalls   int
+	stagedFiles       [][]string // tracks each StageFiles call
+	lastCommitDiff    *diff.StagedDiff
+	lastCommitDiffErr error
+	amendCalled       bool
+	amendMessage      string
+	amendErr          error
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -90,6 +95,19 @@ func (m *mockCommitGitClient) FormatTrailers(_ context.Context, message string, 
 
 func (m *mockCommitGitClient) RepoRoot(_ context.Context) (string, error) {
 	return ".", nil
+}
+
+func (m *mockCommitGitClient) LastCommitDiff(_ context.Context) (*diff.StagedDiff, error) {
+	if m.lastCommitDiff == nil {
+		return &diff.StagedDiff{}, m.lastCommitDiffErr
+	}
+	return m.lastCommitDiff, m.lastCommitDiffErr
+}
+
+func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string, _ bool) error {
+	m.amendCalled = true
+	m.amendMessage = message
+	return m.amendErr
 }
 
 type mockHookExecutor struct {
@@ -292,5 +310,75 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	}
 	if git.unstageAllCalls != 2 {
 		t.Errorf("expected UnstageAll called 2 times, got %d", git.unstageAllCalls)
+	}
+}
+
+func TestCommitService_NoStage_UsesExistingStaging(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{NoStage: true, Config: &project.Config{}}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if git.addAllCalled {
+		t.Fatal("git.AddAll must NOT be called when --no-stage is set")
+	}
+	if !git.commitCalled {
+		t.Fatal("expected git.Commit to be called")
+	}
+}
+
+func TestCommitService_NoStage_NothingStaged_ReturnsError(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{stagedDiff: &diff.StagedDiff{}}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{NoStage: true, Config: &project.Config{}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when no staged changes with --no-stage, got nil")
+	}
+	if !strings.Contains(err.Error(), "no staged changes") {
+		t.Errorf("expected 'no staged changes' in error, got: %v", err)
+	}
+}
+
+func TestCommitService_Amend_CallsAmendCommit(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		lastCommitDiff: defaultDiff(),
+	}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{Amend: true, Config: &project.Config{}}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !git.amendCalled {
+		t.Fatal("expected git.AmendCommit to be called")
+	}
+	if git.commitCalled {
+		t.Fatal("git.Commit must NOT be called when --amend is set")
+	}
+	if !strings.Contains(git.amendMessage, "feat: add feature") {
+		t.Errorf("amend message missing title, got: %q", git.amendMessage)
+	}
+}
+
+func TestCommitService_Amend_NoPreviousCommit_ReturnsError(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		lastCommitDiff: &diff.StagedDiff{},
+	}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{Amend: true, Config: &project.Config{}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when no previous commit to amend, got nil")
 	}
 }

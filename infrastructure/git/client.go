@@ -222,6 +222,45 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 	return exec.CommandContext(ctx, "git", "reset", "HEAD").Run()
 }
 
+func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
+	contentOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	namesOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--name-only").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	content := string(contentOut)
+
+	var files []string
+	for _, line := range strings.Split(strings.TrimRight(string(namesOut), "\n"), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+
+	return &diff.StagedDiff{
+		Files:   files,
+		Content: content,
+		Lines:   strings.Count(content, "\n"),
+	}, nil
+}
+
+func (c *Client) AmendCommit(ctx context.Context, message string, skipHooks bool) error {
+	args := []string{"commit", "--amend", "-m", message}
+	if skipHooks {
+		args = append(args, "--no-verify")
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // FormatTrailers pipes message into `git interpret-trailers` and returns the
 // formatted message with trailers appended according to git's trailer rules.
 func (c *Client) FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error) {
