@@ -17,6 +17,7 @@ import (
 var validHooks = map[string]bool{
 	"empty":        true,
 	"conventional": true,
+	"commit-msg":   true,
 }
 
 var initCmd = &cobra.Command{
@@ -40,6 +41,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	_, statErr := os.Stat(configPath)
 	configExists := statErr == nil
+
+	if configExists && !force {
+		return fmt.Errorf("config already exists at %s: use --force to overwrite", configPath)
+	}
 
 	// Write project config only on first init or when --force is set.
 	if !configExists || force {
@@ -75,7 +80,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating hooks dir: %w", err)
 	}
 	hookContent := hooks.Empty
-	if hookName == "conventional" {
+	if hookName == "conventional" || hookName == "commit-msg" {
 		hookContent = hooks.Conventional
 	}
 	if err := os.WriteFile(hookPath, hookContent, 0755); err != nil {

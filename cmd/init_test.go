@@ -27,34 +27,20 @@ func TestInitCmd_UnknownHook(t *testing.T) {
 	}
 }
 
-func TestInitCmd_ConfigExists_SkipsConfigWritesHook(t *testing.T) {
+func TestInitCmd_ConfigExists_BlocksWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	gaDir := filepath.Join(dir, ".ga")
 	if err := os.MkdirAll(gaDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	ymlPath := filepath.Join(gaDir, "project.yml")
-	original := []byte("existing")
-	if err := os.WriteFile(ymlPath, original, 0644); err != nil {
+	if err := os.WriteFile(ymlPath, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Re-running init without --force should succeed: skip config, install hook.
 	err := cmd.ExecuteArgs([]string{"init", "--config", ymlPath, "--hook", "conventional"})
 	requireInitRegistered(t, err)
-	if err != nil {
-		t.Fatalf("expected no error when project.yml exists, got: %v", err)
-	}
-
-	// Config must be unchanged.
-	got, _ := os.ReadFile(ymlPath)
-	if string(got) != string(original) {
-		t.Errorf("project.yml was overwritten; want %q, got %q", original, got)
-	}
-
-	// Hook must have been installed.
-	hookPath := filepath.Join(gaDir, "hooks", "pre-commit")
-	if _, err := os.Stat(hookPath); err != nil {
-		t.Errorf("expected hook at %s, got: %v", hookPath, err)
+	if err == nil {
+		t.Fatal("expected error when config exists without --force, got nil")
 	}
 }
