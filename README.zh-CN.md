@@ -5,67 +5,67 @@
 
 [English](README.md) | **简体中文**
 
-使用 LLM 自动生成 Git 提交信息的 AI 优先命令行工具。
+AI 驱动的 Git 命令行工具，分析暂存和未暂存的变更，将其拆分为原子提交，并通过 LLM 生成规范的提交信息。
 
 ## 安装
+
+**Homebrew（macOS/Linux）：**
+
+```bash
+brew install FradSer/brew/git-agent
+```
+
+**Go install：**
 
 ```bash
 go install github.com/fradser/git-agent@latest
 ```
 
-或从 [ releases ](https://github.com/fradser/git-agent/releases) 下载预编译的二进制文件。
+**预编译二进制文件：** 从 [releases 页面](https://github.com/FradSer/git-agent-cli/releases) 下载。
 
 ## 快速开始
 
 ```bash
 # 在当前仓库初始化 git-agent
-git agent init
+git-agent init
 
-# 暂存你的更改
-git agent add .
-
-# 生成并创建带有 AI 生成信息的提交
-git agent commit
-
-# 或一步完成暂存和提交
-git agent commit --all
+# 暂存变更，然后生成并创建提交
+git-agent commit
 ```
 
 ## 命令
 
-### `git agent init`
+### `git-agent init`
 
-在当前仓库初始化 git-agent。分析 git 历史和目录结构，生成项目特定的提交作用域。
+在当前仓库初始化 git-agent。不带参数时，依次执行作用域生成、安装空钩子、生成 `.gitignore`。
 
 ```bash
-git agent init                    # 使用默认的空钩子
-git agent init --hook conventional  # 安装 Conventional Commits 验证器
-git agent init --force            # 覆盖现有配置
+git-agent init                          # 作用域 + 空钩子 + .gitignore（默认）
+git-agent init --scope                  # 仅生成作用域
+git-agent init --hook conventional      # 安装 Conventional Commits 验证器
+git-agent init --hook /path/to/script   # 安装自定义钩子脚本
+git-agent init --gitignore              # 仅生成 .gitignore
+git-agent init --install-hook           # 将 commit-msg shim 安装到 .git/hooks/
+git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
+git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
 ```
 
-### `git agent commit`
+### `git-agent commit`
 
-生成并创建带有 AI 生成信息的提交。
-
-```bash
-git agent commit                  # 提交暂存的更改
-git agent commit --all           # 先暂存所有更改，再提交
-git agent commit --dry-run       # 仅打印提交信息，不执行提交
-git agent commit --intent "fix auth bug"  # 为 LLM 提供上下文提示
-```
-
-### `git agent add`
-
-暂存文件以进行提交（`git add` 的封装）。
+读取暂存和未暂存的变更，将其拆分为原子组，为每组生成提交信息，并依次提交。
 
 ```bash
-git agent add .
-git agent add src/ utils/
+git-agent commit                              # 提交所有变更
+git-agent commit --dry-run                    # 仅打印提交信息，不执行提交
+git-agent commit --intent "fix auth bug"      # 向 LLM 提供上下文提示
+git-agent commit --co-author "Name <email>"   # 添加 co-author trailer
+git-agent commit --trailer "Fixes: #123"      # 添加任意 git trailer
+git-agent commit --no-git-agent               # 省略默认的 Git Agent trailer
 ```
 
 ## 配置
 
-### 用户配置 (`~/.config/git-agent/config.yml`)
+### 用户配置（`~/.config/git-agent/config.yml`）
 
 可选。指向任意 OpenAI 兼容端点：
 
@@ -75,7 +75,7 @@ api_key: sk-...
 model: gpt-4o
 ```
 
-其他提供商的示例：
+其他提供商示例：
 
 ```yaml
 # Cloudflare Workers AI
@@ -90,9 +90,9 @@ base_url: http://localhost:11434/v1
 model: llama3
 ```
 
-### 项目配置 `.git-agent/project.yml`
+### 项目配置（`.git-agent/project.yml`）
 
-由 `git agent init` 生成。定义团队范围的提交类型：
+由 `git-agent init` 生成，定义项目的提交作用域：
 
 ```yaml
 scopes:
@@ -104,36 +104,44 @@ scopes:
 
 ### 钩子
 
-内置钩子（由 `git agent init --hook <name>` 安装）：
+通过 `git-agent init --hook <name>` 安装的内置钩子：
 
 | 钩子 | 描述 |
-|------|-------------|
-| `empty` | 默认空占位符，始终通过 |
+|------|------|
+| `empty` | 始终通过的占位钩子 |
 | `conventional` | 验证 Conventional Commits 格式 |
 
-自定义钩子是位于 `.git-agent/hooks/pre-commit` 的可执行脚本。它们通过 stdin 接收 JSON，退出 0 表示继续，非 0 表示阻止。
+自定义钩子是位于 `.git-agent/hooks/pre-commit` 的可执行脚本，通过 stdin 接收 JSON 载荷（`diff`、`commit_message`、`intent`、`staged_files`、`config`），退出 0 表示允许，非 0 表示阻止。阻止时，`git-agent` 最多重试 3 次，之后以退出码 2 结束。
 
-## 标志
+## 参数
 
-| 标志 | 描述 |
-|------|-------------|
-| `-v, --verbose` | 启用详细输出 |
+### `commit`
+
+| 参数 | 描述 |
+|------|------|
+| `--dry-run` | 仅打印提交信息，不执行提交 |
+| `--intent` | 描述本次变更的意图 |
+| `--co-author` | 添加 co-author trailer（可重复） |
+| `--trailer` | 添加任意 git trailer，格式为 `Key: Value`（可重复） |
+| `--no-git-agent` | 省略默认的 Git Agent co-author trailer |
 | `--api-key` | AI 提供商的 API 密钥 |
 | `--model` | 用于生成的模型 |
 | `--base-url` | AI 提供商的 base URL |
-| `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：500） |
-| `--all, -a` | 提交前暂存所有跟踪的更改 |
-| `--dry-run` | 仅打印提交信息，不执行提交 |
-| `--intent` | 描述更改的意图 |
-| `--co-author` | 在提交信息中添加联合作者 |
+| `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制） |
+
+### 全局
+
+| 参数 | 描述 |
+|------|------|
+| `-v, --verbose` | 启用详细输出 |
 
 ## 退出码
 
 | 码 | 含义 |
-|------|---------|
-| 0 | 成功 — 提交已创建（或 dry-run 完成） |
-| 1 | 一般错误 — 无暂存更改、API 失败、配置缺失 |
-| 2 | 钩子阻止 — pre-commit 钩子返回非零 |
+|----|------|
+| 0 | 成功 |
+| 1 | 一般错误 — 无变更、API 失败、配置缺失 |
+| 2 | 钩子阻止 — pre-commit 钩子在重试后仍返回非零 |
 
 ## 许可证
 
