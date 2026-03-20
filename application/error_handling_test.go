@@ -24,8 +24,8 @@ func TestCommitService_NoStagedChanges(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty staged diff, got nil")
 	}
-	if !strings.Contains(err.Error(), "no staged changes") {
-		t.Errorf("expected error containing 'no staged changes', got: %v", err)
+	if !strings.Contains(err.Error(), "no changes") {
+		t.Errorf("expected error containing 'no changes', got: %v", err)
 	}
 }
 

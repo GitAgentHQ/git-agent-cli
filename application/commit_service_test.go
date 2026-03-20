@@ -217,6 +217,21 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	}
 }
 
+func TestCommitService_UntrackedFiles_AutoStaged(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !git.addAllCalled {
+		t.Fatal("expected git.AddAll to be called before diff checks")
+	}
+}
+
 func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}

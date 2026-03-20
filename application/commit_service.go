@@ -88,6 +88,10 @@ const maxHookRetries = 3
 const maxRePlans = 2
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
+	if err := s.git.AddAll(ctx); err != nil {
+		return nil, fmt.Errorf("git add --all: %w", err)
+	}
+
 	staged, err := s.git.StagedDiff(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("staged diff: %w", err)
@@ -99,7 +103,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	if len(staged.Files) == 0 && len(unstaged.Files) == 0 {
-		return nil, fmt.Errorf("no staged changes")
+		return nil, fmt.Errorf("no changes")
 	}
 
 	s.vlog(req, "staged files: %v", staged.Files)
