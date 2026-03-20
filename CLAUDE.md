@@ -5,8 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Build
+# Build (dev, no credentials)
 go build -o git-agent .
+
+# Build with free-mode credentials (reads from .env)
+bash scripts/build.sh
 
 # Run all tests
 go test -count=1 ./application/... ./domain/... ./infrastructure/... ./cmd/... ./e2e/...

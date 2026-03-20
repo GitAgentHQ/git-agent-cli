@@ -1,6 +1,7 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const aiGatewayURL = `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.CF_GATEWAY_ID}/compat`;
 
     if (url.pathname !== "/chat/completions") {
       return new Response("Not Found", { status: 404 });
@@ -26,26 +27,16 @@ export default {
       return new Response("Bad Request", { status: 400 });
     }
 
-    const allowedModels = (env.ALLOWED_MODELS ?? "gpt-4o-mini")
-      .split(",")
-      .map((m) => m.trim());
-
-    if (!allowedModels.includes(body.model)) {
-      return new Response(
-        JSON.stringify({ error: `model not allowed: ${body.model}` }),
-        { status: 422, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    body.model = env.MODEL;
 
     if (body.max_completion_tokens == null || body.max_completion_tokens > 4096) {
       body.max_completion_tokens = 4096;
     }
 
-    const upstream = new Request(env.AI_GATEWAY_URL + "/chat/completions", {
+    const upstream = new Request(aiGatewayURL + "/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN}`,
       },
       body: JSON.stringify(body),

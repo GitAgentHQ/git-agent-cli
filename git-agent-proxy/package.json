@@ -6,7 +6,7 @@
     "wrangler": "^3"
   },
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "ln -sf ../.env .dev.vars && wrangler dev",
     "deploy": "wrangler deploy"
   }
 }

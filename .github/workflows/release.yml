@@ -39,15 +39,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: |
-          OUTPUT="git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          go build \
-            -ldflags "\
-              -s -w \
-              -X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=${{ secrets.CLIENT_TOKEN }} \
-              -X github.com/fradser/git-agent/infrastructure/config.BuildBaseURL=${{ secrets.WORKER_URL }} \
-              -X github.com/fradser/git-agent/infrastructure/config.BuildModel=${{ secrets.FREE_MODEL }}" \
-            -o "$OUTPUT" .
+          CLIENT_TOKEN: ${{ secrets.CLIENT_TOKEN }}
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          MODEL: ${{ secrets.FREE_MODEL }}
+          OUTPUT: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+        run: bash scripts/build.sh
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
