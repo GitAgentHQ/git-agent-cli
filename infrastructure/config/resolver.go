@@ -32,6 +32,9 @@ func Resolve(flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 		if err == nil {
 			// Silently ignore parse errors — treat as empty config.
 			_ = yaml.Unmarshal(data, &file)
+			file.APIKey = os.ExpandEnv(file.APIKey)
+			file.BaseURL = os.ExpandEnv(file.BaseURL)
+			file.Model = os.ExpandEnv(file.Model)
 		}
 	}
 

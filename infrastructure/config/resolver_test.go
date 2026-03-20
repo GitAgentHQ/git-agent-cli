@@ -71,6 +71,45 @@ func TestResolve_FlagModelOverridesFile(t *testing.T) {
 	}
 }
 
+func TestResolve_EnvVarExpandedInAPIKey(t *testing.T) {
+	t.Setenv("TEST_GA_API_KEY", "secret-from-env")
+	path := writeTempConfig(t, "api_key: \"${TEST_GA_API_KEY}\"\n")
+
+	got, err := config.Resolve(config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.APIKey != "secret-from-env" {
+		t.Errorf("expected APIKey %q, got %q", "secret-from-env", got.APIKey)
+	}
+}
+
+func TestResolve_EnvVarExpandedInBaseURL(t *testing.T) {
+	t.Setenv("TEST_GA_BASE_URL", "https://env.example.com/v1")
+	path := writeTempConfig(t, "api_key: \"key\"\nbase_url: \"${TEST_GA_BASE_URL}\"\n")
+
+	got, err := config.Resolve(config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.BaseURL != "https://env.example.com/v1" {
+		t.Errorf("expected BaseURL %q, got %q", "https://env.example.com/v1", got.BaseURL)
+	}
+}
+
+func TestResolve_UnsetEnvVarExpandsToEmpty(t *testing.T) {
+	os.Unsetenv("TEST_GA_UNSET_VAR")
+	path := writeTempConfig(t, "api_key: \"${TEST_GA_UNSET_VAR}\"\n")
+
+	got, err := config.Resolve(config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.APIKey != "" {
+		t.Errorf("expected empty APIKey, got %q", got.APIKey)
+	}
+}
+
 func TestResolve_FlagBaseURLOverridesFile(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\n")
 
