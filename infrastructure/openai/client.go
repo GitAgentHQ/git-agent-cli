@@ -254,8 +254,8 @@ Rules:
 }
 
 func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {
-	userPrompt := fmt.Sprintf("Recent commits:\n%s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
-		strings.Join(commits, "\n"),
+	userPrompt := fmt.Sprintf("Commit log (subject + changed files):\n%s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
+		strings.Join(commits, "\n---\n"),
 		strings.Join(dirs, "\n"),
 		strings.Join(files, "\n"),
 	)
@@ -265,15 +265,16 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Derive commit scopes strictly from the top-level directories of the project.
+				Content: `You are an expert software engineer. Derive commit scopes from the top-level directories of the project, using commit history to validate and refine them.
 
 Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
 
 Rules (STRICTLY enforce):
 - Each scope MUST correspond to an actual top-level directory listed in "Top-level directories"
-- Use commit history and tracked files only to understand intent, NOT to invent extra scopes
+- Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
 - Single-word directory names: use as-is (e.g. "cmd" → "cli" if it holds CLI code, "pkg", "docs", "domain", "hooks")
 - Multi-word or long names: abbreviate to a well-known short form (e.g. "application" → "app", "infrastructure" → "infra")
+- If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scopes lowercase, no hyphens`,
