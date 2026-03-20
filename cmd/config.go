@@ -33,6 +33,11 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
+	if infraConfig.BuildAPIKey != "" && cfg.APIKey == infraConfig.BuildAPIKey {
+		fmt.Fprintln(cmd.OutOrStdout(), "mode: FREE (using built-in credentials)")
+		return nil
+	}
+
 	fmt.Fprintf(cmd.OutOrStdout(), "api-key:  %s\n", maskAPIKey(cfg.APIKey))
 	fmt.Fprintf(cmd.OutOrStdout(), "model:    %s\n", cfg.Model)
 	fmt.Fprintf(cmd.OutOrStdout(), "base-url: %s\n", cfg.BaseURL)
