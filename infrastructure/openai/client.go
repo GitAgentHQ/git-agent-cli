@@ -41,6 +41,15 @@ func extractJSON(s string) string {
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	content := req.Diff.Content
 
+	var scopeRule string
+	if req.Config != nil && len(req.Config.Scopes) > 0 {
+		scopeRule = " REQUIRED scope — you MUST use one of these scopes (choose the most appropriate): " + strings.Join(req.Config.Scopes, ", ") + "."
+	} else {
+		scopeRule = " Scope is optional; omit if no clear scope applies."
+	}
+
+	systemPrompt := `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood;` + scopeRule + ` body has bullet points then explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
+
 	var promptParts []string
 	if req.Intent != "" {
 		promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
@@ -49,9 +58,6 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		content,
 		strings.Join(req.Diff.Files, ", "),
 	))
-	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		promptParts = append(promptParts, "Valid scopes: "+strings.Join(req.Config.Scopes, ", "))
-	}
 	userPrompt := strings.Join(promptParts, "\n\n")
 	if req.HookFeedback != "" {
 		userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
@@ -62,7 +68,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; body has bullet points then explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`,
+				Content: systemPrompt,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
@@ -120,14 +126,18 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		))
 	}
 
+	var scopeRule string
+	if req.Config != nil && len(req.Config.Scopes) > 0 {
+		scopeRule = "\nREQUIRED scope — every title MUST use one of these scopes (choose the most appropriate per group): " + strings.Join(req.Config.Scopes, ", ") + "."
+	} else {
+		scopeRule = "\nScope is optional; omit if no clear scope applies."
+	}
+
 	var planParts []string
 	if req.Intent != "" {
 		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 	}
 	planParts = append(planParts, parts...)
-	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		planParts = append(planParts, "Valid scopes: "+strings.Join(req.Config.Scopes, ", "))
-	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
@@ -145,7 +155,7 @@ Each group should be a cohesive unit of change.
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
 
-Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.` + scopeRule + `
 Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`,
 			},
 			{

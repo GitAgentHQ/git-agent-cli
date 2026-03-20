@@ -7,3 +7,5 @@ scopes:
     - hooks
     - infra
     - pkg
+    - proxy
+    - scripts

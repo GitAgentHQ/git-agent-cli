@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/fradser/git-agent/domain/commit"
 	"github.com/fradser/git-agent/domain/diff"
@@ -97,22 +98,49 @@ const maxHookRetries = 3
 const maxRePlans = 2
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
+	// Capture user's staging intent before AddAll erases the distinction.
+	preStagedDiff, err := s.git.StagedDiff(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("staged diff: %w", err)
+	}
+	userStagedFiles := make(map[string]bool, len(preStagedDiff.Files))
+	for _, f := range preStagedDiff.Files {
+		userStagedFiles[f] = true
+	}
+
 	if err := s.git.AddAll(ctx); err != nil {
 		return nil, fmt.Errorf("git add --all: %w", err)
 	}
 
-	staged, err := s.git.StagedDiff(ctx)
+	fullStagedDiff, err := s.git.StagedDiff(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("staged diff: %w", err)
 	}
 
-	unstaged, err := s.git.UnstagedDiff(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("unstaged diff: %w", err)
+	if len(fullStagedDiff.Files) == 0 {
+		return nil, fmt.Errorf("no changes")
 	}
 
-	if len(staged.Files) == 0 && len(unstaged.Files) == 0 {
-		return nil, fmt.Errorf("no changes")
+	// Split into staged (user intent = group 0) vs unstaged (free to split).
+	// If the user had nothing pre-staged, treat everything as unstaged so the
+	// planner can create multiple atomic commits without the "group 0" constraint.
+	var staged, unstaged *diff.StagedDiff
+	if len(userStagedFiles) == 0 {
+		staged = &diff.StagedDiff{}
+		unstaged = fullStagedDiff
+	} else {
+		staged = preStagedDiff
+		var newFiles []string
+		for _, f := range fullStagedDiff.Files {
+			if !userStagedFiles[f] {
+				newFiles = append(newFiles, f)
+			}
+		}
+		if len(newFiles) > 0 {
+			unstaged = filterDiffByFiles(fullStagedDiff, newFiles)
+		} else {
+			unstaged = &diff.StagedDiff{}
+		}
 	}
 
 	if s.filter != nil {
@@ -322,4 +350,42 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
+}
+
+// filterDiffByFiles returns a new StagedDiff containing only the given files,
+// extracting the relevant hunks from the diff content.
+func filterDiffByFiles(d *diff.StagedDiff, files []string) *diff.StagedDiff {
+	kept := make(map[string]bool, len(files))
+	for _, f := range files {
+		kept[f] = true
+	}
+
+	const prefix = "diff --git "
+	parts := strings.Split(d.Content, prefix)
+
+	var sb strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		firstLine := part
+		if idx := strings.IndexByte(part, '\n'); idx >= 0 {
+			firstLine = part[:idx]
+		}
+		bIdx := strings.LastIndex(firstLine, " b/")
+		if bIdx < 0 {
+			continue
+		}
+		if kept[firstLine[bIdx+3:]] {
+			sb.WriteString(prefix)
+			sb.WriteString(part)
+		}
+	}
+
+	content := sb.String()
+	return &diff.StagedDiff{
+		Files:   files,
+		Content: content,
+		Lines:   strings.Count(content, "\n"),
+	}
 }
