@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	domainHook "github.com/fradser/git-agent/domain/hook"
-	domainProject "github.com/fradser/git-agent/domain/project"
-	infraHook "github.com/fradser/git-agent/infrastructure/hook"
+	domainHook "github.com/gitagenthq/git-agent/domain/hook"
+	domainProject "github.com/gitagenthq/git-agent/domain/project"
+	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 )
 
 func validCommitMessage() string {

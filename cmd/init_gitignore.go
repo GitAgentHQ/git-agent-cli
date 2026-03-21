@@ -6,11 +6,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/fradser/git-agent/application"
-	infraConfig "github.com/fradser/git-agent/infrastructure/config"
-	infraGit "github.com/fradser/git-agent/infrastructure/git"
-	infraGitignore "github.com/fradser/git-agent/infrastructure/gitignore"
-	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
+	"github.com/gitagenthq/git-agent/application"
+	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
+	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
+	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
 func runGitignore(ctx context.Context, force bool, out io.Writer) error {

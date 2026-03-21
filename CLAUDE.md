@@ -71,7 +71,6 @@ cmd → application → domain ← infrastructure
 - `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--api-key`, `--model`, `--base-url`, `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive.
 - `config show` — display resolved provider config (api-key masked, model, base-url).
 - `config scopes` — list scopes from `.git-agent/project.yml`.
-- `config prompts` — print all static system prompts (delimited by `\n---\n`) for syncing to the proxy: `git-agent config prompts | wrangler secret put ALLOWED_SYSTEM_PROMPTS`.
 
 **`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
 

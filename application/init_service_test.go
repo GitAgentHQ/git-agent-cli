@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/application"
+	"github.com/gitagenthq/git-agent/application"
 )
 
 // mockLLMClient implements application.LLMClient.

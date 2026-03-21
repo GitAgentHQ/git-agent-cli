@@ -3,8 +3,8 @@ package commit
 import (
 	"context"
 
-	"github.com/fradser/git-agent/domain/diff"
-	"github.com/fradser/git-agent/domain/project"
+	"github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 // CommitPlanner analyses a set of changes and proposes how to split them

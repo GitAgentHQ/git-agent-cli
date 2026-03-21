@@ -569,7 +569,7 @@ main.go
 ## go.mod
 
 ```
-module github.com/fradser/git-agent
+module github.com/gitagenthq/git-agent
 
 go 1.23
 

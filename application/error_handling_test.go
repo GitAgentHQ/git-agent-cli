@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/application"
-	"github.com/fradser/git-agent/domain/diff"
-	"github.com/fradser/git-agent/domain/project"
+	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 func TestCommitService_NoStagedChanges(t *testing.T) {

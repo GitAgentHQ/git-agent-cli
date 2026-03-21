@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	domainDiff "github.com/fradser/git-agent/domain/diff"
-	"github.com/fradser/git-agent/pkg/filter"
+	domainDiff "github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/pkg/filter"
 )
 
 type patternFilter struct{}

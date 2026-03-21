@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/cmd"
+	"github.com/gitagenthq/git-agent/cmd"
 )
 
 func TestCommitCmd_DryRunFlag(t *testing.T) {

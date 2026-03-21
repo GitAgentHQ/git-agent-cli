@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/domain/diff"
-	infradiff "github.com/fradser/git-agent/infrastructure/diff"
+	"github.com/gitagenthq/git-agent/domain/diff"
+	infradiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 )
 
 func newFilter() diff.DiffFilter {

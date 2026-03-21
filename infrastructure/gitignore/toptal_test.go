@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	infraGitignore "github.com/fradser/git-agent/infrastructure/gitignore"
+	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
 )
 
 func TestToptalClient_Generate_Success(t *testing.T) {

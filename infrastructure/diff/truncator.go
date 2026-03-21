@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	domainDiff "github.com/fradser/git-agent/domain/diff"
+	domainDiff "github.com/gitagenthq/git-agent/domain/diff"
 )
 
 type lineTruncator struct{}

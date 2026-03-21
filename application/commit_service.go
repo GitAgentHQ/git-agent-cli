@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fradser/git-agent/domain/commit"
-	"github.com/fradser/git-agent/domain/diff"
-	"github.com/fradser/git-agent/domain/hook"
-	"github.com/fradser/git-agent/domain/project"
+	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/hook"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 var ErrHookBlocked = errors.New("hook blocked commit")

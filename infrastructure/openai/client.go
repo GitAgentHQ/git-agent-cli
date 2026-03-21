@@ -8,8 +8,8 @@ import (
 
 	goopenai "github.com/sashabaranov/go-openai"
 
-	"github.com/fradser/git-agent/domain/commit"
-	domainGitignore "github.com/fradser/git-agent/domain/gitignore"
+	"github.com/gitagenthq/git-agent/domain/commit"
+	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
 type Client struct {

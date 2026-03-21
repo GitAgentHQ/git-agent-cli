@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	domainGitignore "github.com/fradser/git-agent/domain/gitignore"
+	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
 

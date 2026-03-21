@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/application"
-	"github.com/fradser/git-agent/domain/commit"
-	"github.com/fradser/git-agent/domain/diff"
-	"github.com/fradser/git-agent/domain/hook"
-	"github.com/fradser/git-agent/domain/project"
+	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/hook"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 // --- mocks ---

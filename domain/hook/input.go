@@ -1,6 +1,6 @@
 package hook
 
-import "github.com/fradser/git-agent/domain/project"
+import "github.com/gitagenthq/git-agent/domain/project"
 
 // HookInput is the JSON payload passed to git-agent hooks.
 type HookInput struct {

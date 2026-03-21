@@ -26,7 +26,7 @@ func buildBinary() (string, error) {
 		return "", err
 	}
 	bin := filepath.Join(tmp, "git-agent")
-	c := exec.Command("go", "build", "-o", bin, "github.com/fradser/git-agent")
+	c := exec.Command("go", "build", "-o", bin, "github.com/gitagenthq/git-agent")
 	if out, err := c.CombinedOutput(); err != nil {
 		os.RemoveAll(tmp)
 		return "", fmt.Errorf("%w\n%s", err, out)

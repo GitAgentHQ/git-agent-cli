@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/cmd"
+	"github.com/gitagenthq/git-agent/cmd"
 )
 
 func requireInitRegistered(t *testing.T, err error) {

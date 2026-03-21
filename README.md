@@ -12,16 +12,16 @@ AI-powered Git CLI that analyzes your staged and unstaged changes, splits them i
 **Homebrew (macOS/Linux):**
 
 ```bash
-brew install FradSer/brew/git-agent
+brew install GitAgentHQ/brew/git-agent
 ```
 
 **Go install:**
 
 ```bash
-go install github.com/fradser/git-agent@latest
+go install github.com/gitagenthq/git-agent@latest
 ```
 
-**Pre-built binaries:** download from the [releases page](https://github.com/FradSer/git-agent-cli/releases).
+**Pre-built binaries:** download from the [releases page](https://github.com/GitAgentHQ/git-agent-cli/releases).
 
 ## Quick Start
 

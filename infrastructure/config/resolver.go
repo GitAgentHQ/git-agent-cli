@@ -10,7 +10,7 @@ import (
 const DefaultBaseURL = "https://api.anthropic.com/v1"
 const DefaultModel = "claude-3-5-haiku-20241022"
 
-// Build-time defaults injected via -ldflags "-X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=..."
+// Build-time defaults injected via -ldflags "-X github.com/gitagenthq/git-agent/infrastructure/config.BuildAPIKey=..."
 var (
 	BuildAPIKey  = ""
 	BuildBaseURL = ""

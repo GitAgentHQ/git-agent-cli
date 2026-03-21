@@ -12,16 +12,16 @@ AI 驱动的 Git 命令行工具，分析暂存和未暂存的变更，将其拆
 **Homebrew（macOS/Linux）：**
 
 ```bash
-brew install FradSer/brew/git-agent
+brew install GitAgentHQ/brew/git-agent
 ```
 
 **Go install：**
 
 ```bash
-go install github.com/fradser/git-agent@latest
+go install github.com/gitagenthq/git-agent@latest
 ```
 
-**预编译二进制文件：** 从 [releases 页面](https://github.com/FradSer/git-agent-cli/releases) 下载。
+**预编译二进制文件：** 从 [releases 页面](https://github.com/GitAgentHQ/git-agent-cli/releases) 下载。
 
 ## 快速开始
 

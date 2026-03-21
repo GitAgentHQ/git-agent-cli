@@ -78,37 +78,37 @@ jobs:
         run: |
           VERSION=${TAG#v}
           declare -A SHAS
-          gh release download "${TAG}" --repo FradSer/git-agent-cli --pattern "*.tar.gz"
+          gh release download "${TAG}" --repo GitAgentHQ/git-agent-cli --pattern "*.tar.gz"
           for platform in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
             SHAS[$platform]=$(sha256sum "git-agent-${platform}.tar.gz" | cut -d' ' -f1)
           done
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/FradSer/homebrew-brew.git" tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/GitAgentHQ/homebrew-brew.git" tap
           cd tap
 
           cat > Formula/git-agent.rb << FORMULA
           class GitAgent < Formula
             desc "AI-powered git commit agent"
-            homepage "https://github.com/FradSer/git-agent-cli"
+            homepage "https://github.com/GitAgentHQ/git-agent-cli"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/FradSer/git-agent-cli/releases/download/${TAG}/git-agent-darwin-arm64.tar.gz"
+                url "https://github.com/GitAgentHQ/git-agent-cli/releases/download/${TAG}/git-agent-darwin-arm64.tar.gz"
                 sha256 "${SHAS[darwin-arm64]}"
               else
-                url "https://github.com/FradSer/git-agent-cli/releases/download/${TAG}/git-agent-darwin-amd64.tar.gz"
+                url "https://github.com/GitAgentHQ/git-agent-cli/releases/download/${TAG}/git-agent-darwin-amd64.tar.gz"
                 sha256 "${SHAS[darwin-amd64]}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/FradSer/git-agent-cli/releases/download/${TAG}/git-agent-linux-arm64.tar.gz"
+                url "https://github.com/GitAgentHQ/git-agent-cli/releases/download/${TAG}/git-agent-linux-arm64.tar.gz"
                 sha256 "${SHAS[linux-arm64]}"
               else
-                url "https://github.com/FradSer/git-agent-cli/releases/download/${TAG}/git-agent-linux-amd64.tar.gz"
+                url "https://github.com/GitAgentHQ/git-agent-cli/releases/download/${TAG}/git-agent-linux-amd64.tar.gz"
                 sha256 "${SHAS[linux-amd64]}"
               end
             end

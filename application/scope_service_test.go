@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/application"
+	"github.com/gitagenthq/git-agent/application"
 )
 
 func TestScopeService_Generate(t *testing.T) {

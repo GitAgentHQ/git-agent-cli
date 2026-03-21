@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	agentErrors "github.com/fradser/git-agent/pkg/errors"
+	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 var verbose bool

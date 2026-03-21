@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fradser/git-agent/domain/commit"
-	"github.com/fradser/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/diff"
 )
 
 type Client struct{}

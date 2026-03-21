@@ -11,15 +11,15 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fradser/git-agent/application"
-	"github.com/fradser/git-agent/domain/commit"
-	"github.com/fradser/git-agent/domain/project"
-	infraConfig "github.com/fradser/git-agent/infrastructure/config"
-	infraDiff "github.com/fradser/git-agent/infrastructure/diff"
-	infraGit "github.com/fradser/git-agent/infrastructure/git"
-	infraHook "github.com/fradser/git-agent/infrastructure/hook"
-	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
-	agentErrors "github.com/fradser/git-agent/pkg/errors"
+	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/project"
+	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
+	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
+	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
+	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
+	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 var commitCmd = &cobra.Command{

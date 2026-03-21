@@ -8,10 +8,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fradser/git-agent/application"
-	infraConfig "github.com/fradser/git-agent/infrastructure/config"
-	infraGit "github.com/fradser/git-agent/infrastructure/git"
-	infraOpenAI "github.com/fradser/git-agent/infrastructure/openai"
+	"github.com/gitagenthq/git-agent/application"
+	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
+	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
 func projectYMLPath(root string) string {

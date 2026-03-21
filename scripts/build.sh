@@ -14,7 +14,7 @@ fi
 
 go build \
   -ldflags "-s -w \
-    -X github.com/fradser/git-agent/infrastructure/config.BuildAPIKey=${CLIENT_TOKEN} \
-    -X github.com/fradser/git-agent/infrastructure/config.BuildBaseURL=${WORKER_URL} \
-    -X github.com/fradser/git-agent/infrastructure/config.BuildModel=${MODEL}" \
+    -X github.com/gitagenthq/git-agent/infrastructure/config.BuildAPIKey=${CLIENT_TOKEN} \
+    -X github.com/gitagenthq/git-agent/infrastructure/config.BuildBaseURL=${WORKER_URL} \
+    -X github.com/gitagenthq/git-agent/infrastructure/config.BuildModel=${MODEL}" \
   -o "${OUTPUT}" .

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fradser/git-agent/infrastructure/config"
+	"github.com/gitagenthq/git-agent/infrastructure/config"
 )
 
 func writeTempConfig(t *testing.T, content string) string {

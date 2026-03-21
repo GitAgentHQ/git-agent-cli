@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fradser/git-agent/application"
-	domainGitignore "github.com/fradser/git-agent/domain/gitignore"
+	"github.com/gitagenthq/git-agent/application"
+	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
 // --- mocks ---
