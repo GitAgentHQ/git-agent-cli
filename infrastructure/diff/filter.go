@@ -2,7 +2,6 @@ package diff
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	domainDiff "github.com/fradser/git-agent/domain/diff"
@@ -21,9 +20,6 @@ func (f *patternFilter) Filter(_ context.Context, d *domainDiff.StagedDiff) (*do
 		if !filter.IsFiltered(file) {
 			contentFiles = append(contentFiles, file)
 		}
-	}
-	if len(contentFiles) == 0 {
-		return nil, errors.New("no staged text changes after filtering")
 	}
 
 	content := filterContent(d.Content, contentFiles)
