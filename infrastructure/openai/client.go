@@ -50,17 +50,26 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 
 	systemPrompt := `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood;` + scopeRule + ` body has bullet points then explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
 
-	var promptParts []string
-	if req.Intent != "" {
-		promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
-	}
-	promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
-		content,
-		strings.Join(req.Diff.Files, ", "),
-	))
-	userPrompt := strings.Join(promptParts, "\n\n")
-	if req.HookFeedback != "" {
-		userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
+	var userPrompt string
+	if req.PreviousMessage != "" && req.HookFeedback != "" {
+		userPrompt = fmt.Sprintf(
+			"Fix the following commit message:\n\n%s\n\nThe commit hook rejected it for this reason:\n%s\n\nRewrite the message to satisfy the requirement. Keep the semantic content unchanged.",
+			req.PreviousMessage,
+			req.HookFeedback,
+		)
+	} else {
+		var promptParts []string
+		if req.Intent != "" {
+			promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
+		}
+		promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
+			content,
+			strings.Join(req.Diff.Files, ", "),
+		))
+		userPrompt = strings.Join(promptParts, "\n\n")
+		if req.HookFeedback != "" {
+			userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
+		}
 	}
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
