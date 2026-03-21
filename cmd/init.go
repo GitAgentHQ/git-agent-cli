@@ -56,11 +56,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 		hookVal = hookLegacy
 	}
 
+	// Get repo root for checking existing config.
+	gitClient := infraGit.NewClient()
+	root, err := gitClient.RepoRoot(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+
 	// Default: no flags → scope + empty hook + gitignore.
 	if !scopeChanged && !hookTypeChanged && !hookScriptChanged && !hookChanged && !gitignoreChanged {
 		doScope = true
-		hookVal = "empty"
 		doGitignore = true
+
+		// Only set default hook if force or no existing hook_type.
+		if force || !hasExistingHookType(root) {
+			hookVal = "empty"
+		}
+		// Otherwise preserve existing hook_type (hookVal stays empty, runInitHook skipped)
 	}
 
 	if doScope {
@@ -212,6 +224,13 @@ func readProjectYAMLMap(path string) map[string]any {
 		return make(map[string]any)
 	}
 	return m
+}
+
+func hasExistingHookType(root string) bool {
+	ymlPath := projectYMLPath(root)
+	m := readProjectYAMLMap(ymlPath)
+	_, exists := m["hook_type"]
+	return exists
 }
 
 func init() {
