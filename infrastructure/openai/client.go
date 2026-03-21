@@ -53,11 +53,11 @@ func AllSystemPrompts() []string {
 	}
 }
 
-const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
+const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline MUST be a single concise explanation paragraph (no bullet points, no title repetition) summarizing why the change was made.`
 
-const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
+const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline MUST be a single concise explanation paragraph (no bullet points, no title repetition) summarizing why the change was made.`
 
-const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Body: MUST start with bullet points each beginning with "- " (hyphen space), then a blank line, then a closing explanation paragraph. Sentence case. Every line ≤72 chars.`
+const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Body: MUST start with bullet points each beginning with "- " (hyphen space), then a blank line, then a closing explanation paragraph. Sentence case. Every line ≤72 chars. Outline: single concise explanation paragraph, no bullet points.`
 
 const planSystemPrompt = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
 
@@ -67,11 +67,12 @@ Split remaining changes by logical concern (feature, bug fix, refactor, test, do
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
-{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
+{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "explanation paragraph"}]}
 
 Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
 Scope is optional; omit if no clear scope applies.
-Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`
+Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).
+Rules for outline: single concise explanation paragraph (no bullet points, no title repetition) summarizing why the change was made.`
 
 const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
 
@@ -81,11 +82,12 @@ Split remaining changes by logical concern (feature, bug fix, refactor, test, do
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
-{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
+{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "explanation paragraph"}]}
 
 Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
 REQUIRED scope — every title MUST use one of the scopes listed in the user message (choose the most appropriate per group). Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group.
-Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`
+Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).
+Rules for outline: single concise explanation paragraph (no bullet points, no title repetition) summarizing why the change was made.`
 
 const detectTechSystemPrompt = `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
 

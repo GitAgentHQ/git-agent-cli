@@ -167,7 +167,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		if c.GitOutput != "" {
 			fmt.Fprintln(out, c.GitOutput)
 		}
-		if outline := trimOutlineTitle(c.Outline, c.Title); outline != "" {
+		if outline := trimOutlineBullets(trimOutlineTitle(c.Outline, c.Title)); outline != "" {
 			fmt.Fprintln(out, outline)
 		}
 	}
@@ -183,6 +183,22 @@ func trimOutlineTitle(outline, title string) string {
 		return outline
 	}
 	return strings.TrimLeft(rest, "\n")
+}
+
+// trimOutlineBullets removes leading bullet-point lines ("- ...") and any
+// blank lines that follow them, leaving only the explanation paragraph.
+func trimOutlineBullets(outline string) string {
+	lines := strings.Split(outline, "\n")
+	start := 0
+	for start < len(lines) {
+		trimmed := strings.TrimSpace(lines[start])
+		if strings.HasPrefix(trimmed, "- ") || trimmed == "" {
+			start++
+		} else {
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
 }
 
 func userConfigPath() string {
