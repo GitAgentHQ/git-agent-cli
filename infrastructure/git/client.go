@@ -38,12 +38,17 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	}, nil
 }
 
-func (c *Client) Commit(ctx context.Context, message string) error {
+func (c *Client) Commit(ctx context.Context, message string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
+		}
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 func (c *Client) AddAll(ctx context.Context) error {
@@ -243,12 +248,17 @@ func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	}, nil
 }
 
-func (c *Client) AmendCommit(ctx context.Context, message string) error {
+func (c *Client) AmendCommit(ctx context.Context, message string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", message)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
+		}
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 // FormatTrailers pipes message into `git interpret-trailers` and returns the

@@ -111,6 +111,31 @@ func TestResolve_UnsetEnvVarExpandsToEmpty(t *testing.T) {
 	}
 }
 
+func TestResolve_FreeModeUsesBuildTimeCredentials(t *testing.T) {
+	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
+
+	// Simulate build-time proxy credentials injected via ldflags.
+	orig := config.BuildAPIKey
+	config.BuildAPIKey = "proxy-key"
+	defer func() { config.BuildAPIKey = orig }()
+
+	flags := config.ProviderConfig{FreeMode: true}
+	got, err := config.Resolve(context.Background(), flags, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.APIKey != "proxy-key" {
+		t.Errorf("expected APIKey %q, got %q", "proxy-key", got.APIKey)
+	}
+	// YAML file values must be ignored.
+	if got.BaseURL == "https://api.example.com/v1" {
+		t.Errorf("free mode must not use YAML base_url")
+	}
+	if got.Model == "gpt-4" {
+		t.Errorf("free mode must not use YAML model")
+	}
+}
+
 func TestResolve_FlagBaseURLOverridesFile(t *testing.T) {
 	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\n")
 

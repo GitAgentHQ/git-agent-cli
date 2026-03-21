@@ -55,6 +55,10 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
 	}
 
+	if free && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
+		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
+	}
+
 	var trailers []commit.Trailer
 	for _, a := range coAuthors {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
@@ -70,8 +74,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
-	// When --free is set, ignore git config and build-time defaults.
-	// CLI flags and config file are still respected.
 	cfgPath := userConfigPath()
 
 	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
@@ -139,12 +141,25 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	out := cmd.OutOrStdout()
 	if result.DryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "dry-run: %d commit(s) planned, nothing committed\n", len(result.Commits))
+		fmt.Fprintf(out, "dry-run: %d commit(s) planned, nothing committed\n", len(result.Commits))
+		for _, c := range result.Commits {
+			if c.Outline != "" {
+				fmt.Fprintln(out, c.Outline)
+			}
+		}
+		return nil
 	}
+
+	fmt.Fprintf(out, "%d commit(s):\n", len(result.Commits))
 	for _, c := range result.Commits {
+		fmt.Fprintln(out)
+		if c.GitOutput != "" {
+			fmt.Fprintln(out, c.GitOutput)
+		}
 		if c.Outline != "" {
-			fmt.Fprintln(cmd.OutOrStdout(), c.Outline)
+			fmt.Fprintln(out, c.Outline)
 		}
 	}
 

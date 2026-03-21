@@ -21,7 +21,7 @@ type ProviderConfig struct {
 	APIKey   string
 	BaseURL  string
 	Model    string
-	FreeMode bool // When true, ignore git config and build-time defaults; YAML config file is still read
+	FreeMode bool // When true, use only build-time proxy credentials; all user config sources are ignored
 }
 
 type fileConfig struct {
@@ -32,10 +32,24 @@ type fileConfig struct {
 
 // Resolve merges config from (highest to lowest priority):
 // CLI flags > git config --local git-agent.* > YAML file > build-time defaults > hardcoded defaults.
-// When FreeMode is true, ignore git config and build-time defaults (YAML file is still read).
+// When FreeMode is true, only build-time proxy credentials are used; all user config sources are ignored.
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
-	var file fileConfig
+	if flags.FreeMode {
+		result := &ProviderConfig{
+			APIKey:  BuildAPIKey,
+			BaseURL: BuildBaseURL,
+			Model:   BuildModel,
+		}
+		if result.BaseURL == "" {
+			result.BaseURL = DefaultBaseURL
+		}
+		if result.Model == "" {
+			result.Model = DefaultModel
+		}
+		return result, nil
+	}
 
+	var file fileConfig
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
 		if err != nil && !os.IsNotExist(err) {
@@ -50,11 +64,8 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		}
 	}
 
-	var gitModel, gitBaseURL string
-	if !flags.FreeMode {
-		gitModel, _ = ReadGitConfig(ctx, "model")
-		gitBaseURL, _ = ReadGitConfig(ctx, "base-url")
-	}
+	gitModel, _ := ReadGitConfig(ctx, "model")
+	gitBaseURL, _ := ReadGitConfig(ctx, "base-url")
 
 	result := &ProviderConfig{}
 
@@ -62,7 +73,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.APIKey = flags.APIKey
 	} else if file.APIKey != "" {
 		result.APIKey = file.APIKey
-	} else if BuildAPIKey != "" && !flags.FreeMode {
+	} else if BuildAPIKey != "" {
 		result.APIKey = BuildAPIKey
 	}
 
@@ -72,7 +83,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.BaseURL = gitBaseURL
 	} else if file.BaseURL != "" {
 		result.BaseURL = file.BaseURL
-	} else if BuildBaseURL != "" && !flags.FreeMode {
+	} else if BuildBaseURL != "" {
 		result.BaseURL = BuildBaseURL
 	} else {
 		result.BaseURL = DefaultBaseURL
@@ -84,7 +95,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.Model = gitModel
 	} else if file.Model != "" {
 		result.Model = file.Model
-	} else if BuildModel != "" && !flags.FreeMode {
+	} else if BuildModel != "" {
 		result.Model = BuildModel
 	} else {
 		result.Model = DefaultModel

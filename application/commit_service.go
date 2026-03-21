@@ -18,9 +18,10 @@ var ErrHookBlocked = errors.New("hook blocked commit")
 
 // SingleCommitResult holds the output of one committed group.
 type SingleCommitResult struct {
-	Outline string
-	Files   []string
-	Title   string
+	Outline   string
+	GitOutput string
+	Files     []string
+	Title     string
 }
 
 // CommitResult holds the output of a successful Commit call.
@@ -34,12 +35,12 @@ type CommitGitClient interface {
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
-	Commit(ctx context.Context, message string) error
+	Commit(ctx context.Context, message string) (string, error)
 	AddAll(ctx context.Context) error
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
-	AmendCommit(ctx context.Context, message string) error
+	AmendCommit(ctx context.Context, message string) (string, error)
 }
 
 type CommitRequest struct {
@@ -449,9 +450,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			committed = append(committed, result)
 			continue
 		}
-		if err := s.git.Commit(ctx, assembled); err != nil {
+		gitOut, err := s.git.Commit(ctx, assembled)
+		if err != nil {
 			return nil, err
 		}
+		result.GitOutput = gitOut
 		committed = append(committed, result)
 	}
 
@@ -521,9 +524,11 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
 	}
-	if err := s.git.AmendCommit(ctx, assembled); err != nil {
+	gitOut, err := s.git.AmendCommit(ctx, assembled)
+	if err != nil {
 		return nil, err
 	}
+	result.GitOutput = gitOut
 	return &CommitResult{Commits: []SingleCommitResult{result}}, nil
 }
 

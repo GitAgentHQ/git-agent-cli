@@ -72,11 +72,11 @@ func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff,
 	return m.unstagedDiff, m.unstagedErr
 }
 
-func (m *mockCommitGitClient) Commit(_ context.Context, message string) error {
+func (m *mockCommitGitClient) Commit(_ context.Context, message string) (string, error) {
 	m.commitCalled = true
 	m.commitCount++
 	m.commitMessage = message
-	return m.commitErr
+	return "", m.commitErr
 }
 
 func (m *mockCommitGitClient) AddAll(_ context.Context) error {
@@ -113,10 +113,10 @@ func (m *mockCommitGitClient) LastCommitDiff(_ context.Context) (*diff.StagedDif
 	return m.lastCommitDiff, m.lastCommitDiffErr
 }
 
-func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string) error {
+func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string) (string, error) {
 	m.amendCalled = true
 	m.amendMessage = message
-	return m.amendErr
+	return "", m.amendErr
 }
 
 type mockHookExecutor struct {
