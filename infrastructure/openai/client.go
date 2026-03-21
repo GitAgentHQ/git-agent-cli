@@ -38,32 +38,39 @@ func extractJSON(s string) string {
 	return s[start : end+1]
 }
 
+const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
+
+const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
+
+const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Body: MUST start with bullet points each beginning with "- " (hyphen space), then a blank line, then a closing explanation paragraph. Sentence case. Every line ≤72 chars.`
+
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
-	content := req.Diff.Content
+	var systemPrompt, userPrompt string
 
-	var scopeRule string
-	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		scopeRule = " REQUIRED scope — you MUST use one of these scopes (choose the most appropriate): " + strings.Join(req.Config.Scopes, ", ") + "."
-	} else {
-		scopeRule = " Scope is optional; omit if no clear scope applies."
-	}
-
-	systemPrompt := `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "...", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood;` + scopeRule + ` body has bullet points then explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
-
-	var userPrompt string
 	if req.PreviousMessage != "" && req.HookFeedback != "" {
+		systemPrompt = retrySystemPrompt
 		userPrompt = fmt.Sprintf(
 			"Fix the following commit message:\n\n%s\n\nThe commit hook rejected it for this reason:\n%s\n\nRewrite the message to satisfy the requirement. Keep the semantic content unchanged.",
 			req.PreviousMessage,
 			req.HookFeedback,
 		)
 	} else {
+		hasScopes := req.Config != nil && len(req.Config.Scopes) > 0
+		if hasScopes {
+			systemPrompt = generateSystemPromptScoped
+		} else {
+			systemPrompt = generateSystemPrompt
+		}
+
 		var promptParts []string
 		if req.Intent != "" {
 			promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 		}
+		if hasScopes {
+			promptParts = append(promptParts, "REQUIRED scopes (use the most appropriate one): "+strings.Join(req.Config.Scopes, ", "))
+		}
 		promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
-			content,
+			req.Diff.Content,
 			strings.Join(req.Diff.Files, ", "),
 		))
 		userPrompt = strings.Join(promptParts, "\n\n")
@@ -85,7 +92,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			},
 		},
 		Temperature:         0,
-		MaxCompletionTokens: 32768,
+		MaxCompletionTokens: 1024,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
