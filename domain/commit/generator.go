@@ -16,6 +16,10 @@ type GenerateRequest struct {
 	// HookFeedback carries the rejection reason from a previous hook block,
 	// so the LLM can correct the message on retry.
 	HookFeedback string
+	// PreviousMessage carries the full assembled commit message from the prior
+	// attempt. When set alongside HookFeedback, the generator reformats this
+	// message instead of re-analyzing the diff.
+	PreviousMessage string
 }
 
 // CommitMessageGenerator generates commit messages from staged diffs.
