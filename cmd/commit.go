@@ -142,8 +142,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
+	n := len(result.Commits)
+	word := "commits"
+	if n == 1 {
+		word = "commit"
+	}
+
 	if result.DryRun {
-		fmt.Fprintf(out, "dry-run: %d commit(s) planned, nothing committed\n", len(result.Commits))
+		fmt.Fprintf(out, "dry-run: %d %s planned, nothing committed\n", n, word)
 		for _, c := range result.Commits {
 			if c.Outline != "" {
 				fmt.Fprintln(out, c.Outline)
@@ -152,18 +158,28 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(out, "%d commit(s):\n", len(result.Commits))
+	fmt.Fprintf(out, "%d %s:\n", n, word)
 	for _, c := range result.Commits {
 		fmt.Fprintln(out)
 		if c.GitOutput != "" {
 			fmt.Fprintln(out, c.GitOutput)
 		}
-		if c.Outline != "" {
-			fmt.Fprintln(out, c.Outline)
+		if outline := trimOutlineTitle(c.Outline, c.Title); outline != "" {
+			fmt.Fprintln(out, outline)
 		}
 	}
 
 	return nil
+}
+
+// trimOutlineTitle removes a leading title line (and any following blank line)
+// from outline when it duplicates the commit title shown by git.
+func trimOutlineTitle(outline, title string) string {
+	rest, ok := strings.CutPrefix(outline, title)
+	if !ok {
+		return outline
+	}
+	return strings.TrimLeft(rest, "\n")
 }
 
 func userConfigPath() string {
