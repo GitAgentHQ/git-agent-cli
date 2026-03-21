@@ -3,7 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
 
-**English** | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs.
 
@@ -42,8 +42,9 @@ Initialize git-agent in the current repository. With no flags, runs scope genera
 ```bash
 git-agent init                          # scope + empty hook + .gitignore (default)
 git-agent init --scope                  # generate scopes only
-git-agent init --hook conventional      # install conventional commit validator
-git-agent init --hook /path/to/script   # install a custom hook script
+git-agent init --hook-type conventional # install conventional commit validator
+git-agent init --hook-type empty        # install empty placeholder hook
+git-agent init --hook-script /path/to/script   # install a custom hook script
 git-agent init --gitignore              # generate .gitignore only
 git-agent init --force                  # overwrite existing config/hook/.gitignore
 git-agent init --max-commits 50         # limit commits analyzed for scope generation
@@ -56,11 +57,21 @@ Reads staged and unstaged changes, splits them into atomic groups, generates a c
 ```bash
 git-agent commit                              # commit all changes
 git-agent commit --dry-run                    # print messages without committing
+git-agent commit --no-stage                   # commit already-staged changes only
+git-agent commit --amend                      # regenerate and amend the last commit
 git-agent commit --intent "fix auth bug"      # provide a context hint to the LLM
-git-agent commit --co-author "Name <email>"   # add a co-author trailer
-git-agent commit --trailer "Fixes: #123"      # add an arbitrary git trailer
-git-agent commit --no-git-agent               # omit the default Git Agent trailer
+git-agent commit --co-author "Name <email>"  # add a co-author trailer
+git-agent commit --trailer "Fixes: #123"     # add an arbitrary git trailer
+git-agent commit --no-attribution             # omit the default Git Agent trailer
 ```
+
+### `git-agent config show`
+
+Display the resolved AI provider configuration (API key is masked).
+
+### `git-agent config scopes`
+
+List scopes defined in `.git-agent/project.yml`.
 
 ## Configuration
 
@@ -99,11 +110,12 @@ scopes:
   - core
   - auth
   - infra
+hook_type: empty
 ```
 
 ### Hooks
 
-Built-in hooks installed by `git-agent init --hook <name>`:
+Built-in hooks installed by `git-agent init --hook-type <name>`:
 
 | Hook | Description |
 |------|-------------|
@@ -119,10 +131,12 @@ Custom hooks are executable scripts at `.git-agent/hooks/pre-commit`. They recei
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Print commit messages without committing |
+| `--no-stage` | Skip auto-staging; commit only already-staged changes |
+| `--amend` | Regenerate and amend the most recent commit (no planning or hooks) |
 | `--intent` | Describe the intent of the change |
 | `--co-author` | Add a co-author trailer (repeatable) |
 | `--trailer` | Add an arbitrary git trailer, format `Key: Value` (repeatable) |
-| `--no-git-agent` | Omit the default Git Agent co-author trailer |
+| `--no-attribution` | Omit the default Git Agent co-author trailer |
 | `--api-key` | API key for the AI provider |
 | `--model` | Model to use for generation |
 | `--base-url` | Base URL for the AI provider |
