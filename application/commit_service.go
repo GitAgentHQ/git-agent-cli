@@ -385,10 +385,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				break
 			}
 
-			s.out(req, "hook blocked (attempt %d/%d)", attempt, maxHookRetries)
-			if hookResult.Stderr != "" {
-				s.out(req, "reason: %s", hookResult.Stderr)
-			}
 			hookFeedback = hookResult.Stderr
 			previousMessage = assembled
 		}
@@ -396,13 +392,15 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if !hookPassed {
 			// Re-plan failed group + remaining files together (up to maxRePlans times).
 			if rePlanCount >= maxRePlans {
+				if hookFeedback != "" {
+					s.out(req, "hook blocked: %s", hookFeedback)
+				}
 				return nil, ErrHookBlocked
 			}
 			// Carry the last hook feedback so the first Generate call of each
 			// re-planned group already knows why previous attempts were rejected.
 			inheritedFeedback = hookFeedback
 			rePlanCount++
-			s.out(req, "re-planning after hook failure (re-plan %d/%d)...", rePlanCount, maxRePlans)
 
 			// Collect all files that still need to be committed.
 			var allFiles []string
