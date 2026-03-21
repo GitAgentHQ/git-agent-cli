@@ -18,9 +18,10 @@ var (
 )
 
 type ProviderConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey   string
+	BaseURL  string
+	Model    string
+	FreeMode bool // When true, ignore config file, git config, and build-time defaults
 }
 
 type fileConfig struct {
@@ -31,10 +32,11 @@ type fileConfig struct {
 
 // Resolve merges config from (highest to lowest priority):
 // CLI flags > git config --local git-agent.* > YAML file > build-time defaults > hardcoded defaults.
+// When FreeMode is true, ignore git config, YAML file, and build-time defaults.
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	var file fileConfig
 
-	if configPath != "" {
+	if configPath != "" && !flags.FreeMode {
 		data, err := os.ReadFile(configPath)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
@@ -48,26 +50,29 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		}
 	}
 
-	gitModel, _ := ReadGitConfig(ctx, "model")
-	gitBaseURL, _ := ReadGitConfig(ctx, "base-url")
+	var gitModel, gitBaseURL string
+	if !flags.FreeMode {
+		gitModel, _ = ReadGitConfig(ctx, "model")
+		gitBaseURL, _ = ReadGitConfig(ctx, "base-url")
+	}
 
 	result := &ProviderConfig{}
 
 	if flags.APIKey != "" {
 		result.APIKey = flags.APIKey
-	} else if file.APIKey != "" {
+	} else if file.APIKey != "" && !flags.FreeMode {
 		result.APIKey = file.APIKey
-	} else {
+	} else if BuildAPIKey != "" && !flags.FreeMode {
 		result.APIKey = BuildAPIKey
 	}
 
 	if flags.BaseURL != "" {
 		result.BaseURL = flags.BaseURL
-	} else if gitBaseURL != "" {
+	} else if gitBaseURL != "" && !flags.FreeMode {
 		result.BaseURL = gitBaseURL
-	} else if file.BaseURL != "" {
+	} else if file.BaseURL != "" && !flags.FreeMode {
 		result.BaseURL = file.BaseURL
-	} else if BuildBaseURL != "" {
+	} else if BuildBaseURL != "" && !flags.FreeMode {
 		result.BaseURL = BuildBaseURL
 	} else {
 		result.BaseURL = DefaultBaseURL
@@ -75,11 +80,11 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	if flags.Model != "" {
 		result.Model = flags.Model
-	} else if gitModel != "" {
+	} else if gitModel != "" && !flags.FreeMode {
 		result.Model = gitModel
-	} else if file.Model != "" {
+	} else if file.Model != "" && !flags.FreeMode {
 		result.Model = file.Model
-	} else if BuildModel != "" {
+	} else if BuildModel != "" && !flags.FreeMode {
 		result.Model = BuildModel
 	} else {
 		result.Model = DefaultModel

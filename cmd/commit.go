@@ -49,6 +49,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
+	free, _ := cmd.Flags().GetBool("free")
 
 	if amend && noStage {
 		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
@@ -69,11 +70,19 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
+	// When --free is set, ignore config file, git config, and build-time defaults.
+	// Only use CLI flags or hardcoded defaults.
+	cfgPath := userConfigPath()
+	if free {
+		cfgPath = ""
+	}
+
 	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
 		APIKey:  apiKey,
 		Model:   model,
 		BaseURL: baseURL,
-	}, userConfigPath())
+		FreeMode: free,
+	}, cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -182,6 +191,7 @@ func init() {
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
+	commitCmd.Flags().Bool("free", false, "ignore config file, git config, and build-time defaults; use only CLI flags or hardcoded defaults")
 
 	rootCmd.AddCommand(commitCmd)
 }
