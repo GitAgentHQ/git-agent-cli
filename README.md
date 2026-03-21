@@ -23,6 +23,14 @@ go install github.com/gitagenthq/git-agent@latest
 
 **Pre-built binaries:** download from the [releases page](https://github.com/GitAgentHQ/git-agent-cli/releases).
 
+### Agent skill
+
+Install the git-agent skill to enable AI agents to commit on your behalf:
+
+```bash
+npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill use-git-agent
+```
+
 ## Quick Start
 
 ```bash
@@ -147,13 +155,13 @@ Custom hooks are executable scripts at `.git-agent/hooks/pre-commit`. They recei
 | `--model` | Model to use for generation |
 | `--base-url` | Base URL for the AI provider |
 | `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no limit) |
-| `--free` | Ignore config file, git config, and build-time defaults; use only CLI flags or hardcoded defaults |
 
 ### Global
 
 | Flag | Description |
 |------|-------------|
 | `-v, --verbose` | Enable verbose output |
+| `--free` | Use only build-time embedded credentials; ignore config file and git config |
 
 ## Exit Codes
 

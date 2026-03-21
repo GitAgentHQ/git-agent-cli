@@ -23,6 +23,14 @@ go install github.com/gitagenthq/git-agent@latest
 
 **预编译二进制文件：** 从 [releases 页面](https://github.com/GitAgentHQ/git-agent-cli/releases) 下载。
 
+### Agent skill
+
+安装 git-agent skill，让 AI agent 代替你执行提交：
+
+```bash
+npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill use-git-agent
+```
+
 ## 快速开始
 
 ```bash
@@ -147,13 +155,13 @@ hook_type: empty
 | `--model` | 用于生成的模型 |
 | `--base-url` | AI 提供商的 base URL |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制） |
-| `--free` | 忽略配置文件、git config 和构建时默认值；仅使用 CLI 标志或硬编码默认值 |
 
 ### 全局
 
 | 参数 | 描述 |
 |------|------|
 | `-v, --verbose` | 启用详细输出 |
+| `--free` | 仅使用构建时内嵌凭证；忽略配置文件和 git config |
 
 ## 退出码
 
