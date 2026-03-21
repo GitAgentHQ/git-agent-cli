@@ -42,9 +42,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	intent, _ := cmd.Flags().GetString("intent")
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
-	noAttribution, _ := cmd.Flags().GetBool("no-attribution")
+	noGitAgentCoAuthor, _ := cmd.Flags().GetBool("no-attribution")
 	noGitAgentLegacy, _ := cmd.Flags().GetBool("no-git-agent")
-	noGitAgent := noAttribution || noGitAgentLegacy
+	noGitAgent := noGitAgentCoAuthor || noGitAgentLegacy
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
@@ -57,28 +57,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
 	}
 
-	var trailers []commit.Trailer
-	for _, a := range coAuthors {
-		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
-	}
-	for _, t := range trailerFlags {
-		key, value, ok := strings.Cut(t, ": ")
-		if !ok {
-			return fmt.Errorf("invalid --trailer format %q: expected \"Key: Value\"", t)
-		}
-		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
-	}
-	if !noGitAgent {
-		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
-	}
-
 	cfgPath := userConfigPath()
 
 	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:   apiKey,
-		Model:    model,
-		BaseURL:  baseURL,
-		FreeMode: freeMode,
+		APIKey:        apiKey,
+		Model:         model,
+		BaseURL:       baseURL,
+		FreeMode:      freeMode,
+		NoGitAgentCoAuthor: noGitAgent,
 	}, cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -96,6 +82,25 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	projCfgPath := filepath.Join(root, ".git-agent", "project.yml")
 	projCfg := loadProjectConfig(projCfgPath)
+
+	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
+	var trailers []commit.Trailer
+	if !skipCoAuthor {
+		for _, a := range coAuthors {
+			trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
+		}
+	}
+	for _, t := range trailerFlags {
+		key, value, ok := strings.Cut(t, ": ")
+		if !ok {
+			return fmt.Errorf("invalid --trailer format %q: expected \"Key: Value\"", t)
+		}
+		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
+	}
+	skipAttribution := providerCfg.NoGitAgentCoAuthor || (projCfg != nil && projCfg.NoGitAgentCoAuthor)
+	if !skipAttribution {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
+	}
 
 	llmClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
 
@@ -194,13 +199,15 @@ func loadProjectConfig(path string) *project.Config {
 		return nil
 	}
 	var raw struct {
-		Scopes   []string `yaml:"scopes"`
-		HookType string   `yaml:"hook_type"`
+		Scopes        []string `yaml:"scopes"`
+		HookType      string   `yaml:"hook_type"`
+		NoGitAgentCoAuthor bool     `yaml:"no_git_agent_co_author"`
+		NoModelCoAuthor         bool     `yaml:"no_model_co_author"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	return &project.Config{Scopes: raw.Scopes, HookType: raw.HookType}
+	return &project.Config{Scopes: raw.Scopes, HookType: raw.HookType, NoGitAgentCoAuthor: raw.NoGitAgentCoAuthor, NoModelCoAuthor: raw.NoModelCoAuthor}
 }
 
 func init() {
