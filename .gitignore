@@ -33,7 +33,7 @@ go.work
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
 
 # Thumbnails
 ._*
@@ -62,7 +62,6 @@ Temporary Items
 ### end git-agent ###
 
 ### custom rules ###
-
 git-agent
 git-agent-proxy/node_modules
 git-agent-proxy/.dev.vars
