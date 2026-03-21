@@ -31,6 +31,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	hookChanged := cmd.Flags().Changed("hook")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 
+	if freeMode && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
+		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
+	}
+
 	doScope, _ := cmd.Flags().GetBool("scope")
 	hookType, _ := cmd.Flags().GetString("hook-type")
 	hookScript, _ := cmd.Flags().GetString("hook-script")
@@ -101,9 +105,10 @@ func initProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, error)
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
 	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:  apiKey,
-		Model:   model,
-		BaseURL: baseURL,
+		APIKey:   apiKey,
+		Model:    model,
+		BaseURL:  baseURL,
+		FreeMode: freeMode,
 	}, userConfigPath())
 }
 

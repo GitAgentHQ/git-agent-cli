@@ -49,13 +49,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
 	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
-	free, _ := cmd.Flags().GetBool("free")
-
 	if amend && noStage {
 		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
 	}
 
-	if free && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
+	if freeMode && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
 		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
 	}
 
@@ -80,7 +78,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		APIKey:   apiKey,
 		Model:    model,
 		BaseURL:  baseURL,
-		FreeMode: free,
+		FreeMode: freeMode,
 	}, cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -219,7 +217,6 @@ func init() {
 	commitCmd.Flags().String("model", "", "model to use for generation")
 	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
-	commitCmd.Flags().Bool("free", false, "ignore config file, git config, and build-time defaults; use only CLI flags or hardcoded defaults")
 
 	rootCmd.AddCommand(commitCmd)
 }

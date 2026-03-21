@@ -10,6 +10,7 @@ import (
 )
 
 var verbose bool
+var freeMode bool
 
 var rootCmd = &cobra.Command{
 	Use:          "git-agent",
@@ -34,4 +35,5 @@ func ExecuteArgs(args []string) error {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&freeMode, "free", false, "use only build-time embedded credentials; ignore config file and git config")
 }
