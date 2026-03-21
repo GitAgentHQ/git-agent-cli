@@ -264,7 +264,7 @@ func (c *Client) AmendCommit(ctx context.Context, message string) (string, error
 // FormatTrailers pipes message into `git interpret-trailers` and returns the
 // formatted message with trailers appended according to git's trailer rules.
 func (c *Client) FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error) {
-	args := []string{"interpret-trailers"}
+	args := []string{"interpret-trailers", "--if-exists=addIfDifferent"}
 	for _, t := range trailers {
 		args = append(args, "--trailer", t.Key+": "+t.Value)
 	}
