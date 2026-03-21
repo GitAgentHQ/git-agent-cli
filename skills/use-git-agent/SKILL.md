@@ -5,12 +5,13 @@ description: Operates the git-agent CLI — commits, init, config, and provider 
 
 # Git Agent CLI
 
-`git-agent` is an AI-first Git CLI. Both forms are equivalent:
+`git-agent` is an AI-first Git CLI. Use the `git agent` form by default — it integrates with git as a subcommand:
 
 ```
-git-agent <command> [flags]
-git agent  <command> [flags]
+git agent <command> [flags]
 ```
+
+Fall back to `git-agent <command> [flags]` only when the git subcommand form fails.
 
 **Global flag:** `-v, --verbose`
 
@@ -40,6 +41,8 @@ git config git-agent.model gpt-4o
 base_url: https://api.openai.com/v1
 api_key: sk-...
 model: gpt-4o
+no_git_agent_co_author: false  # set true to omit "Co-Authored-By: Git Agent" trailer globally
+no_model_co_author: false      # set true to ignore all --co-author trailers globally
 ```
 
 Other provider examples:
@@ -62,8 +65,8 @@ model: llama3
 **Exception flows** — use only for one-off needs (CI, scripts, temporary endpoint):
 
 ```bash
-git-agent commit --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
-git-agent init --scope --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
+git agent commit --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
+git agent init --scope --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
 ```
 
 Do **not** treat CLI provider flags as the default teaching path.
@@ -134,6 +137,8 @@ scopes:
   - auth
   - infra
 hook_type: empty
+no_git_agent_co_author: false  # set true to omit "Co-Authored-By: Git Agent" trailer
+no_model_co_author: false      # set true to ignore all --co-author trailers
 ```
 
 ---
@@ -184,11 +189,9 @@ Co-Authored-By: Git Agent
 
 When driving `git-agent commit` as an AI assistant:
 
-1. **Co-author line** — from your deployment metadata (model name and email), build `--co-author "<Display Name> <email>"` (e.g. claude-sonnet-4-6 → `"Claude Sonnet 4.6 <noreply@anthropic.com>"`).
+1. **Intent** — one short sentence from the conversation. Use the diff only if the conversation gives no usable signal.
 
-2. **Intent** — one short sentence from the conversation. Use the diff only if the conversation gives no usable signal.
-
-3. **Run** `git-agent commit --co-author "..." --intent "..."` — no provider flags on the first attempt. If commit fails for missing key and there is no config, suggest creating `~/.config/git-agent/config.yml`. Use exception-flow flags only when that path is insufficient or the user explicitly needs a one-off override.
+2. **Run** `git-agent commit --intent "..."` — no provider flags on the first attempt. If commit fails for missing key and there is no config, suggest creating `~/.config/git-agent/config.yml`. Use exception-flow flags only when that path is insufficient or the user explicitly needs a one-off override.
 
    Add when relevant: `--dry-run` (preview), `--no-stage` (staged only), `--amend` (rewrite last commit).
 
