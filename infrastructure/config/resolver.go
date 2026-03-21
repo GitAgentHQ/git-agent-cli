@@ -21,7 +21,7 @@ type ProviderConfig struct {
 	APIKey   string
 	BaseURL  string
 	Model    string
-	FreeMode bool // When true, ignore config file, git config, and build-time defaults
+	FreeMode bool // When true, ignore git config and build-time defaults; YAML config file is still read
 }
 
 type fileConfig struct {
@@ -32,11 +32,11 @@ type fileConfig struct {
 
 // Resolve merges config from (highest to lowest priority):
 // CLI flags > git config --local git-agent.* > YAML file > build-time defaults > hardcoded defaults.
-// When FreeMode is true, ignore git config, YAML file, and build-time defaults.
+// When FreeMode is true, ignore git config and build-time defaults (YAML file is still read).
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	var file fileConfig
 
-	if configPath != "" && !flags.FreeMode {
+	if configPath != "" {
 		data, err := os.ReadFile(configPath)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
@@ -60,7 +60,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	if flags.APIKey != "" {
 		result.APIKey = flags.APIKey
-	} else if file.APIKey != "" && !flags.FreeMode {
+	} else if file.APIKey != "" {
 		result.APIKey = file.APIKey
 	} else if BuildAPIKey != "" && !flags.FreeMode {
 		result.APIKey = BuildAPIKey
@@ -68,9 +68,9 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	if flags.BaseURL != "" {
 		result.BaseURL = flags.BaseURL
-	} else if gitBaseURL != "" && !flags.FreeMode {
+	} else if gitBaseURL != "" {
 		result.BaseURL = gitBaseURL
-	} else if file.BaseURL != "" && !flags.FreeMode {
+	} else if file.BaseURL != "" {
 		result.BaseURL = file.BaseURL
 	} else if BuildBaseURL != "" && !flags.FreeMode {
 		result.BaseURL = BuildBaseURL
@@ -80,9 +80,9 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	if flags.Model != "" {
 		result.Model = flags.Model
-	} else if gitModel != "" && !flags.FreeMode {
+	} else if gitModel != "" {
 		result.Model = gitModel
-	} else if file.Model != "" && !flags.FreeMode {
+	} else if file.Model != "" {
 		result.Model = file.Model
 	} else if BuildModel != "" && !flags.FreeMode {
 		result.Model = BuildModel

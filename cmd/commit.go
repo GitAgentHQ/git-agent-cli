@@ -70,17 +70,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
-	// When --free is set, ignore config file, git config, and build-time defaults.
-	// Only use CLI flags or hardcoded defaults.
+	// When --free is set, ignore git config and build-time defaults.
+	// CLI flags and config file are still respected.
 	cfgPath := userConfigPath()
-	if free {
-		cfgPath = ""
-	}
 
 	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:  apiKey,
-		Model:   model,
-		BaseURL: baseURL,
+		APIKey:   apiKey,
+		Model:    model,
+		BaseURL:  baseURL,
 		FreeMode: free,
 	}, cfgPath)
 	if err != nil {
