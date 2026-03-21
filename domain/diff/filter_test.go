@@ -78,19 +78,21 @@ func TestPatternFilter_mixedFiles(t *testing.T) {
 	}
 }
 
-func TestPatternFilter_allFiltered_returnsError(t *testing.T) {
+func TestPatternFilter_allFiltered_keepsFiles_emptyLLMContent(t *testing.T) {
 	f := newFilter()
 	input := &diff.StagedDiff{
 		Files:   []string{"package-lock.json", "logo.png"},
 		Content: "diff --git a/package-lock.json b/package-lock.json\n+lock\ndiff --git a/logo.png b/logo.png\nBinary\n",
 		Lines:   4,
 	}
-	_, err := f.Filter(context.Background(), input)
-	if err == nil {
-		t.Fatal("expected error when all files are filtered, got nil")
+	got, err := f.Filter(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	const want = "no staged text changes after filtering"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err.Error(), want)
+	if len(got.Files) != 2 {
+		t.Errorf("expected 2 files (still staged for commit), got %v", got.Files)
+	}
+	if got.Content != "" {
+		t.Errorf("expected empty diff content for LLM when all paths are filtered, got %q", got.Content)
 	}
 }
