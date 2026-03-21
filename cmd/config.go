@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	infraConfig "github.com/fradser/git-agent/infrastructure/config"
 	infraGit "github.com/fradser/git-agent/infrastructure/git"
+	"github.com/fradser/git-agent/infrastructure/openai"
 )
 
 var configCmd = &cobra.Command{
@@ -25,6 +27,21 @@ var configScopesCmd = &cobra.Command{
 	Use:   "scopes",
 	Short: "List project scopes from .git-agent/project.yml",
 	RunE:  runConfigScopes,
+}
+
+var configPromptsCmd = &cobra.Command{
+	Use:   "prompts",
+	Short: "Print all system prompts for proxy ALLOWED_SYSTEM_PROMPTS configuration",
+	Long: `Prints all static system prompts used by the CLI, delimited by "\n---\n".
+
+Pipe the output to wrangler to sync the proxy allowlist:
+  git-agent config prompts | wrangler secret put ALLOWED_SYSTEM_PROMPTS`,
+	RunE: runConfigPrompts,
+}
+
+func runConfigPrompts(cmd *cobra.Command, args []string) error {
+	fmt.Fprint(cmd.OutOrStdout(), strings.Join(openai.AllSystemPrompts(), "\n---\n"))
+	return nil
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
@@ -78,5 +95,6 @@ func maskAPIKey(key string) string {
 func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configScopesCmd)
+	configCmd.AddCommand(configPromptsCmd)
 	rootCmd.AddCommand(configCmd)
 }

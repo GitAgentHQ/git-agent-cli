@@ -38,11 +38,81 @@ func extractJSON(s string) string {
 	return s[start : end+1]
 }
 
+// AllSystemPrompts returns every static system prompt sent by this client.
+// The returned slice is the source of truth for the proxy's ALLOWED_SYSTEM_PROMPTS
+// secret. To sync: git-agent config prompts | wrangler secret put ALLOWED_SYSTEM_PROMPTS
+func AllSystemPrompts() []string {
+	return []string{
+		generateSystemPrompt,
+		generateSystemPromptScoped,
+		retrySystemPrompt,
+		planSystemPrompt,
+		planSystemPromptScoped,
+		detectTechSystemPrompt,
+		generateScopesSystemPrompt,
+	}
+}
+
 const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
 
 const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line in body MUST be ≤72 characters (hard wrap if needed); outline is a human-readable summary of changes.`
 
 const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph.", "outline": "..."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Body: MUST start with bullet points each beginning with "- " (hyphen space), then a blank line, then a closing explanation paragraph. Sentence case. Every line ≤72 chars.`
+
+const planSystemPrompt = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
+
+If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
+If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
+Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+Each group should be a cohesive unit of change.
+
+Respond ONLY with valid JSON:
+{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
+
+Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+Scope is optional; omit if no clear scope applies.
+Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`
+
+const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
+
+If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
+If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
+Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+Each group should be a cohesive unit of change.
+
+Respond ONLY with valid JSON:
+{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
+
+Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+REQUIRED scope — every title MUST use one of the scopes listed in the user message (choose the most appropriate per group). Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group.
+Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`
+
+const detectTechSystemPrompt = `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
+
+Return a JSON object with a "technologies" array containing only valid Toptal gitignore API identifiers.
+Respond ONLY with valid JSON: {"technologies": ["go", "node", "visualstudiocode"]}
+
+Rules:
+- Include the OS identifier (e.g. "macos", "linux", "windows")
+- Include programming languages detected from file extensions
+- Include build tools, editors, and IDEs if evidence exists
+- Use lowercase Toptal API identifiers only (e.g. "go", "node", "python", "rust", "jetbrains", "visualstudiocode")
+- Do NOT include technologies with no evidence in the project files`
+
+const generateScopesSystemPrompt = `You are an expert software engineer. Derive commit scopes from the top-level directories of the project, using commit history to validate and refine them.
+
+Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
+
+Rules (STRICTLY enforce):
+- Generate one scope per meaningful source directory listed in "Top-level directories"
+- Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
+- Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
+- Single-word directory names: use as-is or a well-known abbreviation (e.g. "cmd" -> "cli", "application" -> "app", "infrastructure" -> "infra")
+- Hyphenated or compound names: use the distinguishing part or a well-known short form (e.g. "agentbook-skill" -> "skill", "my-frontend" -> "frontend")
+- If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation
+- NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
+- NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
+- All scopes lowercase`
 
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	var systemPrompt, userPrompt string
@@ -126,54 +196,42 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 }
 
 func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {
-	var parts []string
+	hasScopes := req.Config != nil && len(req.Config.Scopes) > 0
 
-	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
-		parts = append(parts, fmt.Sprintf("Staged diff (already staged by user — keep as group 0):\n<staged>\n%s\n</staged>\nStaged files: %s",
-			req.StagedDiff.Content,
-			strings.Join(req.StagedDiff.Files, ", "),
-		))
-	}
-
-	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
-		parts = append(parts, fmt.Sprintf("Unstaged diff:\n<unstaged>\n%s\n</unstaged>\nUnstaged files: %s",
-			req.UnstagedDiff.Content,
-			strings.Join(req.UnstagedDiff.Files, ", "),
-		))
-	}
-
-	var scopeRule string
-	if req.Config != nil && len(req.Config.Scopes) > 0 {
-		scopeRule = "\nREQUIRED scope — every title MUST use one of these scopes (choose the most appropriate per group): " + strings.Join(req.Config.Scopes, ", ") + "." +
-			"\nFiles that map to different scopes MUST be placed in separate groups — never mix scopes within one group."
+	var systemPrompt string
+	if hasScopes {
+		systemPrompt = planSystemPromptScoped
 	} else {
-		scopeRule = "\nScope is optional; omit if no clear scope applies."
+		systemPrompt = planSystemPrompt
 	}
 
 	var planParts []string
 	if req.Intent != "" {
 		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 	}
-	planParts = append(planParts, parts...)
+	if hasScopes {
+		planParts = append(planParts, "REQUIRED scopes (use the most appropriate one per group): "+strings.Join(req.Config.Scopes, ", "))
+	}
+	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
+		planParts = append(planParts, fmt.Sprintf("Staged diff (already staged by user — keep as group 0):\n<staged>\n%s\n</staged>\nStaged files: %s",
+			req.StagedDiff.Content,
+			strings.Join(req.StagedDiff.Files, ", "),
+		))
+	}
+	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
+		planParts = append(planParts, fmt.Sprintf("Unstaged diff:\n<unstaged>\n%s\n</unstaged>\nUnstaged files: %s",
+			req.UnstagedDiff.Content,
+			strings.Join(req.UnstagedDiff.Files, ", "),
+		))
+	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
 	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
 		Model: c.model,
 		Messages: []goopenai.ChatCompletionMessage{
 			{
-				Role: goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
-
-If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
-If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
-Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
-Each group should be a cohesive unit of change.
-
-Respond ONLY with valid JSON:
-{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation", "outline": "human summary"}]}
-
-Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.` + scopeRule + `
-Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE), every line MUST be ≤72 characters (hard wrap long lines).`,
+				Role:    goopenai.ChatMessageRoleSystem,
+				Content: systemPrompt,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
@@ -229,18 +287,8 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 		Model: c.model,
 		Messages: []goopenai.ChatCompletionMessage{
 			{
-				Role: goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
-
-Return a JSON object with a "technologies" array containing only valid Toptal gitignore API identifiers.
-Respond ONLY with valid JSON: {"technologies": ["go", "node", "visualstudiocode"]}
-
-Rules:
-- Include the OS identifier (e.g. "macos", "linux", "windows")
-- Include programming languages detected from file extensions
-- Include build tools, editors, and IDEs if evidence exists
-- Use lowercase Toptal API identifiers only (e.g. "go", "node", "python", "rust", "jetbrains", "visualstudiocode")
-- Do NOT include technologies with no evidence in the project files`,
+				Role:    goopenai.ChatMessageRoleSystem,
+				Content: detectTechSystemPrompt,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
@@ -281,20 +329,7 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		Messages: []goopenai.ChatCompletionMessage{
 			{
 				Role:    goopenai.ChatMessageRoleSystem,
-				Content: `You are an expert software engineer. Derive commit scopes from the top-level directories of the project, using commit history to validate and refine them.
-
-Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
-
-Rules (STRICTLY enforce):
-- Generate one scope per meaningful source directory listed in "Top-level directories"
-- Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
-- Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
-- Single-word directory names: use as-is or a well-known abbreviation (e.g. "cmd" -> "cli", "application" -> "app", "infrastructure" -> "infra")
-- Hyphenated or compound names: use the distinguishing part or a well-known short form (e.g. "agentbook-skill" -> "skill", "my-frontend" -> "frontend")
-- If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation
-- NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
-- NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
-- All scopes lowercase`,
+				Content: generateScopesSystemPrompt,
 			},
 			{
 				Role:    goopenai.ChatMessageRoleUser,
