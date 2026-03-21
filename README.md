@@ -3,7 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+**English** | [简体中文](README.zh-CN.md)
 
 AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs.
 
@@ -49,6 +49,12 @@ git-agent init --gitignore              # generate .gitignore only
 git-agent init --force                  # overwrite existing config/hook/.gitignore
 git-agent init --max-commits 50         # limit commits analyzed for scope generation
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--api-key` | API key for the AI provider |
+| `--model` | Model to use for generation |
+| `--base-url` | Base URL for the AI provider |
 
 ### `git-agent commit`
 
@@ -141,6 +147,7 @@ Custom hooks are executable scripts at `.git-agent/hooks/pre-commit`. They recei
 | `--model` | Model to use for generation |
 | `--base-url` | Base URL for the AI provider |
 | `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no limit) |
+| `--free` | Ignore config file, git config, and build-time defaults; use only CLI flags or hardcoded defaults |
 
 ### Global
 

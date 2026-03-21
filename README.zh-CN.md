@@ -3,7 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
 
-**English** | [简体中文](README.zh-CN.md)
+[English](README.md) | **简体中文**
 
 AI 驱动的 Git 命令行工具，分析暂存和未暂存的变更，将其拆分为原子提交，并通过 LLM 生成规范的提交信息。
 
@@ -49,6 +49,12 @@ git-agent init --gitignore              # 仅生成 .gitignore
 git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
 git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
 ```
+
+| 参数 | 描述 |
+|------|------|
+| `--api-key` | AI 提供商的 API 密钥 |
+| `--model` | 用于生成的模型 |
+| `--base-url` | AI 提供商的 base URL |
 
 ### `git-agent commit`
 
@@ -141,6 +147,7 @@ hook_type: empty
 | `--model` | 用于生成的模型 |
 | `--base-url` | AI 提供商的 base URL |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制） |
+| `--free` | 忽略配置文件、git config 和构建时默认值；仅使用 CLI 标志或硬编码默认值 |
 
 ### 全局
 
