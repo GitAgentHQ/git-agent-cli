@@ -317,6 +317,15 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			continue
 		}
 
+		// Filter groupDiff content for LLM input only — keeps lock files and binaries
+		// out of the prompt while the hook still receives the full raw diff.
+		genDiff := groupDiff
+		if s.filter != nil {
+			if fd, ferr := s.filter.Filter(ctx, groupDiff); ferr == nil {
+				genDiff = fd
+			}
+		}
+
 		var hookFeedback string
 		var assembled string
 		var msg *commit.CommitMessage
@@ -327,7 +336,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
 
 			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{
-				Diff:            groupDiff,
+				Diff:            genDiff,
 				Intent:          req.Intent,
 				Config:          req.Config,
 				HookFeedback:    hookFeedback,
