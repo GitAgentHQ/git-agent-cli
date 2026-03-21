@@ -1,20 +1,20 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/gitagenthq/git-agent/application"
-	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
-func runGitignore(ctx context.Context, force bool, out io.Writer) error {
-	providerCfg, err := infraConfig.Resolve(ctx, infraConfig.ProviderConfig{}, userConfigPath())
+func runGitignore(cmd *cobra.Command, force bool, out io.Writer) error {
+	providerCfg, err := initProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -23,7 +23,7 @@ func runGitignore(ctx context.Context, force bool, out io.Writer) error {
 	}
 
 	gitClient := infraGit.NewClient()
-	if !gitClient.IsGitRepo(ctx) {
+	if !gitClient.IsGitRepo(cmd.Context()) {
 		return fmt.Errorf("not a git repository")
 	}
 
@@ -31,7 +31,7 @@ func runGitignore(ctx context.Context, force bool, out io.Writer) error {
 	toptalClient := infraGitignore.NewToptalClient()
 	svc := application.NewGitignoreService(openaiClient, toptalClient, gitClient)
 
-	techs, err := svc.Generate(ctx, application.GitignoreRequest{Force: force})
+	techs, err := svc.Generate(cmd.Context(), application.GitignoreRequest{Force: force})
 	if err != nil {
 		return err
 	}

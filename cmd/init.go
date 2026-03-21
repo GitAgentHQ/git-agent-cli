@@ -88,7 +88,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if doGitignore {
-		if err := runGitignore(cmd.Context(), force, cmd.OutOrStdout()); err != nil {
+		if err := runGitignore(cmd, force, cmd.OutOrStdout()); err != nil {
 			return err
 		}
 	}
@@ -96,8 +96,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func initProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, error) {
+	apiKey, _ := cmd.Flags().GetString("api-key")
+	model, _ := cmd.Flags().GetString("model")
+	baseURL, _ := cmd.Flags().GetString("base-url")
+	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: baseURL,
+	}, userConfigPath())
+}
+
 func runInitScope(cmd *cobra.Command, force bool, maxCommits int) error {
-	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{}, userConfigPath())
+	providerCfg, err := initProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -242,5 +253,8 @@ func init() {
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
 	initCmd.Flags().Bool("force", false, "overwrite existing config/hook/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
+	initCmd.Flags().String("api-key", "", "API key for the AI provider")
+	initCmd.Flags().String("model", "", "model to use for generation")
+	initCmd.Flags().String("base-url", "", "base URL for the AI provider")
 	rootCmd.AddCommand(initCmd)
 }
