@@ -296,6 +296,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 
 	var committed []SingleCommitResult
 	rePlanCount := 0
+	var inheritedFeedback string // hook feedback carried into first attempt after re-plan
 
 	for len(remaining) > 0 {
 		group := remaining[0]
@@ -326,7 +327,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			}
 		}
 
-		var hookFeedback string
+		// Seed hook feedback from previous re-plan failure so the first Generate
+		// call already knows the validation constraints that caused the re-plan.
+		// previousMessage is intentionally empty: we want the full diff path (not
+		// the retry-only path) so the LLM sees the diff AND the constraint hints.
+		hookFeedback := inheritedFeedback
+		inheritedFeedback = ""
 		var assembled string
 		var msg *commit.CommitMessage
 		hookPassed := false
@@ -380,15 +386,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			}
 
 			s.out(req, "hook blocked (attempt %d/%d)", attempt, maxHookRetries)
-			s.out(req, "commit message was:\n%s", assembled)
 			if hookResult.Stderr != "" {
 				s.out(req, "reason: %s", hookResult.Stderr)
 			}
 			hookFeedback = hookResult.Stderr
 			previousMessage = assembled
-			if attempt < maxHookRetries {
-				s.out(req, "retrying with hook feedback...")
-			}
 		}
 
 		if !hookPassed {
@@ -396,6 +398,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if rePlanCount >= maxRePlans {
 				return nil, ErrHookBlocked
 			}
+			// Carry the last hook feedback so the first Generate call of each
+			// re-planned group already knows why previous attempts were rejected.
+			inheritedFeedback = hookFeedback
 			rePlanCount++
 			s.out(req, "re-planning after hook failure (re-plan %d/%d)...", rePlanCount, maxRePlans)
 
