@@ -16,21 +16,23 @@ func NewPatternFilter() domainDiff.DiffFilter {
 }
 
 func (f *patternFilter) Filter(_ context.Context, d *domainDiff.StagedDiff) (*domainDiff.StagedDiff, error) {
-	var kept []string
+	var contentFiles []string
 	for _, file := range d.Files {
 		if !filter.IsFiltered(file) {
-			kept = append(kept, file)
+			contentFiles = append(contentFiles, file)
 		}
 	}
-	if len(kept) == 0 {
+	if len(contentFiles) == 0 {
 		return nil, errors.New("no staged text changes after filtering")
 	}
 
-	content := filterContent(d.Content, kept)
+	content := filterContent(d.Content, contentFiles)
 	lines := strings.Count(content, "\n")
 
+	// Return all files so callers can stage/commit them; only content is filtered
+	// to keep lock files and binaries out of LLM context.
 	return &domainDiff.StagedDiff{
-		Files:   kept,
+		Files:   d.Files,
 		Content: content,
 		Lines:   lines,
 	}, nil

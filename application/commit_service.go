@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/fradser/git-agent/domain/commit"
@@ -249,6 +250,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	if n := filterPlanFiles(plan, allowed); n > 0 {
 		s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
 	}
+	appendPassthroughFiles(plan, allowed)
 	if len(plan.Groups) > maxCommitGroups {
 		s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 		plan.Groups = plan.Groups[:maxCommitGroups]
@@ -280,6 +282,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if n := filterPlanFiles(plan, allowed); n > 0 {
 				s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
 			}
+			appendPassthroughFiles(plan, allowed)
 			if len(plan.Groups) > maxCommitGroups {
 				s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 				plan.Groups = plan.Groups[:maxCommitGroups]
@@ -420,6 +423,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if n := filterPlanFiles(newPlan, allowed); n > 0 {
 				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
 			}
+			appendPassthroughFiles(newPlan, allowed)
 			remaining = newPlan.Groups
 			continue
 		}
@@ -532,6 +536,33 @@ func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
 	}
 	plan.Groups = kept
 	return filtered
+}
+
+// appendPassthroughFiles adds any file present in allowed but absent from every
+// plan group to the first group. This covers content-filtered files (lock files,
+// binaries) that must still be staged and committed but whose diff was not shown
+// to the planner.
+func appendPassthroughFiles(plan *commit.CommitPlan, allowed map[string]bool) {
+	if len(plan.Groups) == 0 {
+		return
+	}
+	inPlan := make(map[string]bool)
+	for _, g := range plan.Groups {
+		for _, f := range g.Files {
+			inPlan[f] = true
+		}
+	}
+	var passthrough []string
+	for f := range allowed {
+		if !inPlan[f] {
+			passthrough = append(passthrough, f)
+		}
+	}
+	if len(passthrough) == 0 {
+		return
+	}
+	sort.Strings(passthrough)
+	plan.Groups[0].Files = append(plan.Groups[0].Files, passthrough...)
 }
 
 // hasUnscopedGroups reports whether any commit group title lacks a scope,
