@@ -318,15 +318,17 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		var assembled string
 		var msg *commit.CommitMessage
 		hookPassed := false
+		var previousMessage string
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
 			s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
 
 			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{
-				Diff:         groupDiff,
-				Intent:       req.Intent,
-				Config:       req.Config,
-				HookFeedback: hookFeedback,
+				Diff:            groupDiff,
+				Intent:          req.Intent,
+				Config:          req.Config,
+				HookFeedback:    hookFeedback,
+				PreviousMessage: previousMessage,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("generate commit message: %w", err)
@@ -371,6 +373,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				s.out(req, "reason: %s", hookResult.Stderr)
 			}
 			hookFeedback = hookResult.Stderr
+			previousMessage = assembled
 			if attempt < maxHookRetries {
 				s.out(req, "retrying with hook feedback...")
 			}

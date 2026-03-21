@@ -439,8 +439,70 @@ func TestCommitService_Amend_NoPreviousCommit_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
-	gen := &mockCommitGenerator{msg: defaultMsg()}
+// recordingGenerator captures each GenerateRequest for later inspection.
+type recordingGenerator struct {
+	reqs []*commit.GenerateRequest
+	msgs []*commit.CommitMessage
+}
+
+func (r *recordingGenerator) Generate(_ context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
+	r.reqs = append(r.reqs, &req)
+	idx := len(r.reqs) - 1
+	if idx < len(r.msgs) {
+		return r.msgs[idx], nil
+	}
+	return r.msgs[len(r.msgs)-1], nil
+}
+
+// sequenceHookExecutor returns results in order, then repeats the last one.
+type sequenceHookExecutor struct {
+	results []*hook.HookResult
+}
+
+func (s *sequenceHookExecutor) Execute(_ context.Context, _ string, _ hook.HookInput) (*hook.HookResult, error) {
+	if len(s.results) == 0 {
+		return &hook.HookResult{ExitCode: 0}, nil
+	}
+	r := s.results[0]
+	if len(s.results) > 1 {
+		s.results = s.results[1:]
+	}
+	return r, nil
+}
+
+func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
+	msg1 := &commit.CommitMessage{Title: "feat(cli): a very long title that exceeds the fifty character limit", Body: "body", Outline: "o"}
+	msg2 := &commit.CommitMessage{Title: "feat(cli): short title", Body: "body", Outline: "o"}
+
+	gen := &recordingGenerator{msgs: []*commit.CommitMessage{msg1, msg2}}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	hookSeq := &sequenceHookExecutor{results: []*hook.HookResult{
+		{ExitCode: 1, Stderr: "error: title must be 50 characters or less"},
+		{ExitCode: 0},
+	}}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
+	svc := application.NewCommitService(gen, planner, git, hookSeq, nil, nil, nil)
+
+	req := application.CommitRequest{Config: &project.Config{HookType: "conventional"}}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(gen.reqs) != 2 {
+		t.Fatalf("expected 2 Generate calls, got %d", len(gen.reqs))
+	}
+	if gen.reqs[0].PreviousMessage != "" {
+		t.Errorf("attempt 1: expected PreviousMessage empty, got %q", gen.reqs[0].PreviousMessage)
+	}
+	if !strings.Contains(gen.reqs[1].PreviousMessage, msg1.Title) {
+		t.Errorf("attempt 2: expected PreviousMessage to contain %q, got %q", msg1.Title, gen.reqs[1].PreviousMessage)
+	}
+	if gen.reqs[1].HookFeedback == "" {
+		t.Error("attempt 2: expected HookFeedback to be set")
+	}
+}
+
+func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {	gen := &mockCommitGenerator{msg: defaultMsg()}
 	nonEmpty := &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}
 	empty := &diff.StagedDiff{}
 
