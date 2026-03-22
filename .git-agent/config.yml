@@ -1,0 +1,18 @@
+hook:
+    - conventional
+scopes:
+    - app
+    - cli
+    - config
+    - domain
+    - e2e
+    - hooks
+    - infra
+    - openai
+    - git
+    - diff
+    - gitignore
+    - pkg
+    - scripts
+    - skills
+    - proxy
