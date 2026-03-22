@@ -43,7 +43,11 @@ When this skill is loaded, **immediately** run `git-agent commit`. Do not ask th
 
 ## Hook failures
 
-If the hook keeps rejecting on the same rule (e.g. title > 50 chars), use a shorter `--intent`, e.g. `--intent "update module path"`.
+If the commit is blocked (exit code `2`), retry with a more specific `--intent`:
+
+```
+git-agent commit --intent "update module path"
+```
 
 Hook exit codes: `0` = allow, non-zero = block. After 3 retries per group and 2 re-plans, `git-agent` exits with code `2`.
 
