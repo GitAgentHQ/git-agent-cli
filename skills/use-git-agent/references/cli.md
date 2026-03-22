@@ -45,9 +45,9 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `--dry-run` | bool | false | Print commit message without committing |
 | `--no-stage` | bool | false | Skip auto-staging; only commit already-staged changes |
 | `--amend` | bool | false | Regenerate and amend the most recent commit |
-| `--co-author` | stringArray | | Add a co-author trailer (repeatable) |
+| `--co-author` | stringArray | | Add a co-author trailer (repeatable); skipped if `no_model_co_author` is set in config |
 | `--trailer` | stringArray | | Add an arbitrary git trailer, format `"Key: Value"` (repeatable) |
-| `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent` trailer |
+| `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent <noreply@git-agent.dev>` trailer (`--no-git-agent` is a deprecated alias) |
 | `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no limit) |
 
 `--amend` and `--no-stage` are mutually exclusive (enforced at parse time by Cobra).
