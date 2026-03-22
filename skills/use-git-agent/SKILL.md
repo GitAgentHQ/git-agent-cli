@@ -69,7 +69,4 @@ Co-Authored-By: Git Agent
 
 ## CLI reference
 
-```
-git agent commit [flags]   # preferred form
-git-agent commit [flags]   # fallback if git subcommand form fails
-```
+Full command reference (all flags, subcommands, config scopes, hook types): [references/cli.md](references/cli.md)
