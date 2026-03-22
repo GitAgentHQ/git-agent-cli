@@ -53,11 +53,11 @@ func AllSystemPrompts() []string {
 	}
 }
 
-const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE).`
+const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
 
-const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); body MUST start with one or more bullet points each on its own line beginning with "- " (hyphen space) then a blank line then a closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE).`
+const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
 
-const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "body": "- bullet one\n- bullet two\n\nExplanation paragraph."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Body: MUST start with bullet points each beginning with "- " (hyphen space), then a blank line, then a closing explanation paragraph. Sentence case.`
+const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Bullets: array of strings each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry. Explanation: closing paragraph, sentence case. All text targets ≤72 characters per line.`
 
 const planSystemPrompt = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
 
@@ -67,11 +67,12 @@ Split remaining changes by logical concern (feature, bug fix, refactor, test, do
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
-{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation"}]}
+{"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
 
 Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
 Scope is optional; omit if no clear scope applies.
-Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE).`
+Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
+Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
 
 const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
 
@@ -81,11 +82,12 @@ Split remaining changes by logical concern (feature, bug fix, refactor, test, do
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
-{"groups": [{"files": ["..."], "title": "type(scope): description", "body": "- bullet\n\nexplanation"}]}
+{"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
 
 Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
 REQUIRED scope — every title MUST use one of the scopes listed in the user message (choose the most appropriate per group). Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group.
-Rules for body: bullet points then closing explanation paragraph — body text MUST use sentence case (first letter of each bullet and paragraph UPPERCASE).`
+Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
+Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
 
 const detectTechSystemPrompt = `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
 
@@ -186,8 +188,9 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 
 		raw := extractJSON(resp.Choices[0].Message.Content)
 		var result struct {
-			Title string `json:"title"`
-			Body  string `json:"body"`
+			Title       string   `json:"title"`
+			Bullets     []string `json:"bullets"`
+			Explanation string   `json:"explanation"`
 		}
 		if err := json.Unmarshal([]byte(raw), &result); err != nil {
 			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
@@ -195,8 +198,9 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		}
 
 		return &commit.CommitMessage{
-			Title: result.Title,
-			Body:  result.Body,
+			Title:       result.Title,
+			Bullets:     result.Bullets,
+			Explanation: commit.WrapExplanation(result.Explanation, 72),
 		}, nil
 	}
 	return nil, lastErr
@@ -259,9 +263,10 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 	raw := extractJSON(resp.Choices[0].Message.Content)
 	var result struct {
 		Groups []struct {
-			Files []string `json:"files"`
-			Title string   `json:"title"`
-			Body  string   `json:"body"`
+			Files       []string `json:"files"`
+			Title       string   `json:"title"`
+			Bullets     []string `json:"bullets"`
+			Explanation string   `json:"explanation"`
 		} `json:"groups"`
 	}
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
@@ -273,8 +278,9 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		plan.Groups = append(plan.Groups, commit.CommitGroup{
 			Files: g.Files,
 			Message: commit.CommitMessage{
-				Title: g.Title,
-				Body:  g.Body,
+				Title:       g.Title,
+				Bullets:     g.Bullets,
+				Explanation: commit.WrapExplanation(g.Explanation, 72),
 			},
 		})
 	}

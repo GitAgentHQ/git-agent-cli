@@ -31,10 +31,10 @@ func (e *HookBlockedError) Is(target error) bool {
 
 // SingleCommitResult holds the output of one committed group.
 type SingleCommitResult struct {
-	Title     string
-	Body      string
-	GitOutput string
-	Files     []string
+	Title       string
+	Explanation string
+	GitOutput   string
+	Files       []string
 }
 
 // CommitResult holds the output of a successful Commit call.
@@ -369,8 +369,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			s.vlog(req, "LLM response received")
 
 			assembled = msg.Title
-			if msg.Body != "" {
-				assembled += "\n\n" + msg.Body
+			if body := msg.Body(); body != "" {
+				assembled += "\n\n" + body
 			}
 			preTrailer = assembled
 
@@ -455,9 +455,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		}
 
 		result := SingleCommitResult{
-			Title: msg.Title,
-			Body:  msg.Body,
-			Files: group.Files,
+			Title:       msg.Title,
+			Explanation: msg.Explanation,
+			Files:       group.Files,
 		}
 		if req.DryRun {
 			committed = append(committed, result)
@@ -519,8 +519,8 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	}
 
 	assembled := msg.Title
-	if msg.Body != "" {
-		assembled += "\n\n" + msg.Body
+	if body := msg.Body(); body != "" {
+		assembled += "\n\n" + body
 	}
 	if len(req.Trailers) > 0 {
 		assembled, err = s.git.FormatTrailers(ctx, assembled, req.Trailers)
@@ -530,9 +530,9 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	}
 
 	result := SingleCommitResult{
-		Title: msg.Title,
-		Body:  msg.Body,
-		Files: amendDiff.Files,
+		Title:       msg.Title,
+		Explanation: msg.Explanation,
+		Files:       amendDiff.Files,
 	}
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
