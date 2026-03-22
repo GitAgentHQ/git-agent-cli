@@ -423,23 +423,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				allFiles = append(allFiles, r.Files...)
 			}
 
-			// Stage all remaining files to get their combined diff for re-planning.
-			if err := s.git.UnstageAll(ctx); err != nil {
-				return nil, fmt.Errorf("re-plan unstage: %w", err)
-			}
-			if err := s.git.StageFiles(ctx, allFiles); err != nil {
-				return nil, fmt.Errorf("re-plan stage files: %w", err)
-			}
-			combinedDiff, err := s.git.StagedDiff(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("re-plan staged diff: %w", err)
-			}
-			if err := s.git.UnstageAll(ctx); err != nil {
-				return nil, fmt.Errorf("re-plan unstage cleanup: %w", err)
-			}
-
 			newPlan, err := s.planner.Plan(ctx, commit.PlanRequest{
-				StagedDiff: combinedDiff,
+				StagedDiff: &diff.StagedDiff{Files: allFiles},
 				Intent:     req.Intent,
 				Config:     req.Config,
 			})

@@ -70,11 +70,11 @@ const generateSystemPromptScoped = `You are an expert software engineer. Generat
 
 const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Bullets: array of strings each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry. Explanation: closing paragraph, sentence case. All text targets ≤72 characters per line.`
 
-const planSystemPrompt = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
+const planSystemPrompt = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
 
 If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
 If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
-Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.) — infer the nature of each change from the file path, name, and directory structure.
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
@@ -85,11 +85,11 @@ Scope is optional; omit if no clear scope applies.
 Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
 Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
 
-const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided git diffs and split them into meaningful atomic commits.
+const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
 
 If a PRIMARY DIRECTIVE is given, it is the most important constraint: only include files directly relevant to it; put those files in group 0; leave all unrelated files out.
 If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
-Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.).
+Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.) — infer the nature of each change from the file path, name, and directory structure.
 Each group should be a cohesive unit of change.
 
 Respond ONLY with valid JSON:
@@ -240,15 +240,13 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		planParts = append(planParts, "REQUIRED scopes (use the most appropriate one per group): "+strings.Join(req.Config.Scopes, ", "))
 	}
 	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
-		planParts = append(planParts, fmt.Sprintf("Staged diff (already staged by user — keep as group 0):\n<staged>\n%s\n</staged>\nStaged files: %s",
-			req.StagedDiff.Content,
-			strings.Join(req.StagedDiff.Files, ", "),
+		planParts = append(planParts, fmt.Sprintf("Staged files (already staged by user — keep as group 0):\n%s",
+			strings.Join(req.StagedDiff.Files, "\n"),
 		))
 	}
 	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
-		planParts = append(planParts, fmt.Sprintf("Unstaged diff:\n<unstaged>\n%s\n</unstaged>\nUnstaged files: %s",
-			req.UnstagedDiff.Content,
-			strings.Join(req.UnstagedDiff.Files, ", "),
+		planParts = append(planParts, fmt.Sprintf("Unstaged files:\n%s",
+			strings.Join(req.UnstagedDiff.Files, "\n"),
 		))
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
