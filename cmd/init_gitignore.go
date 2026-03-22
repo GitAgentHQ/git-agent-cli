@@ -32,6 +32,6 @@ func runGitignore(cmd *cobra.Command, out io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "generated .gitignore for: %s\n", strings.Join(techs, ", "))
+	fmt.Fprintf(out, ".gitignore updated: %s\n", strings.Join(techs, ", "))
 	return nil
 }
