@@ -144,30 +144,29 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
 			var hbe *application.HookBlockedError
-			if errors.As(err, &hbe) && hbe.LastMessage != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
+			if errors.As(err, &hbe) {
+				if hbe.Reason != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "\nhook rejected: %s\n", hbe.Reason)
+				}
+				if hbe.LastMessage != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
+				}
 			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: use --intent \"<description>\" to guide the next attempt\n\n")
 			return agentErrors.NewExitCodeError(2, "error: commit blocked after retries")
 		}
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	n := len(result.Commits)
-	word := "commits"
-	if n == 1 {
-		word = "commit"
-	}
 
 	if result.DryRun {
-		fmt.Fprintf(out, "dry run: %d %s planned\n", n, word)
 		for i, c := range result.Commits {
-			fmt.Fprintf(out, "\n  %d. %s\n     %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
+			fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
 		}
 		return nil
 	}
 
-	fmt.Fprintf(out, "%d %s\n", n, word)
 	for _, c := range result.Commits {
 		fmt.Fprintln(out)
 		if c.GitOutput != "" {
