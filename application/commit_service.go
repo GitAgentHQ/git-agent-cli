@@ -29,10 +29,10 @@ func (e *HookBlockedError) Is(target error) bool {
 
 // SingleCommitResult holds the output of one committed group.
 type SingleCommitResult struct {
-	Outline   string
+	Title     string
+	Body      string
 	GitOutput string
 	Files     []string
-	Title     string
 }
 
 // CommitResult holds the output of a successful Commit call.
@@ -306,6 +306,16 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	copy(remaining, plan.Groups)
 	s.vlog(req, "planned %d commit(s)", len(remaining))
 
+	n := len(remaining)
+	planWord := "commits"
+	if n == 1 {
+		planWord = "commit"
+	}
+	s.out(req, "planned %d %s", n, planWord)
+	for i, g := range remaining {
+		s.out(req, "\n  %d. %s\n     %s", i+1, g.Message.Title, strings.Join(g.Files, ", "))
+	}
+
 	var committed []SingleCommitResult
 	rePlanCount := 0
 	var inheritedFeedback string // hook feedback carried into first attempt after re-plan
@@ -349,7 +359,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		var msg *commit.CommitMessage
 		hookPassed := false
 		var previousMessage string
-		var lastGenerated string // AI content only, without trailers — used for display
+		var preTrailer string // assembled before trailers — used for HookBlockedError
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
 			s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
@@ -370,9 +380,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if msg.Body != "" {
 				assembled += "\n\n" + msg.Body
 			}
-			lastGenerated = assembled
-			// Display the AI-generated content before trailers are appended.
-			s.out(req, "attempt %d/%d\n\n%s", attempt, maxHookRetries, assembled)
+			preTrailer = assembled
 
 			if len(req.Trailers) > 0 {
 				var err2 error
@@ -402,7 +410,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				break
 			}
 
-			s.out(req, "hook rejected: %s", hookResult.Stderr)
+			s.out(req, "hook rejected (attempt %d/%d): %s", attempt, maxHookRetries, hookResult.Stderr)
 			hookFeedback = hookResult.Stderr
 			previousMessage = assembled
 		}
@@ -410,7 +418,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if !hookPassed {
 			// Re-plan failed group + remaining files together (up to maxRePlans times).
 			if rePlanCount >= maxRePlans {
-					return nil, &HookBlockedError{LastMessage: lastGenerated}
+				return nil, &HookBlockedError{LastMessage: preTrailer}
 			}
 			// Carry the last hook feedback so the first Generate call of each
 			// re-planned group already knows why previous attempts were rejected.
@@ -456,9 +464,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		}
 
 		result := SingleCommitResult{
-			Outline: msg.Outline,
-			Files:   group.Files,
-			Title:   msg.Title,
+			Title: msg.Title,
+			Body:  msg.Body,
+			Files: group.Files,
 		}
 		if req.DryRun {
 			committed = append(committed, result)
@@ -531,9 +539,9 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	}
 
 	result := SingleCommitResult{
-		Outline: msg.Outline,
-		Files:   amendDiff.Files,
-		Title:   msg.Title,
+		Title: msg.Title,
+		Body:  msg.Body,
+		Files: amendDiff.Files,
 	}
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil

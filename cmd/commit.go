@@ -161,11 +161,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	if result.DryRun {
 		fmt.Fprintf(out, "dry run: %d %s planned\n", n, word)
-		for _, c := range result.Commits {
-			if c.Outline != "" {
-				fmt.Fprintln(out)
-				fmt.Fprintln(out, c.Outline)
-			}
+		for i, c := range result.Commits {
+			fmt.Fprintf(out, "\n  %d. %s\n     %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
 		}
 		return nil
 	}
@@ -176,28 +173,18 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		if c.GitOutput != "" {
 			fmt.Fprintln(out, c.GitOutput)
 		}
-		if outline := trimOutlineBullets(trimOutlineTitle(c.Outline, c.Title)); outline != "" {
-			fmt.Fprintln(out, outline)
+		if explanation := extractExplanation(c.Body); explanation != "" {
+			fmt.Fprintln(out, explanation)
 		}
 	}
 
 	return nil
 }
 
-// trimOutlineTitle removes a leading title line (and any following blank line)
-// from outline when it duplicates the commit title shown by git.
-func trimOutlineTitle(outline, title string) string {
-	rest, ok := strings.CutPrefix(outline, title)
-	if !ok {
-		return outline
-	}
-	return strings.TrimLeft(rest, "\n")
-}
-
-// trimOutlineBullets removes leading bullet-point lines ("- ...") and any
-// blank lines that follow them, leaving only the explanation paragraph.
-func trimOutlineBullets(outline string) string {
-	lines := strings.Split(outline, "\n")
+// extractExplanation extracts the closing explanation paragraph from a commit
+// body, skipping any leading bullet-point lines ("- ...") and blank lines.
+func extractExplanation(body string) string {
+	lines := strings.Split(body, "\n")
 	start := 0
 	for start < len(lines) {
 		trimmed := strings.TrimSpace(lines[start])

@@ -135,7 +135,7 @@ func defaultDiff() *diff.StagedDiff {
 }
 
 func defaultMsg() *commit.CommitMessage {
-	return &commit.CommitMessage{Title: "feat: add feature", Body: "body text", Outline: "adds feature"}
+	return &commit.CommitMessage{Title: "feat: add feature", Body: "body text"}
 }
 
 func noopHook() *mockHookExecutor {
@@ -471,8 +471,8 @@ func (s *sequenceHookExecutor) Execute(_ context.Context, _ []string, _ hook.Hoo
 }
 
 func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
-	msg1 := &commit.CommitMessage{Title: "feat(cli): a very long title that exceeds the fifty character limit", Body: "body", Outline: "o"}
-	msg2 := &commit.CommitMessage{Title: "feat(cli): short title", Body: "body", Outline: "o"}
+	msg1 := &commit.CommitMessage{Title: "feat(cli): a very long title that exceeds the fifty character limit", Body: "body"}
+	msg2 := &commit.CommitMessage{Title: "feat(cli): short title", Body: "body"}
 
 	gen := &recordingGenerator{msgs: []*commit.CommitMessage{msg1, msg2}}
 	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
