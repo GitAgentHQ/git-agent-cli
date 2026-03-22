@@ -216,7 +216,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		return &commit.CommitMessage{
 			Title:       result.Title,
 			Bullets:     result.Bullets,
-			Explanation: commit.WrapExplanation(result.Explanation, 72),
+			Explanation: commit.WrapExplanation(strings.ReplaceAll(result.Explanation, `\n`, "\n"), 72),
 		}, nil
 	}
 	return nil, lastErr
@@ -299,7 +299,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 			Message: commit.CommitMessage{
 				Title:       g.Title,
 				Bullets:     g.Bullets,
-				Explanation: commit.WrapExplanation(g.Explanation, 72),
+				Explanation: commit.WrapExplanation(strings.ReplaceAll(g.Explanation, `\n`, "\n"), 72),
 			},
 		})
 	}

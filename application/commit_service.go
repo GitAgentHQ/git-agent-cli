@@ -251,55 +251,67 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		req.Config = &project.Config{}
 	}
 
-	s.vlog(req, "planning commits...")
-	plan, err := s.planner.Plan(ctx, commit.PlanRequest{
-		StagedDiff:   staged,
-		UnstagedDiff: unstaged,
-		Intent:       req.Intent,
-		Config:       req.Config,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("plan commits: %w", err)
-	}
-	if n := filterPlanFiles(plan, allowed); n > 0 {
-		s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
-	}
-	appendPassthroughFiles(plan, allowed)
-	if len(plan.Groups) > maxCommitGroups {
-		s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
-		plan.Groups = plan.Groups[:maxCommitGroups]
+	var plan *commit.CommitPlan
+
+	allFiles := make([]string, 0, len(allowed))
+	for f := range allowed {
+		allFiles = append(allFiles, f)
 	}
 
-	// If any group has no scope and we can update scopes, do so and re-plan once.
-	if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
-		s.vlog(req, "unscoped groups detected — refreshing project scopes...")
-		newScopes, err := s.scopeSvc.Generate(ctx, 200)
+	if len(allFiles) == 1 {
+		s.vlog(req, "single file — skipping planning phase")
+		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
+	} else {
+		s.vlog(req, "planning commits...")
+		plan, err = s.planner.Plan(ctx, commit.PlanRequest{
+			StagedDiff:   staged,
+			UnstagedDiff: unstaged,
+			Intent:       req.Intent,
+			Config:       req.Config,
+		})
 		if err != nil {
-			s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
-		} else {
-			configPath := req.ProjectConfigPath
-			if configPath == "" {
-				configPath = ".git-agent/project.yml"
-			}
-			_ = s.scopeSvc.MergeAndSave(ctx, configPath, newScopes)
-			req.Config = &project.Config{Scopes: newScopes}
-			s.vlog(req, "updated scopes: %v — re-planning...", newScopes)
-			plan, err = s.planner.Plan(ctx, commit.PlanRequest{
-				StagedDiff:   staged,
-				UnstagedDiff: unstaged,
-				Intent:       req.Intent,
-				Config:       req.Config,
-			})
+			return nil, fmt.Errorf("plan commits: %w", err)
+		}
+		if n := filterPlanFiles(plan, allowed); n > 0 {
+			s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
+		}
+		appendPassthroughFiles(plan, allowed)
+		if len(plan.Groups) > maxCommitGroups {
+			s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
+			plan.Groups = plan.Groups[:maxCommitGroups]
+		}
+
+		// If any group has no scope and we can update scopes, do so and re-plan once.
+		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
+			s.vlog(req, "unscoped groups detected — refreshing project scopes...")
+			newScopes, err := s.scopeSvc.Generate(ctx, 200)
 			if err != nil {
-				return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
-			}
-			if n := filterPlanFiles(plan, allowed); n > 0 {
-				s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
-			}
-			appendPassthroughFiles(plan, allowed)
-			if len(plan.Groups) > maxCommitGroups {
-				s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
-				plan.Groups = plan.Groups[:maxCommitGroups]
+				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
+			} else {
+				configPath := req.ProjectConfigPath
+				if configPath == "" {
+					configPath = ".git-agent/project.yml"
+				}
+				_ = s.scopeSvc.MergeAndSave(ctx, configPath, newScopes)
+				req.Config = &project.Config{Scopes: newScopes}
+				s.vlog(req, "updated scopes: %v — re-planning...", newScopes)
+				plan, err = s.planner.Plan(ctx, commit.PlanRequest{
+					StagedDiff:   staged,
+					UnstagedDiff: unstaged,
+					Intent:       req.Intent,
+					Config:       req.Config,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
+				}
+				if n := filterPlanFiles(plan, allowed); n > 0 {
+					s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
+				}
+				appendPassthroughFiles(plan, allowed)
+				if len(plan.Groups) > maxCommitGroups {
+					s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
+					plan.Groups = plan.Groups[:maxCommitGroups]
+				}
 			}
 		}
 	}
