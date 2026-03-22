@@ -403,7 +403,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			}
 
 			hookFeedback = hookResult.Stderr
-			previousMessage = assembled
+			previousMessage = preTrailer
 		}
 
 		if !hookPassed {
