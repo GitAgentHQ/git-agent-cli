@@ -349,6 +349,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		var msg *commit.CommitMessage
 		hookPassed := false
 		var previousMessage string
+		var lastGenerated string // AI content only, without trailers — used for display
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
 			s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
@@ -369,6 +370,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if msg.Body != "" {
 				assembled += "\n\n" + msg.Body
 			}
+			lastGenerated = assembled
+			// Display the AI-generated content before trailers are appended.
+			s.out(req, "attempt %d/%d\n\n%s", attempt, maxHookRetries, assembled)
+
 			if len(req.Trailers) > 0 {
 				var err2 error
 				assembled, err2 = s.git.FormatTrailers(ctx, assembled, req.Trailers)
@@ -376,8 +381,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 					return nil, fmt.Errorf("format trailers: %w", err2)
 				}
 			}
-
-			s.out(req, "%s", assembled)
 
 			if len(req.Config.Hooks) == 0 {
 				hookPassed = true
@@ -399,6 +402,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				break
 			}
 
+			s.out(req, "hook rejected: %s", hookResult.Stderr)
 			hookFeedback = hookResult.Stderr
 			previousMessage = assembled
 		}
@@ -406,10 +410,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if !hookPassed {
 			// Re-plan failed group + remaining files together (up to maxRePlans times).
 			if rePlanCount >= maxRePlans {
-				if hookFeedback != "" {
-					s.out(req, "hook blocked: %s", hookFeedback)
-				}
-				return nil, &HookBlockedError{LastMessage: assembled}
+					return nil, &HookBlockedError{LastMessage: lastGenerated}
 			}
 			// Carry the last hook feedback so the first Generate call of each
 			// re-planned group already knows why previous attempts were rejected.

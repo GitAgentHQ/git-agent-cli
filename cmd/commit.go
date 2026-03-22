@@ -143,6 +143,10 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		if errors.Is(err, application.ErrHookBlocked) {
+			var hbe *application.HookBlockedError
+			if errors.As(err, &hbe) && hbe.LastMessage != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
+			}
 			return agentErrors.NewExitCodeError(2, "error: commit blocked after retries")
 		}
 		return err
@@ -156,16 +160,17 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.DryRun {
-		fmt.Fprintf(out, "dry-run: %d %s planned, nothing committed\n", n, word)
+		fmt.Fprintf(out, "dry run: %d %s planned\n", n, word)
 		for _, c := range result.Commits {
 			if c.Outline != "" {
+				fmt.Fprintln(out)
 				fmt.Fprintln(out, c.Outline)
 			}
 		}
 		return nil
 	}
 
-	fmt.Fprintf(out, "%d %s:\n", n, word)
+	fmt.Fprintf(out, "%d %s\n", n, word)
 	for _, c := range result.Commits {
 		fmt.Fprintln(out)
 		if c.GitOutput != "" {
