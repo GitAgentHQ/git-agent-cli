@@ -47,7 +47,7 @@ func TestExecute_HookPasses(t *testing.T) {
 	script := writeTempScript(t, "#!/bin/sh\nexit 0\n", 0o755)
 	exec := newExecutor()
 
-	result, err := exec.Execute(context.Background(), script, sampleInput())
+	result, err := exec.Execute(context.Background(), []string{script}, sampleInput())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestExecute_HookBlocks(t *testing.T) {
 	script := writeTempScript(t, "#!/bin/sh\necho 'blocked' >&2\nexit 1\n", 0o755)
 	exec := newExecutor()
 
-	result, err := exec.Execute(context.Background(), script, sampleInput())
+	result, err := exec.Execute(context.Background(), []string{script}, sampleInput())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestExecute_HookDoesNotExist(t *testing.T) {
 	exec := newExecutor()
 	missing := filepath.Join(os.TempDir(), "git-agent-hook-nonexistent-xyz.sh")
 
-	result, err := exec.Execute(context.Background(), missing, sampleInput())
+	result, err := exec.Execute(context.Background(), []string{missing}, sampleInput())
 	if err != nil {
 		t.Fatalf("expected no error for missing hook, got: %v", err)
 	}
@@ -98,14 +98,13 @@ func TestExecute_HookNotExecutable(t *testing.T) {
 	script := writeTempScript(t, "#!/bin/sh\nexit 0\n", 0o644)
 	exec := newExecutor()
 
-	_, err := exec.Execute(context.Background(), script, sampleInput())
+	_, err := exec.Execute(context.Background(), []string{script}, sampleInput())
 	if err == nil {
 		t.Error("expected error for non-executable hook")
 	}
 }
 
 func TestExecute_JSONPayloadStructure(t *testing.T) {
-	// Script reads stdin, parses JSON, and exits non-zero if a required field is missing.
 	script := writeTempScript(t, `#!/bin/sh
 input=$(cat)
 for field in diff commit_message intent staged_files config; do
@@ -117,7 +116,7 @@ exit 0
 	input := sampleInput()
 	exec := newExecutor()
 
-	result, err := exec.Execute(context.Background(), script, input)
+	result, err := exec.Execute(context.Background(), []string{script}, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +127,6 @@ exit 0
 		t.Errorf("JSON payload missing required fields; stderr: %s", result.Stderr)
 	}
 
-	// Also verify the payload marshals with all expected keys.
 	data, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("marshal input: %v", err)

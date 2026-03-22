@@ -9,40 +9,52 @@ import (
 )
 
 type compositeHookExecutor struct {
-	shell domainHook.HookExecutor
+	shell *shellHookExecutor
 }
 
-// NewCompositeHookExecutor returns a HookExecutor that dispatches based on hookType:
-//   - "" or "empty": pass immediately (exit 0, no validation)
-//   - "conventional": run Go-native ValidateConventional only
-//   - any other value: treat as file path, run Go validation then shell executor
+// NewCompositeHookExecutor returns a HookExecutor that iterates over hooks in order,
+// failing fast on the first block. Each hook entry is:
+//   - "conventional": run Go-native ValidateConventional
+//   - any other value: treat as file path and run as shell script
+//
+// An empty slice passes immediately (no validation).
 func NewCompositeHookExecutor() domainHook.HookExecutor {
-	return &compositeHookExecutor{shell: NewShellHookExecutor()}
+	return &compositeHookExecutor{shell: &shellHookExecutor{}}
 }
 
-func (e *compositeHookExecutor) Execute(ctx context.Context, hookType string, input domainHook.HookInput) (*domainHook.HookResult, error) {
-	switch hookType {
-	case "", "empty":
+func (e *compositeHookExecutor) Execute(ctx context.Context, hooks []string, input domainHook.HookInput) (*domainHook.HookResult, error) {
+	if len(hooks) == 0 {
 		return &domainHook.HookResult{ExitCode: 0}, nil
-
-	case "conventional":
-		return e.runValidation(input), nil
-
-	default:
-		// Treat as file path: run Go validation first, then shell.
-		validationResult := e.runValidation(input)
-		if validationResult.ExitCode != 0 {
-			return validationResult, nil
-		}
-		shellResult, err := e.shell.Execute(ctx, hookType, input)
-		if err != nil {
-			return nil, err
-		}
-		if validationResult.Stderr != "" {
-			shellResult.Stderr = validationResult.Stderr + shellResult.Stderr
-		}
-		return shellResult, nil
 	}
+
+	var combinedWarnings strings.Builder
+	for _, h := range hooks {
+		switch h {
+		case "", "empty":
+			// no-op entry; skip
+			continue
+		case "conventional":
+			result := e.runValidation(input)
+			if result.ExitCode != 0 {
+				return result, nil
+			}
+			if result.Stderr != "" {
+				combinedWarnings.WriteString(result.Stderr)
+			}
+		default:
+			shellResult, err := e.shell.execute(ctx, h, input)
+			if err != nil {
+				return nil, err
+			}
+			if shellResult.ExitCode != 0 {
+				return shellResult, nil
+			}
+			if shellResult.Stderr != "" {
+				combinedWarnings.WriteString(shellResult.Stderr)
+			}
+		}
+	}
+	return &domainHook.HookResult{ExitCode: 0, Stderr: combinedWarnings.String()}, nil
 }
 
 func (e *compositeHookExecutor) runValidation(input domainHook.HookInput) *domainHook.HookResult {

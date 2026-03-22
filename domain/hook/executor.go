@@ -2,8 +2,9 @@ package hook
 
 import "context"
 
-// HookExecutor runs a git-agent hook with the given input.
-// hookType is "conventional", "empty", "" for built-in types, or a file path for custom scripts.
+// HookExecutor runs git-agent hooks with the given input.
+// hooks is an ordered list of hook names/paths. Each entry is "conventional" for
+// built-in validation or a file path for a custom shell script. Empty slice = no validation.
 type HookExecutor interface {
-	Execute(ctx context.Context, hookType string, input HookInput) (*HookResult, error)
+	Execute(ctx context.Context, hooks []string, input HookInput) (*HookResult, error)
 }

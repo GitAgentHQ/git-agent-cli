@@ -124,7 +124,7 @@ type mockHookExecutor struct {
 	err    error
 }
 
-func (m *mockHookExecutor) Execute(_ context.Context, _ string, _ hook.HookInput) (*hook.HookResult, error) {
+func (m *mockHookExecutor) Execute(_ context.Context, _ []string, _ hook.HookInput) (*hook.HookResult, error) {
 	return m.result, m.err
 }
 
@@ -244,7 +244,7 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
 	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil)
 
-	req := application.CommitRequest{Config: &project.Config{HookType: "conventional"}}
+	req := application.CommitRequest{Config: &project.Config{Hooks: []string{"conventional"}}}
 	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
@@ -459,7 +459,7 @@ type sequenceHookExecutor struct {
 	results []*hook.HookResult
 }
 
-func (s *sequenceHookExecutor) Execute(_ context.Context, _ string, _ hook.HookInput) (*hook.HookResult, error) {
+func (s *sequenceHookExecutor) Execute(_ context.Context, _ []string, _ hook.HookInput) (*hook.HookResult, error) {
 	if len(s.results) == 0 {
 		return &hook.HookResult{ExitCode: 0}, nil
 	}
@@ -483,7 +483,7 @@ func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
 	svc := application.NewCommitService(gen, planner, git, hookSeq, nil, nil, nil)
 
-	req := application.CommitRequest{Config: &project.Config{HookType: "conventional"}}
+	req := application.CommitRequest{Config: &project.Config{Hooks: []string{"conventional"}}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

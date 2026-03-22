@@ -49,7 +49,7 @@ type CommitRequest struct {
 	DryRun            bool
 	NoStage           bool
 	Amend             bool
-	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.HookType drives hook dispatch
+	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
 	MaxLines          int
 	Verbose           bool
 	LogWriter         io.Writer // verbose-only output
@@ -366,12 +366,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				}
 			}
 
-			if req.Config.HookType == "" || req.Config.HookType == "empty" {
+			if len(req.Config.Hooks) == 0 {
 				hookPassed = true
 				break
 			}
 
-			hookResult, err := s.hookExec.Execute(ctx, req.Config.HookType, hook.HookInput{
+			hookResult, err := s.hookExec.Execute(ctx, req.Config.Hooks, hook.HookInput{
 				Diff:          groupDiff.Content,
 				CommitMessage: assembled,
 				Intent:        req.Intent,
