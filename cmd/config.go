@@ -189,7 +189,7 @@ var configScopesCmd = &cobra.Command{
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
-	cfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{}, userConfigPath())
+	cfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 func runGitignore(cmd *cobra.Command, out io.Writer) error {
-	providerCfg, err := initProviderConfig(cmd)
+	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}

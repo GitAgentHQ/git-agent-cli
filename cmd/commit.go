@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -34,9 +32,6 @@ Configuration resolution (highest to lowest priority):
 }
 
 func runCommit(cmd *cobra.Command, args []string) error {
-	apiKey, _ := cmd.Flags().GetString("api-key")
-	model, _ := cmd.Flags().GetString("model")
-	baseURL, _ := cmd.Flags().GetString("base-url")
 	intent, _ := cmd.Flags().GetString("intent")
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
@@ -52,22 +47,15 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
 	}
 
-	if freeMode && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
-		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
+	if err := checkFreeModeExclusive(cmd); err != nil {
+		return err
 	}
 
-	cfgPath := userConfigPath()
-
-	providerCfg, err := infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:        apiKey,
-		Model:         model,
-		BaseURL:       baseURL,
-		FreeMode:      freeMode,
-		NoGitAgentCoAuthor: noGitAgent,
-	}, cfgPath)
+	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	providerCfg.NoGitAgentCoAuthor = providerCfg.NoGitAgentCoAuthor || noGitAgent
 
 	if providerCfg.APIKey == "" {
 		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag, add api_key to ~/.config/git-agent/config.yml, or use an official release binary with a built-in key")
@@ -196,15 +184,6 @@ func extractExplanation(body string) string {
 	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
 }
 
-func userConfigPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "git-agent", "config.yml")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "git-agent", "config.yml")
-}
-
-
 func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
@@ -215,9 +194,6 @@ func init() {
 	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
 	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
-	commitCmd.Flags().String("api-key", "", "API key for the AI provider")
-	commitCmd.Flags().String("model", "", "model to use for generation")
-	commitCmd.Flags().String("base-url", "", "base URL for the AI provider")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
 
 	rootCmd.AddCommand(commitCmd)

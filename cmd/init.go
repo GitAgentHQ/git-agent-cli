@@ -41,8 +41,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--project and --local are mutually exclusive")
 	}
 
-	if freeMode && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
-		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
+	if err := checkFreeModeExclusive(cmd); err != nil {
+		return err
 	}
 
 	doScope, _ := cmd.Flags().GetBool("scope")
@@ -127,20 +127,8 @@ func initConfigPath(cmd *cobra.Command) (string, error) {
 	return infraConfig.ProjectConfigWritePath(root), nil
 }
 
-func initProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, error) {
-	apiKey, _ := cmd.Flags().GetString("api-key")
-	model, _ := cmd.Flags().GetString("model")
-	baseURL, _ := cmd.Flags().GetString("base-url")
-	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:   apiKey,
-		Model:    model,
-		BaseURL:  baseURL,
-		FreeMode: freeMode,
-	}, userConfigPath())
-}
-
 func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath string) error {
-	providerCfg, err := initProviderConfig(cmd)
+	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -211,8 +199,5 @@ func init() {
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
 	initCmd.Flags().Bool("project", false, "write config to .git-agent/config.yml (default)")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
-	initCmd.Flags().String("api-key", "", "API key for the AI provider")
-	initCmd.Flags().String("model", "", "model to use for generation")
-	initCmd.Flags().String("base-url", "", "base URL for the AI provider")
 	rootCmd.AddCommand(initCmd)
 }
