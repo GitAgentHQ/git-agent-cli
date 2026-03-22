@@ -56,16 +56,18 @@ Hook exit codes: `0` = allow, non-zero = block.
 ```
 <type>(<scope>): <description>
 
-- <Action> <component> <detail>
+- <Bullet one>
+- <Bullet two>
 
-<explanation paragraph>
+<Explanation paragraph>
 
-Co-Authored-By: Git Agent
+Co-Authored-By: Git Agent <noreply@git-agent.dev>
 ```
 
 - Title: lowercase, ≤50 chars, no period
-- Body lines: ≤72 chars, `- ` prefix, imperative verbs
-- Explanation paragraph: required
+- Bullets: uppercase first letter, imperative mood, ≤72 chars per bullet; LLM generates as a JSON array — trailers never enter LLM context
+- Explanation: required, sentence case; lines >100 chars are wrapped to ~72 chars
+- Terminal output shows only the explanation paragraph (bullets appear in the git commit body but not in the CLI output)
 
 ## CLI reference
 
