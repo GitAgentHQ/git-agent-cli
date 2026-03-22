@@ -120,10 +120,10 @@ func TestValidateConventional(t *testing.T) {
 
 		// --- Rule 7: body line length ---
 		{
-			name:        "body line exceeds 72 chars",
-			msg:         "feat: add login endpoint\n\n- add route handler for the new login endpoint that is being introduced here\n\nThis adds the login route.",
-			wantErrors:  true,
-			errContains: "72 characters",
+			name:         "body line exceeds 72 chars",
+			msg:          "feat: add login endpoint\n\n- add route handler for the new login endpoint that is being introduced here\n\nThis adds the login route.",
+			wantErrors:   false,
+			warnContains: "72 characters",
 		},
 		{
 			name:       "footer line allowed to exceed 72 chars",

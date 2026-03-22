@@ -218,7 +218,7 @@ func checkBodyLineLength(result *ValidationResult, bodyLines []string) {
 		}
 		if len(line) > 72 {
 			result.Issues = append(result.Issues, ValidationIssue{
-				SeverityError,
+				SeverityWarning,
 				fmt.Sprintf("body line exceeds 72 characters: %q", line),
 			})
 		}

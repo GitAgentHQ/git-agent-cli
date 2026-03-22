@@ -68,7 +68,7 @@ cmd → application → domain ← infrastructure
 
 **`cmd/`** — cobra wiring only; no business logic:
 - `init` — flags: `--scope`, `--hook` (accepts `conventional`, `empty`, or a file path; repeatable), `--gitignore`, `--force`, `--max-commits` (default 200), `--local` (write to `.git-agent/config.local.yml`). No flags → full wizard (scope + gitignore + conventional hook). `--local` requires at least one action flag.
-- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive (enforced by Cobra).
+- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default Git Agent trailer; `--no-git-agent` is a deprecated alias), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive (enforced by Cobra). Output per commit: `git commit` stdout (hash + file stats) followed by the explanation paragraph extracted from the LLM-generated body via `extractExplanation`.
 - `config show` — display resolved provider config (`api_key` masked, `model`, `base_url`). Respects global `--api-key`/`--model`/`--base-url` overrides.
 - `config get <key>` — show resolved value and source scope. Accepts both snake_case and kebab-case keys.
 - `config set <key> <value>` — write a config key to the specified scope (`--user`, `--project`, `--local`). Accepts both snake_case and kebab-case keys (e.g., `api-key` → `api_key`).
@@ -86,7 +86,7 @@ cmd → application → domain ← infrastructure
 
 **Amend flow**: `--amend` calls `git.LastCommitDiff()`, generates a new message, and calls `git.AmendCommit()`. No planning or hook execution occurs.
 
-**Trailer handling**: `--co-author` and `--trailer` flags are collected into `[]commit.Trailer` and appended via `git interpret-trailers`. The default `Co-Authored-By: Git Agent` trailer is added unless `--no-attribution` is set.
+**Trailer handling**: Trailers are assembled in `cmd/commit.go` then passed to `application.CommitRequest.Trailers`; appended to each assembled message via `git interpret-trailers` before `git.Commit()`. Order: (1) `--co-author` values (skipped entirely if `NoModelCoAuthor` is set in provider or project config); (2) arbitrary `--trailer` pairs; (3) default `Co-Authored-By: Git Agent <noreply@git-agent.dev>` (skipped if `--no-attribution` / `--no-git-agent` flag is set, or if `NoGitAgentCoAuthor` is set in provider or project config). `preTrailer` (title + body before `FormatTrailers`) is kept separately; on hook retry `previousMessage = preTrailer` so trailers never enter LLM context. The display output calls `extractExplanation(c.Body)` where `c.Body = msg.Body` (raw LLM output, no trailers), so trailers do not appear in terminal output under normal conditions.
 
 **Auto-scope**: if `CommitRequest.Config` is nil or has no scopes, `CommitService` calls `ScopeService.Generate()` and `MergeAndSave()` automatically before planning. Pass `Config: &project.Config{}` (non-nil, empty) to suppress this.
 

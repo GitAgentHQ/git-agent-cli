@@ -49,7 +49,7 @@ If the commit is blocked (exit code `2`), retry with a more specific `--intent`:
 git-agent commit --intent "update module path"
 ```
 
-Hook exit codes: `0` = allow, non-zero = block. After 3 retries per group and 2 re-plans, `git-agent` exits with code `2`.
+Hook exit codes: `0` = allow, non-zero = block.
 
 ## Commit format
 
