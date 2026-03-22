@@ -18,7 +18,7 @@ AI-first Git CLI for automated commit message generation.
 | `--free` | bool | Use only build-time embedded credentials; ignore config file and git config |
 | `--verbose`, `-v` | bool | Verbose output |
 
-`--free` is mutually exclusive with `--api-key`, `--model`, and `--base-url`.
+`--free` is mutually exclusive with `--api-key`, `--model`, and `--base-url` (enforced at parse time by Cobra).
 
 ### Provider config resolution (highest to lowest priority)
 
@@ -50,7 +50,7 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent` trailer |
 | `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no limit) |
 
-`--amend` and `--no-stage` are mutually exclusive.
+`--amend` and `--no-stage` are mutually exclusive (enforced at parse time by Cobra).
 
 ### Exit codes
 
@@ -91,10 +91,9 @@ With no flags, runs the full setup wizard:
 | `--hook` | stringArray | | Hook to configure: `conventional`, `empty`, or a file path (repeatable) |
 | `--force` | bool | false | Overwrite existing config/`.gitignore` |
 | `--max-commits` | int | 200 | Max commits to analyze for scope generation |
-| `--project` | bool | false | Write config to `.git-agent/config.yml` (default) |
-| `--local` | bool | false | Write config to `.git-agent/config.local.yml` |
+| `--local` | bool | false | Write config to `.git-agent/config.local.yml` (requires an action flag) |
 
-`--project` and `--local` are mutually exclusive.
+`--local` without an action flag (`--scope`, `--gitignore`, or `--hook`) returns an error.
 
 ### Hook types
 
@@ -105,6 +104,8 @@ With no flags, runs the full setup wizard:
 | `<file path>` | Go validation + shell script at that path |
 
 Shell hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block.
+
+To reconfigure hooks after init: `git-agent config set hook <value>`
 
 ---
 
@@ -121,7 +122,6 @@ Manage git-agent configuration.
 | Command | Description |
 |---------|-------------|
 | `show` | Show resolved provider configuration |
-| `scopes` | List project scopes from `.git-agent/project.yml` |
 | `set <key> <value>` | Set a configuration value |
 | `get <key>` | Show the resolved value of a configuration key |
 
@@ -133,17 +133,14 @@ Manage git-agent configuration.
 git-agent config show [flags]
 ```
 
-Show the resolved provider configuration (api-key masked, model, base-url). Respects global flags — pass `--api-key`/`--model`/`--base-url` to preview what the resolved config would look like with those overrides.
+Show the resolved provider configuration (`api_key` masked, `model`, `base_url`). Respects global flags — pass `--api-key`/`--model`/`--base-url` to preview what the resolved config would look like with those overrides.
 
----
-
-## git-agent config scopes
-
+Output format:
 ```
-git-agent config scopes [flags]
+api_key:  sk-****
+model:    claude-3-5-haiku-20241022
+base_url: https://api.anthropic.com/v1
 ```
-
-List project scopes from `.git-agent/project.yml` (or `.git-agent/config.yml`).
 
 ---
 
@@ -153,7 +150,17 @@ List project scopes from `.git-agent/project.yml` (or `.git-agent/config.yml`).
 git-agent config set <key> <value> [flags]
 ```
 
-Set a configuration value in the specified scope.
+Set a configuration value in the specified scope. Keys accept both snake_case and kebab-case forms.
+
+### Key aliases (kebab-case → snake_case)
+
+| Kebab-case | Canonical |
+|------------|-----------|
+| `api-key` | `api_key` |
+| `base-url` | `base_url` |
+| `max-diff-lines` | `max_diff_lines` |
+| `no-git-agent-co-author` | `no_git_agent_co_author` |
+| `no-model-co-author` | `no_model_co_author` |
 
 ### Scopes
 
@@ -165,7 +172,7 @@ Set a configuration value in the specified scope.
 
 When no scope flag is given, provider keys default to `--user`; all others default to `--project`.
 
-`--user`, `--project`, and `--local` are mutually exclusive.
+`--user`, `--project`, and `--local` are mutually exclusive (enforced at parse time by Cobra).
 
 ---
 
@@ -175,4 +182,14 @@ When no scope flag is given, provider keys default to `--user`; all others defau
 git-agent config get <key> [flags]
 ```
 
-Show the resolved value of a configuration key and its source scope.
+Show the resolved value of a configuration key and its source scope. Accepts both snake_case and kebab-case keys.
+
+---
+
+## git-agent version
+
+```
+git-agent version
+```
+
+Print the build version (injected via ldflags; defaults to `dev` in local builds).

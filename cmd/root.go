@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -40,7 +39,10 @@ func userConfigPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "git-agent", "config.yml")
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
 	return filepath.Join(home, ".config", "git-agent", "config.yml")
 }
 
@@ -56,17 +58,13 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 	}, userConfigPath())
 }
 
-func checkFreeModeExclusive(cmd *cobra.Command) error {
-	if freeMode && (cmd.Flags().Changed("api-key") || cmd.Flags().Changed("model") || cmd.Flags().Changed("base-url")) {
-		return fmt.Errorf("--free is mutually exclusive with --api-key, --model, and --base-url")
-	}
-	return nil
-}
-
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&freeMode, "free", false, "use only build-time embedded credentials; ignore config file and git config")
 	rootCmd.PersistentFlags().String("api-key", "", "API key for the AI provider")
 	rootCmd.PersistentFlags().String("model", "", "model to use for generation")
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
+	rootCmd.MarkFlagsMutuallyExclusive("free", "api-key")
+	rootCmd.MarkFlagsMutuallyExclusive("free", "model")
+	rootCmd.MarkFlagsMutuallyExclusive("free", "base-url")
 }

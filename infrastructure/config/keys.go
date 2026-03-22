@@ -34,6 +34,27 @@ var KeyRegistry = map[string]KeyDef{
 	"no_model_co_author":     {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 }
 
+// KeyAliases maps kebab-case flag names to their canonical snake_case registry keys.
+var KeyAliases = map[string]string{
+	"api-key":                "api_key",
+	"base-url":               "base_url",
+	"max-diff-lines":         "max_diff_lines",
+	"no-git-agent-co-author": "no_git_agent_co_author",
+	"no-model-co-author":     "no_model_co_author",
+}
+
+// ResolveKey normalizes a user-supplied key (kebab or snake) to its canonical
+// snake_case name, or returns an error if the key is unknown.
+func ResolveKey(raw string) (string, error) {
+	if _, ok := KeyRegistry[raw]; ok {
+		return raw, nil
+	}
+	if canonical, ok := KeyAliases[raw]; ok {
+		return canonical, nil
+	}
+	return "", fmt.Errorf("unknown config key %q", raw)
+}
+
 // ValidateScope returns an error if key cannot be set in the given scope.
 func ValidateScope(key, scope string) error {
 	def, ok := KeyRegistry[key]

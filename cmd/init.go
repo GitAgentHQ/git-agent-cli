@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -34,16 +35,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	scopeChanged := cmd.Flags().Changed("scope")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	hookChanged := cmd.Flags().Changed("hook")
-
-	useLocal, _ := cmd.Flags().GetBool("local")
-	useProject, _ := cmd.Flags().GetBool("project")
-	if useLocal && useProject {
-		return fmt.Errorf("--project and --local are mutually exclusive")
-	}
-
-	if err := checkFreeModeExclusive(cmd); err != nil {
-		return err
-	}
+	localChanged := cmd.Flags().Changed("local")
 
 	doScope, _ := cmd.Flags().GetBool("scope")
 	force, _ := cmd.Flags().GetBool("force")
@@ -53,6 +45,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Default: no flags → full wizard.
 	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged
+	if fullWizard && localChanged {
+		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, or --hook")
+	}
 	if fullWizard {
 		doScope = true
 		doGitignore = true
@@ -177,18 +172,7 @@ func writeHooks(configPath string, hooks []string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	return infraConfig.WriteProjectField(configPath, "hook", joinHooks(hooks))
-}
-
-func joinHooks(hooks []string) string {
-	result := ""
-	for i, h := range hooks {
-		if i > 0 {
-			result += ","
-		}
-		result += h
-	}
-	return result
+	return infraConfig.WriteProjectField(configPath, "hook", strings.Join(hooks, ","))
 }
 
 func init() {
@@ -197,7 +181,6 @@ func init() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
-	initCmd.Flags().Bool("project", false, "write config to .git-agent/config.yml (default)")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	rootCmd.AddCommand(initCmd)
 }

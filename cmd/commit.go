@@ -43,14 +43,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	amend, _ := cmd.Flags().GetBool("amend")
 	maxDiffLinesFlag, _ := cmd.Flags().GetInt("max-diff-lines")
 	maxDiffLinesFlagChanged := cmd.Flags().Changed("max-diff-lines")
-	if amend && noStage {
-		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
-	}
-
-	if err := checkFreeModeExclusive(cmd); err != nil {
-		return err
-	}
-
 	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -190,11 +182,12 @@ func init() {
 	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
 	commitCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
 	commitCmd.Flags().Bool("no-attribution", false, "omit the default Git Agent co-author trailer")
-	commitCmd.Flags().Bool("no-git-agent", false, "")
+	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
 	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
 	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
+	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
 
 	rootCmd.AddCommand(commitCmd)
 }

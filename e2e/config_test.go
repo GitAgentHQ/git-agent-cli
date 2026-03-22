@@ -18,47 +18,6 @@ func TestConfigShowCmd_Runs(t *testing.T) {
 	}
 }
 
-func TestConfigScopesCmd_NoConfig(t *testing.T) {
-	dir := newGitRepo(t)
-	out, code := gitAgent(t, dir, "config", "scopes")
-	if code != 0 {
-		t.Fatalf("git-agent config scopes: exit code %d\noutput: %s", code, out)
-	}
-	if !strings.Contains(out, "no project config") {
-		t.Errorf("expected 'no project config' in output, got: %s", out)
-	}
-}
-
-func TestConfigScopesCmd_WithConfig(t *testing.T) {
-	dir := newGitRepo(t)
-	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"), "scopes:\n  - api\n  - cli\n")
-
-	out, code := gitAgent(t, dir, "config", "scopes")
-	if code != 0 {
-		t.Fatalf("git-agent config scopes: exit code %d\noutput: %s", code, out)
-	}
-	if !strings.Contains(out, "api") {
-		t.Errorf("expected 'api' scope in output, got: %s", out)
-	}
-	if !strings.Contains(out, "cli") {
-		t.Errorf("expected 'cli' scope in output, got: %s", out)
-	}
-}
-
-func TestConfigScopesCmd_FallbackToProjectYml(t *testing.T) {
-	dir := newGitRepo(t)
-	// Write to legacy project.yml — config.yml absent.
-	writeFile(t, filepath.Join(dir, ".git-agent", "project.yml"), "scopes:\n  - legacy\n")
-
-	out, code := gitAgent(t, dir, "config", "scopes")
-	if code != 0 {
-		t.Fatalf("git-agent config scopes: exit code %d\noutput: %s", code, out)
-	}
-	if !strings.Contains(out, "legacy") {
-		t.Errorf("expected 'legacy' scope from project.yml fallback, got: %s", out)
-	}
-}
-
 func TestConfigSet_ProjectScope(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "config", "set", "hook", "conventional", "--project")

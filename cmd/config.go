@@ -34,25 +34,15 @@ var configGetCmd = &cobra.Command{
 }
 
 func runConfigSet(cmd *cobra.Command, args []string) error {
-	key, rawValue := args[0], args[1]
+	key, err := infraConfig.ResolveKey(args[0])
+	if err != nil {
+		return err
+	}
+	rawValue := args[1]
 
 	useUser, _ := cmd.Flags().GetBool("user")
 	useProject, _ := cmd.Flags().GetBool("project")
 	useLocal, _ := cmd.Flags().GetBool("local")
-
-	scopeCount := 0
-	if useUser {
-		scopeCount++
-	}
-	if useProject {
-		scopeCount++
-	}
-	if useLocal {
-		scopeCount++
-	}
-	if scopeCount > 1 {
-		return fmt.Errorf("--user, --project, and --local are mutually exclusive")
-	}
 
 	var scope string
 	switch {
@@ -148,10 +138,9 @@ func installHookScript(repoRoot, key, value string, out interface{ Write([]byte)
 }
 
 func runConfigGet(cmd *cobra.Command, args []string) error {
-	key := args[0]
-
-	if _, ok := infraConfig.KeyRegistry[key]; !ok {
-		return fmt.Errorf("unknown config key %q", key)
+	key, err := infraConfig.ResolveKey(args[0])
+	if err != nil {
+		return err
 	}
 
 	gitClient := infraGit.NewClient()
@@ -182,12 +171,6 @@ var configShowCmd = &cobra.Command{
 	RunE:  runConfigShow,
 }
 
-var configScopesCmd = &cobra.Command{
-	Use:   "scopes",
-	Short: "List project scopes from .git-agent/project.yml",
-	RunE:  runConfigScopes,
-}
-
 func runConfigShow(cmd *cobra.Command, args []string) error {
 	cfg, err := resolveProviderConfig(cmd)
 	if err != nil {
@@ -199,29 +182,9 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "api-key:  %s\n", maskAPIKey(cfg.APIKey))
+	fmt.Fprintf(cmd.OutOrStdout(), "api_key:  %s\n", maskAPIKey(cfg.APIKey))
 	fmt.Fprintf(cmd.OutOrStdout(), "model:    %s\n", cfg.Model)
-	fmt.Fprintf(cmd.OutOrStdout(), "base-url: %s\n", cfg.BaseURL)
-	return nil
-}
-
-func runConfigScopes(cmd *cobra.Command, args []string) error {
-	gitClient := infraGit.NewClient()
-	root, err := gitClient.RepoRoot(cmd.Context())
-	if err != nil {
-		// Not in a git repo — try current directory.
-		root = "."
-	}
-
-	projCfg := infraConfig.LoadProjectConfig(root)
-	if projCfg == nil || len(projCfg.Scopes) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "no project config found at .git-agent/project.yml")
-		return nil
-	}
-
-	for _, s := range projCfg.Scopes {
-		fmt.Fprintln(cmd.OutOrStdout(), s)
-	}
+	fmt.Fprintf(cmd.OutOrStdout(), "base_url: %s\n", cfg.BaseURL)
 	return nil
 }
 
@@ -240,8 +203,9 @@ func init() {
 	configSetCmd.Flags().Bool("project", false, "write to project scope (.git-agent/config.yml)")
 	configSetCmd.Flags().Bool("local", false, "write to local scope (.git-agent/config.local.yml)")
 
+	configSetCmd.MarkFlagsMutuallyExclusive("user", "project", "local")
+
 	configCmd.AddCommand(configShowCmd)
-	configCmd.AddCommand(configScopesCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	rootCmd.AddCommand(configCmd)

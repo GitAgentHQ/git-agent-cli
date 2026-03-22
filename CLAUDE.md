@@ -67,10 +67,12 @@ cmd → application → domain ← infrastructure
 - `conventional.sh`: standalone conventional-commit checker (reference/test only; the built-in `"conventional"` hookType uses Go-native validation, not this script)
 
 **`cmd/`** — cobra wiring only; no business logic:
-- `init` — flags: `--scope`, `--hook-type` (`conventional`/`empty`, writes `hook_type` to `project.yml`), `--hook-script` (path, copies script + writes absolute path as `hook_type`), `--gitignore`, `--force`, `--max-commits` (default 200). `--hook` is deprecated (use `--hook-type`/`--hook-script`). No flags → defaults to `--scope --hook-type empty --gitignore`.
-- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--api-key`, `--model`, `--base-url`, `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive.
-- `config show` — display resolved provider config (api-key masked, model, base-url).
-- `config scopes` — list scopes from `.git-agent/project.yml`.
+- `init` — flags: `--scope`, `--hook` (accepts `conventional`, `empty`, or a file path; repeatable), `--gitignore`, `--force`, `--max-commits` (default 200), `--local` (write to `.git-agent/config.local.yml`). No flags → full wizard (scope + gitignore + conventional hook). `--local` requires at least one action flag.
+- `commit` — auto-stages all changes, auto-scopes if no project config, splits into atomic commits. Flags: `--dry-run`, `--intent`, `--co-author`, `--trailer` (format `"Key: Value"`), `--no-attribution` (omit default trailer), `--no-stage` (skip auto-staging), `--amend` (regenerate last commit), `--max-diff-lines`. `--amend` and `--no-stage` are mutually exclusive (enforced by Cobra).
+- `config show` — display resolved provider config (`api_key` masked, `model`, `base_url`). Respects global `--api-key`/`--model`/`--base-url` overrides.
+- `config get <key>` — show resolved value and source scope. Accepts both snake_case and kebab-case keys.
+- `config set <key> <value>` — write a config key to the specified scope (`--user`, `--project`, `--local`). Accepts both snake_case and kebab-case keys (e.g., `api-key` → `api_key`).
+- `version` — print the build version.
 
 **`pkg/`** — `pkg/errors` (typed exit codes 0/1/2), `pkg/filter` (skip patterns for lock files and binaries).
 
