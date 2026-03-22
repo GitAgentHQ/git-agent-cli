@@ -2,13 +2,134 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 )
+
+var configSetCmd = &cobra.Command{
+	Use:   "set <key> <value>",
+	Short: "Set a configuration value",
+	Long: `Set a configuration value in the specified scope.
+
+Scopes:
+  --user     ~/.config/git-agent/config.yml  (provider keys: api_key, base_url, model)
+  --project  .git-agent/config.yml           (shared, checked into git)
+  --local    .git-agent/config.local.yml     (personal override, gitignored)
+
+When no scope flag is given, provider keys default to --user and all others to --project.`,
+	Args: cobra.ExactArgs(2),
+	RunE: runConfigSet,
+}
+
+var configGetCmd = &cobra.Command{
+	Use:   "get <key>",
+	Short: "Show the resolved value of a configuration key",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runConfigGet,
+}
+
+func runConfigSet(cmd *cobra.Command, args []string) error {
+	key, rawValue := args[0], args[1]
+
+	useUser, _ := cmd.Flags().GetBool("user")
+	useProject, _ := cmd.Flags().GetBool("project")
+	useLocal, _ := cmd.Flags().GetBool("local")
+
+	scopeCount := 0
+	if useUser {
+		scopeCount++
+	}
+	if useProject {
+		scopeCount++
+	}
+	if useLocal {
+		scopeCount++
+	}
+	if scopeCount > 1 {
+		return fmt.Errorf("--user, --project, and --local are mutually exclusive")
+	}
+
+	var scope string
+	switch {
+	case useUser:
+		scope = infraConfig.ScopeUser
+	case useProject:
+		scope = infraConfig.ScopeProject
+	case useLocal:
+		scope = infraConfig.ScopeLocal
+	default:
+		scope = infraConfig.DefaultScope(key)
+	}
+
+	if err := infraConfig.ValidateScope(key, scope); err != nil {
+		return err
+	}
+
+	value, err := infraConfig.NormalizeValue(key, rawValue)
+	if err != nil {
+		return err
+	}
+
+	switch scope {
+	case infraConfig.ScopeUser:
+		if err := infraConfig.WriteUserField(userConfigPath(), key, value); err != nil {
+			return fmt.Errorf("writing user config: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (user)\n", key, value)
+
+	case infraConfig.ScopeProject:
+		gitClient := infraGit.NewClient()
+		root, err := gitClient.RepoRoot(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("repo root: %w", err)
+		}
+		path := infraConfig.ProjectConfigWritePath(root)
+		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
+			return fmt.Errorf("writing project config: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (project)\n", key, value)
+
+	case infraConfig.ScopeLocal:
+		gitClient := infraGit.NewClient()
+		root, err := gitClient.RepoRoot(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("repo root: %w", err)
+		}
+		path := infraConfig.LocalConfigPath(root)
+		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
+			return fmt.Errorf("writing local config: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (local)\n", key, value)
+	}
+	return nil
+}
+
+func runConfigGet(cmd *cobra.Command, args []string) error {
+	key := args[0]
+
+	if _, ok := infraConfig.KeyRegistry[key]; !ok {
+		return fmt.Errorf("unknown config key %q", key)
+	}
+
+	gitClient := infraGit.NewClient()
+	root, _ := gitClient.RepoRoot(cmd.Context())
+
+	value, scope, err := infraConfig.ResolveField(cmd.Context(), root, userConfigPath(), key)
+	if err != nil {
+		return err
+	}
+
+	if scope == "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is not set\n", key)
+		return nil
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s = %s  (from %s)\n", key, value, scope)
+	return nil
+}
 
 var configCmd = &cobra.Command{
 	Use:   "config",
@@ -52,8 +173,7 @@ func runConfigScopes(cmd *cobra.Command, args []string) error {
 		root = "."
 	}
 
-	projCfgPath := filepath.Join(root, ".git-agent", "project.yml")
-	projCfg := loadProjectConfig(projCfgPath)
+	projCfg := infraConfig.LoadProjectConfig(root)
 	if projCfg == nil || len(projCfg.Scopes) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "no project config found at .git-agent/project.yml")
 		return nil
@@ -76,7 +196,13 @@ func maskAPIKey(key string) string {
 }
 
 func init() {
+	configSetCmd.Flags().Bool("user", false, "write to user scope (~/.config/git-agent/config.yml)")
+	configSetCmd.Flags().Bool("project", false, "write to project scope (.git-agent/config.yml)")
+	configSetCmd.Flags().Bool("local", false, "write to local scope (.git-agent/config.local.yml)")
+
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configScopesCmd)
+	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(configGetCmd)
 	rootCmd.AddCommand(configCmd)
 }

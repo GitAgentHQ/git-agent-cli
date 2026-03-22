@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/gitagenthq/git-agent/application"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
@@ -15,7 +14,7 @@ import (
 )
 
 func projectYMLPath(root string) string {
-	return filepath.Join(root, ".git-agent", "project.yml")
+	return infraConfig.ProjectConfigWritePath(root)
 }
 
 var initCmd = &cobra.Command{
@@ -141,7 +140,9 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int) error {
 		return err
 	}
 
-	path := projectYMLPath(root)
+	// Use the best available path for read/write: config.yml if it exists,
+	// otherwise project.yml (backward compat), otherwise create config.yml.
+	path := infraConfig.ProjectConfigPath(root)
 	if force {
 		// Overwrite: write only new scopes.
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -180,8 +181,9 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
-	ymlPath := projectYMLPath(root)
-	if err := os.MkdirAll(filepath.Dir(ymlPath), 0755); err != nil {
+	// Always write to canonical path; read from fallback path to preserve existing keys.
+	writePath := infraConfig.ProjectConfigWritePath(root)
+	if err := os.MkdirAll(filepath.Dir(writePath), 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
@@ -212,15 +214,7 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "installed hook: %s\n", hookVal)
 	}
 
-	// Merge hook_type into project YAML, preserving existing keys.
-	rawMap := readProjectYAMLMap(ymlPath)
-	rawMap["hook_type"] = hookTypeVal
-
-	data, err := yaml.Marshal(rawMap)
-	if err != nil {
-		return fmt.Errorf("marshalling yaml: %w", err)
-	}
-	if err := os.WriteFile(ymlPath, data, 0644); err != nil {
+	if err := infraConfig.WriteProjectField(writePath, "hook_type", hookTypeVal); err != nil {
 		return fmt.Errorf("writing project config: %w", err)
 	}
 
@@ -230,23 +224,10 @@ func runInitHook(cmd *cobra.Command, hookVal string, force bool) error {
 	return nil
 }
 
-func readProjectYAMLMap(path string) map[string]any {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return make(map[string]any)
-	}
-	var m map[string]any
-	if err := yaml.Unmarshal(data, &m); err != nil || m == nil {
-		return make(map[string]any)
-	}
-	return m
-}
-
 func hasExistingHookType(root string) bool {
-	ymlPath := projectYMLPath(root)
-	m := readProjectYAMLMap(ymlPath)
-	_, exists := m["hook_type"]
-	return exists
+	path := infraConfig.ProjectConfigPath(root)
+	v, found, _ := infraConfig.ReadProjectField(path, "hook_type")
+	return found && v != ""
 }
 
 func init() {

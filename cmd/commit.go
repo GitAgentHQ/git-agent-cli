@@ -9,11 +9,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
-	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
@@ -80,8 +78,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
-	projCfgPath := filepath.Join(root, ".git-agent", "project.yml")
-	projCfg := loadProjectConfig(projCfgPath)
+	projCfgPath := infraConfig.ProjectConfigPath(root)
+	projCfg := infraConfig.LoadProjectConfig(root)
 
 	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
 	var trailers []commit.Trailer
@@ -209,22 +207,6 @@ func userConfigPath() string {
 	return filepath.Join(home, ".config", "git-agent", "config.yml")
 }
 
-func loadProjectConfig(path string) *project.Config {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var raw struct {
-		Scopes        []string `yaml:"scopes"`
-		HookType      string   `yaml:"hook_type"`
-		NoGitAgentCoAuthor bool     `yaml:"no_git_agent_co_author"`
-		NoModelCoAuthor         bool     `yaml:"no_model_co_author"`
-	}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	return &project.Config{Scopes: raw.Scopes, HookType: raw.HookType, NoGitAgentCoAuthor: raw.NoGitAgentCoAuthor, NoModelCoAuthor: raw.NoModelCoAuthor}
-}
 
 func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
