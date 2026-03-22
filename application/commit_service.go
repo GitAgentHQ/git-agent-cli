@@ -16,6 +16,17 @@ import (
 
 var ErrHookBlocked = errors.New("hook blocked commit")
 
+// HookBlockedError is returned when a commit is blocked by the hook after all
+// retries. LastMessage is the final assembled commit message that was rejected.
+type HookBlockedError struct {
+	LastMessage string
+}
+
+func (e *HookBlockedError) Error() string { return ErrHookBlocked.Error() }
+func (e *HookBlockedError) Is(target error) bool {
+	return target == ErrHookBlocked
+}
+
 // SingleCommitResult holds the output of one committed group.
 type SingleCommitResult struct {
 	Outline   string
@@ -366,6 +377,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				}
 			}
 
+			s.out(req, "%s", assembled)
+
 			if len(req.Config.Hooks) == 0 {
 				hookPassed = true
 				break
@@ -396,7 +409,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				if hookFeedback != "" {
 					s.out(req, "hook blocked: %s", hookFeedback)
 				}
-				return nil, ErrHookBlocked
+				return nil, &HookBlockedError{LastMessage: assembled}
 			}
 			// Carry the last hook feedback so the first Generate call of each
 			// re-planned group already knows why previous attempts were rejected.
