@@ -136,24 +136,31 @@ func TestGitignoreService_Generate_PreservesRulesFromPreviousBlock(t *testing.T)
 	}
 }
 
-func TestGitignoreService_Generate_ForceOverwrites(t *testing.T) {
+func TestGitignoreService_Generate_PreservesCustomRulesOnRegen(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()
 
+	// Custom rules must survive a regeneration regardless of flags.
 	os.WriteFile(".gitignore", []byte("# my important custom rule\ndo-not-remove.txt\n"), 0644)
 
-	_, err := svc.Generate(context.Background(), application.GitignoreRequest{Force: true})
+	_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	data, _ := os.ReadFile(".gitignore")
 	content := string(data)
-	if strings.Contains(content, "do-not-remove.txt") {
-		t.Error("force should overwrite custom rules")
+	if !strings.Contains(content, "do-not-remove.txt") {
+		t.Error("custom rules must be preserved after regeneration")
 	}
 	if !strings.Contains(content, "### git-agent auto-generated") {
-		t.Error("force output should contain auto-generated block")
+		t.Error("auto-generated block must be present")
+	}
+	// Custom rules must appear after the auto-generated block.
+	endIdx := strings.Index(content, "### end git-agent ###")
+	customIdx := strings.Index(content, "do-not-remove.txt")
+	if customIdx < endIdx {
+		t.Error("custom rule should appear after the auto-generated block")
 	}
 }
 

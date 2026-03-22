@@ -99,6 +99,7 @@ Rules:
 - Include programming languages detected from file extensions
 - Include build tools, editors, and IDEs if evidence exists
 - Use lowercase Toptal API identifiers only (e.g. "go", "node", "python", "rust", "jetbrains", "visualstudiocode")
+- Use exact Toptal identifiers for build tools: "makefile" for GNU Make (NOT "make"), "cmake" for CMake
 - Do NOT include technologies with no evidence in the project files`
 
 const generateScopesSystemPrompt = `You are an expert software engineer. Derive commit scopes from the top-level directories of the project, using commit history to validate and refine them.
@@ -108,10 +109,12 @@ Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
 Rules (STRICTLY enforce):
 - Generate one scope per meaningful source directory listed in "Top-level directories"
 - Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
+- Skip documentation and asset directories (docs, doc, documentation, assets, static, public, resources)
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
-- Single-word directory names: use as-is or a well-known abbreviation (e.g. "cmd" -> "cli", "application" -> "app", "infrastructure" -> "infra")
-- Hyphenated or compound names: use the distinguishing part or a well-known short form (e.g. "agentbook-skill" -> "skill", "my-frontend" -> "frontend")
-- If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation
+- ALL scopes MUST be short — single words or abbreviations only
+- Single-word names: use as-is, EXCEPT apply well-known short forms for long words ("application" -> "app", "infrastructure" -> "infra", "cmd" -> "cli")
+- Hyphenated or multi-word names: MUST convert to initials/acronym ("git-agent-proxy" -> "gap", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
+- If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation over any derived form
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scopes lowercase`
@@ -151,50 +154,56 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		}
 	}
 
-	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
-		Model: c.model,
-		Messages: []goopenai.ChatCompletionMessage{
-			{
-				Role:    goopenai.ChatMessageRoleSystem,
-				Content: systemPrompt,
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+			Model: c.model,
+			Messages: []goopenai.ChatCompletionMessage{
+				{
+					Role:    goopenai.ChatMessageRoleSystem,
+					Content: systemPrompt,
+				},
+				{
+					Role:    goopenai.ChatMessageRoleUser,
+					Content: userPrompt,
+				},
 			},
-			{
-				Role:    goopenai.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		Temperature:         0,
-		MaxCompletionTokens: 1024,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("openai chat completion: %w", err)
-	}
+			Temperature:         0,
+			MaxCompletionTokens: 1024,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("openai chat completion: %w", err)
+		}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
-			len(resp.Choices), func() string {
-				if len(resp.Choices) > 0 {
-					return string(resp.Choices[0].FinishReason)
-				}
-				return "n/a"
-			}())
-	}
+		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			return nil, fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
+				len(resp.Choices), func() string {
+					if len(resp.Choices) > 0 {
+						return string(resp.Choices[0].FinishReason)
+					}
+					return "n/a"
+				}())
+		}
 
-	raw := extractJSON(resp.Choices[0].Message.Content)
-	var result struct {
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		Outline string `json:"outline"`
-	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
-	}
+		raw := extractJSON(resp.Choices[0].Message.Content)
+		var result struct {
+			Title   string `json:"title"`
+			Body    string `json:"body"`
+			Outline string `json:"outline"`
+		}
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+			continue
+		}
 
-	return &commit.CommitMessage{
-		Title:   result.Title,
-		Body:    result.Body,
-		Outline: result.Outline,
-	}, nil
+		return &commit.CommitMessage{
+			Title:   result.Title,
+			Body:    result.Body,
+			Outline: result.Outline,
+		}, nil
+	}
+	return nil, lastErr
 }
 
 func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {

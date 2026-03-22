@@ -37,9 +37,7 @@ func NewGitignoreService(
 }
 
 // GitignoreRequest holds options for the Generate call.
-type GitignoreRequest struct {
-	Force bool
-}
+type GitignoreRequest struct{}
 
 // Generate detects technologies, fetches .gitignore content, and writes .gitignore.
 func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) ([]string, error) {
@@ -69,11 +67,17 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 		return nil, fmt.Errorf("generating gitignore content: %w", err)
 	}
 
+	// Use the technology list actually reflected in the Toptal response URL,
+	// not the raw LLM output, so the header stays consistent with the content.
+	if actual := toptalTechs(generated); len(actual) > 0 {
+		techs = actual
+	}
+
 	content := wrapGenerated(generated, techs)
 
 	existing, _ := os.ReadFile(".gitignore")
 	var final string
-	if req.Force || len(existing) == 0 {
+	if len(existing) == 0 {
 		final = content
 	} else {
 		final = mergeGitignore(string(existing), content)
@@ -84,6 +88,31 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 	}
 
 	return techs, nil
+}
+
+// toptalTechs extracts the technology list from the "# Created by" line in a
+// Toptal gitignore response, e.g.
+//
+//	# Created by https://www.toptal.com/developers/gitignore/api/macos,go
+//
+// returns ["macos", "go"]. Returns nil if the line is absent or malformed.
+func toptalTechs(content string) []string {
+	for _, line := range strings.SplitN(content, "\n", 10) {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "# Created by") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			break
+		}
+		url := fields[len(fields)-1]
+		if idx := strings.LastIndex(url, "/api/"); idx != -1 {
+			return strings.Split(url[idx+5:], ",")
+		}
+		break
+	}
+	return nil
 }
 
 // runtimeOS maps GOOS to Toptal API names.
