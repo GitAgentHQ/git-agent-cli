@@ -170,7 +170,8 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 				},
 			},
 			Temperature:         0,
-			MaxCompletionTokens: 1024,
+			ReasoningEffort:     "low",
+			MaxCompletionTokens: 4096,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("openai chat completion: %w", err)
@@ -250,7 +251,8 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 			},
 		},
 		Temperature:         0,
-		MaxCompletionTokens: 32768,
+		ReasoningEffort:     "low",
+		MaxCompletionTokens: 8192,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
@@ -307,6 +309,7 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 			},
 		},
 		Temperature:         0,
+		ReasoningEffort:     "low",
 		MaxCompletionTokens: 1024,
 	})
 	if err != nil {
@@ -348,7 +351,8 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 			},
 		},
 		Temperature:         0,
-		MaxCompletionTokens: 32768,
+		ReasoningEffort:     "low",
+		MaxCompletionTokens: 8192,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("openai chat completion: %w", err)
