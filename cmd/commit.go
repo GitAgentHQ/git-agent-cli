@@ -160,20 +160,18 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// extractExplanation extracts the closing explanation paragraph from a commit
-// body, skipping any leading bullet-point lines ("- ...") and blank lines.
+// extractExplanation returns the closing explanation paragraph from a commit
+// body — the last double-newline-separated paragraph that does not start with
+// a bullet point ("- ").
 func extractExplanation(body string) string {
-	lines := strings.Split(body, "\n")
-	start := 0
-	for start < len(lines) {
-		trimmed := strings.TrimSpace(lines[start])
-		if strings.HasPrefix(trimmed, "- ") || trimmed == "" {
-			start++
-		} else {
-			break
+	paragraphs := strings.Split(strings.TrimSpace(body), "\n\n")
+	for i := len(paragraphs) - 1; i >= 0; i-- {
+		p := strings.TrimSpace(paragraphs[i])
+		if p != "" && !strings.HasPrefix(p, "- ") {
+			return p
 		}
 	}
-	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
+	return ""
 }
 
 func init() {

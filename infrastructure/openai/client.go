@@ -196,7 +196,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 
 		return &commit.CommitMessage{
 			Title: result.Title,
-			Body:  commit.WrapBody(result.Body, 72),
+			Body:  result.Body,
 		}, nil
 	}
 	return nil, lastErr
@@ -274,7 +274,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 			Files: g.Files,
 			Message: commit.CommitMessage{
 				Title: g.Title,
-				Body:  commit.WrapBody(g.Body, 72),
+				Body:  g.Body,
 			},
 		})
 	}
