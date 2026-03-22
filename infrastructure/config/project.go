@@ -1,0 +1,169 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/gitagenthq/git-agent/domain/project"
+)
+
+// ProjectConfigPath returns the path to read project-scope config.
+// Prefers .git-agent/config.yml; falls back to .git-agent/project.yml for
+// backward compatibility. Returns .git-agent/config.yml when neither exists.
+func ProjectConfigPath(repoRoot string) string {
+	newPath := filepath.Join(repoRoot, ".git-agent", "config.yml")
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+	legacyPath := filepath.Join(repoRoot, ".git-agent", "project.yml")
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+	return newPath
+}
+
+// ProjectConfigWritePath returns the canonical write path for project-scope config.
+func ProjectConfigWritePath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".git-agent", "config.yml")
+}
+
+// LocalConfigPath returns the path for local-scope config (not checked into git).
+func LocalConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".git-agent", "config.local.yml")
+}
+
+// rawProjectConfig is the YAML shape for project/local config files.
+type rawProjectConfig struct {
+	Scopes             []string `yaml:"scopes,omitempty"`
+	HookType           string   `yaml:"hook_type,omitempty"`
+	NoGitAgentCoAuthor *bool    `yaml:"no_git_agent_co_author,omitempty"`
+	NoModelCoAuthor    *bool    `yaml:"no_model_co_author,omitempty"`
+}
+
+func loadRawProjectConfig(path string) rawProjectConfig {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return rawProjectConfig{}
+	}
+	var raw rawProjectConfig
+	_ = yaml.Unmarshal(data, &raw)
+	return raw
+}
+
+// LoadProjectConfig loads and merges local > project config into a domain Config.
+// Returns nil when no config files exist.
+func LoadProjectConfig(repoRoot string) *project.Config {
+	proj := loadRawProjectConfig(ProjectConfigPath(repoRoot))
+	local := loadRawProjectConfig(LocalConfigPath(repoRoot))
+
+	merged := proj
+	if len(local.Scopes) > 0 {
+		merged.Scopes = local.Scopes
+	}
+	if local.HookType != "" {
+		merged.HookType = local.HookType
+	}
+	if local.NoGitAgentCoAuthor != nil {
+		merged.NoGitAgentCoAuthor = local.NoGitAgentCoAuthor
+	}
+	if local.NoModelCoAuthor != nil {
+		merged.NoModelCoAuthor = local.NoModelCoAuthor
+	}
+
+	if len(merged.Scopes) == 0 && merged.HookType == "" &&
+		merged.NoGitAgentCoAuthor == nil && merged.NoModelCoAuthor == nil {
+		return nil
+	}
+
+	cfg := &project.Config{
+		Scopes:   merged.Scopes,
+		HookType: merged.HookType,
+	}
+	if merged.NoGitAgentCoAuthor != nil {
+		cfg.NoGitAgentCoAuthor = *merged.NoGitAgentCoAuthor
+	}
+	if merged.NoModelCoAuthor != nil {
+		cfg.NoModelCoAuthor = *merged.NoModelCoAuthor
+	}
+	return cfg
+}
+
+// WriteProjectField writes a key-value pair to the given config file,
+// preserving all existing keys.
+func WriteProjectField(path, key, value string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	rawMap := readYAMLMap(path)
+	def := KeyRegistry[key]
+	switch def.Type {
+	case "bool":
+		b, _ := strconv.ParseBool(value)
+		rawMap[key] = b
+	case "stringslice":
+		parts := strings.Split(value, ",")
+		var trimmed []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				trimmed = append(trimmed, p)
+			}
+		}
+		rawMap[key] = trimmed
+	default:
+		rawMap[key] = value
+	}
+	data, err := yaml.Marshal(rawMap)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// ReadProjectField reads a single key from a specific config file.
+// Returns ("", false, nil) when the key is not present.
+func ReadProjectField(path, key string) (string, bool, error) {
+	rawMap := readYAMLMap(path)
+	v, ok := rawMap[key]
+	if !ok {
+		return "", false, nil
+	}
+	return yamlValueToString(v), true, nil
+}
+
+func readYAMLMap(path string) map[string]any {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return make(map[string]any)
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil || m == nil {
+		return make(map[string]any)
+	}
+	return m
+}
+
+func yamlValueToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case bool:
+		return strconv.FormatBool(val)
+	case []any:
+		var parts []string
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, ",")
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
