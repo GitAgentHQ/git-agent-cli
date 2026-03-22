@@ -28,6 +28,17 @@ func NewClient(apiKey, baseURL, model string) *Client {
 	}
 }
 
+// isReasoningModel reports whether the model name indicates an OpenAI o-series
+// reasoning model that accepts reasoning_effort but rejects temperature.
+func isReasoningModel(model string) bool {
+	for _, prefix := range []string{"o1", "o3", "o4"} {
+		if model == prefix || strings.HasPrefix(model, prefix+"-") || strings.HasPrefix(model, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // extractJSON finds the first {...} block in s, handling models that wrap JSON in prose.
 func extractJSON(s string) string {
 	start := strings.Index(s, "{")
@@ -157,7 +168,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+		chatReq := goopenai.ChatCompletionRequest{
 			Model: c.model,
 			Messages: []goopenai.ChatCompletionMessage{
 				{
@@ -169,10 +180,14 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 					Content: userPrompt,
 				},
 			},
-			Temperature:         0,
-			ReasoningEffort:     "low",
 			MaxCompletionTokens: 4096,
-		})
+		}
+		if !isReasoningModel(c.model) {
+			chatReq.Temperature = 0
+		} else {
+			chatReq.ReasoningEffort = "low"
+		}
+		resp, err := c.inner.CreateChatCompletion(ctx, chatReq)
 		if err != nil {
 			return nil, fmt.Errorf("openai chat completion: %w", err)
 		}
@@ -238,7 +253,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
-	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+	planReq := goopenai.ChatCompletionRequest{
 		Model: c.model,
 		Messages: []goopenai.ChatCompletionMessage{
 			{
@@ -250,10 +265,14 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 				Content: userPrompt,
 			},
 		},
-		Temperature:         0,
-		ReasoningEffort:     "low",
 		MaxCompletionTokens: 8192,
-	})
+	}
+	if !isReasoningModel(c.model) {
+		planReq.Temperature = 0
+	} else {
+		planReq.ReasoningEffort = "low"
+	}
+	resp, err := c.inner.CreateChatCompletion(ctx, planReq)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
@@ -296,7 +315,7 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 		strings.Join(req.Files, "\n"),
 	)
 
-	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+	detectReq := goopenai.ChatCompletionRequest{
 		Model: c.model,
 		Messages: []goopenai.ChatCompletionMessage{
 			{
@@ -308,10 +327,14 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 				Content: userPrompt,
 			},
 		},
-		Temperature:         0,
-		ReasoningEffort:     "low",
 		MaxCompletionTokens: 1024,
-	})
+	}
+	if !isReasoningModel(c.model) {
+		detectReq.Temperature = 0
+	} else {
+		detectReq.ReasoningEffort = "low"
+	}
+	resp, err := c.inner.CreateChatCompletion(ctx, detectReq)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
@@ -338,7 +361,7 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		strings.Join(files, "\n"),
 	)
 
-	resp, err := c.inner.CreateChatCompletion(ctx, goopenai.ChatCompletionRequest{
+	scopesReq := goopenai.ChatCompletionRequest{
 		Model: c.model,
 		Messages: []goopenai.ChatCompletionMessage{
 			{
@@ -350,10 +373,14 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 				Content: userPrompt,
 			},
 		},
-		Temperature:         0,
-		ReasoningEffort:     "low",
 		MaxCompletionTokens: 8192,
-	})
+	}
+	if !isReasoningModel(c.model) {
+		scopesReq.Temperature = 0
+	} else {
+		scopesReq.ReasoningEffort = "low"
+	}
+	resp, err := c.inner.CreateChatCompletion(ctx, scopesReq)
 	if err != nil {
 		return nil, "", fmt.Errorf("openai chat completion: %w", err)
 	}
