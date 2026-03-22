@@ -45,24 +45,28 @@ git-agent commit
 
 ### `git-agent init`
 
-在当前仓库初始化 git-agent。不带参数时，依次执行作用域生成、安装空钩子、生成 `.gitignore`。
+在当前仓库初始化 git-agent。不带参数时，运行完整向导：生成 `.gitignore`、从 git 历史生成提交作用域，并写入 `.git-agent/config.yml`（包含作用域和 `hook: [conventional]`）。
 
 ```bash
-git-agent init                          # 作用域 + 空钩子 + .gitignore（默认）
+git-agent init                          # 完整向导（gitignore + 作用域 + conventional 钩子）
 git-agent init --scope                  # 仅生成作用域
-git-agent init --hook-type conventional # 安装 Conventional Commits 验证器
-git-agent init --hook-type empty        # 安装空占位钩子
-git-agent init --hook-script /path/to/script   # 安装自定义钩子脚本
 git-agent init --gitignore              # 仅生成 .gitignore
+git-agent init --hook conventional      # 安装 Conventional Commits 验证器
+git-agent init --hook empty             # 安装空占位钩子
+git-agent init --hook /path/to/script  # 安装自定义钩子脚本
 git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
-git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
+git-agent init --max-commits 50        # 限制用于作用域生成的提交分析数量
+git-agent init --local --scope         # 将作用域写入 .git-agent/config.local.yml
 ```
 
 | 参数 | 描述 |
 |------|------|
-| `--api-key` | AI 提供商的 API 密钥 |
-| `--model` | 用于生成的模型 |
-| `--base-url` | AI 提供商的 base URL |
+| `--scope` | 通过 AI 生成作用域 |
+| `--gitignore` | 通过 AI 生成 `.gitignore` |
+| `--hook` | 配置钩子：`conventional`、`empty` 或文件路径（可重复） |
+| `--force` | 覆盖已有配置/.gitignore |
+| `--max-commits` | 用于作用域生成的最大提交分析数量（默认：200） |
+| `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
 
 ### `git-agent commit`
 
@@ -79,13 +83,21 @@ git-agent commit --trailer "Fixes: #123"     # 添加任意 git trailer
 git-agent commit --no-attribution             # 省略默认的 Git Agent trailer
 ```
 
-### `git-agent config show`
+### `git-agent config`
 
-显示解析后的 AI 提供商配置（API 密钥会被掩码）。
+管理 git-agent 配置。
 
-### `git-agent config scopes`
+```bash
+git-agent config show              # 显示解析后的提供商配置（API 密钥已脱敏）
+git-agent config get <key>         # 显示某配置项的解析值及来源作用域
+git-agent config set <key> <value> # 将配置值写入对应作用域
+```
 
-列出 `.git-agent/project.yml` 中定义的作用域。
+`config set` 和 `config get` 同时支持 snake_case 和 kebab-case 键名（如 `api-key` 和 `api_key` 等价）。
+
+### `git-agent version`
+
+打印构建版本。
 
 ## 配置
 
@@ -116,7 +128,7 @@ model: llama3
 
 ### 项目配置（`.git-agent/project.yml`）
 
-由 `git-agent init` 生成，定义项目的提交作用域：
+由 `git-agent init` 生成，定义项目的提交作用域和钩子类型：
 
 ```yaml
 scopes:
@@ -124,19 +136,20 @@ scopes:
   - core
   - auth
   - infra
-hook_type: empty
+hook: conventional
 ```
 
 ### 钩子
 
-通过 `git-agent init --hook-type <name>` 安装的内置钩子：
+通过 `init --hook` 配置，或之后使用 `git-agent config set hook <value>` 更新：
 
 | 钩子 | 描述 |
 |------|------|
+| `conventional` | 验证 Conventional Commits 格式（Go 原生实现） |
 | `empty` | 始终通过的占位钩子 |
-| `conventional` | 验证 Conventional Commits 格式 |
+| `<文件路径>` | Go 验证 + 指定路径的 shell 脚本 |
 
-自定义钩子是位于 `.git-agent/hooks/pre-commit` 的可执行脚本，通过 stdin 接收 JSON 载荷（`diff`、`commit_message`、`intent`、`staged_files`、`config`），退出 0 表示允许，非 0 表示阻止。阻止时，`git-agent` 最多重试 3 次，之后以退出码 2 结束。
+自定义钩子通过 stdin 接收 JSON 载荷（`diff`、`commit_message`、`intent`、`staged_files`、`config`），退出 0 表示允许，非 0 表示阻止。阻止时，`git-agent` 最多重试 3 次，之后以退出码 2 结束。
 
 ## 参数
 
@@ -151,15 +164,15 @@ hook_type: empty
 | `--co-author` | 添加 co-author trailer（可重复） |
 | `--trailer` | 添加任意 git trailer，格式为 `Key: Value`（可重复） |
 | `--no-attribution` | 省略默认的 Git Agent co-author trailer |
-| `--api-key` | AI 提供商的 API 密钥 |
-| `--model` | 用于生成的模型 |
-| `--base-url` | AI 提供商的 base URL |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制） |
 
 ### 全局
 
 | 参数 | 描述 |
 |------|------|
+| `--api-key` | AI 提供商的 API 密钥 |
+| `--model` | 用于生成的模型 |
+| `--base-url` | AI 提供商的 base URL |
 | `-v, --verbose` | 启用详细输出 |
 | `--free` | 仅使用构建时内嵌凭证；忽略配置文件和 git config |
 
