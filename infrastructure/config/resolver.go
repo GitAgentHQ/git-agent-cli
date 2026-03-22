@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -109,4 +110,36 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.NoModelCoAuthor = flags.NoModelCoAuthor || file.NoModelCoAuthor
 
 	return result, nil
+}
+
+// ResolveField resolves a single config key across all scopes and reports which
+// scope the value came from. Returns ("", "", nil) when the key is not set anywhere.
+func ResolveField(ctx context.Context, repoRoot, userConfigPath, key string) (value, scope string, err error) {
+	def, ok := KeyRegistry[key]
+	if !ok {
+		return "", "", fmt.Errorf("unknown config key %q", key)
+	}
+
+	// Provider-only keys live exclusively in user scope.
+	if def.AllowUser && !def.AllowProject && !def.AllowLocal {
+		v, found, e := ReadUserField(userConfigPath, key)
+		if e != nil || !found {
+			return "", "", e
+		}
+		return v, ScopeUser, nil
+	}
+
+	// Non-provider keys: local > project > user.
+	if v, found, _ := ReadProjectField(LocalConfigPath(repoRoot), key); found {
+		return v, ScopeLocal, nil
+	}
+	if v, found, _ := ReadProjectField(ProjectConfigPath(repoRoot), key); found {
+		return v, ScopeProject, nil
+	}
+	if def.AllowUser {
+		if v, found, _ := ReadUserField(userConfigPath, key); found {
+			return v, ScopeUser, nil
+		}
+	}
+	return "", "", nil
 }
