@@ -18,8 +18,10 @@ var ErrHookBlocked = errors.New("hook blocked commit")
 
 // HookBlockedError is returned when a commit is blocked by the hook after all
 // retries. LastMessage is the final assembled commit message that was rejected.
+// Reason is the hook's last rejection output.
 type HookBlockedError struct {
 	LastMessage string
+	Reason      string
 }
 
 func (e *HookBlockedError) Error() string { return ErrHookBlocked.Error() }
@@ -306,16 +308,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	copy(remaining, plan.Groups)
 	s.vlog(req, "planned %d commit(s)", len(remaining))
 
-	n := len(remaining)
-	planWord := "commits"
-	if n == 1 {
-		planWord = "commit"
-	}
-	s.out(req, "planned %d %s", n, planWord)
-	for i, g := range remaining {
-		s.out(req, "\n  %d. %s\n     %s", i+1, g.Message.Title, strings.Join(g.Files, ", "))
-	}
-
 	var committed []SingleCommitResult
 	rePlanCount := 0
 	var inheritedFeedback string // hook feedback carried into first attempt after re-plan
@@ -410,7 +402,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				break
 			}
 
-			s.out(req, "hook rejected (attempt %d/%d): %s", attempt, maxHookRetries, hookResult.Stderr)
 			hookFeedback = hookResult.Stderr
 			previousMessage = assembled
 		}
@@ -418,7 +409,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if !hookPassed {
 			// Re-plan failed group + remaining files together (up to maxRePlans times).
 			if rePlanCount >= maxRePlans {
-				return nil, &HookBlockedError{LastMessage: preTrailer}
+				return nil, &HookBlockedError{LastMessage: preTrailer, Reason: hookFeedback}
 			}
 			// Carry the last hook feedback so the first Generate call of each
 			// re-planned group already knows why previous attempts were rejected.
