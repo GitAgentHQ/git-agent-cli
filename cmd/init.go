@@ -149,10 +149,6 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 	}
 
 	gitClient := infraGit.NewClient()
-	root, err := gitClient.RepoRoot(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("repo root: %w", err)
-	}
 
 	scopeSvc := application.NewScopeService(
 		infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
@@ -177,7 +173,7 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "initialized git-agent in %s\n", filepath.Dir(root))
+	fmt.Fprintf(cmd.OutOrStdout(), "scopes written to %s\n", configPath)
 	return nil
 }
 
