@@ -33,18 +33,18 @@ func TestInitGitignoreFlag_ForceFlag_Recognized(t *testing.T) {
 	}
 }
 
-func TestInitGitignoreFlag_DoesNotBreakOtherFlags(t *testing.T) {
+func TestInitGitignoreFlag_DoesNotBreakConfigSet(t *testing.T) {
 	dir := newGitRepo(t)
-	_, code := gitAgent(t, dir, "init", "--hook", "empty")
+	// Hook is set via 'config set hook', independent of init.
+	out, code := gitAgent(t, dir, "config", "set", "hook", "empty")
 	if code != 0 {
-		t.Fatalf("init --hook empty still works: exit code %d", code)
+		t.Fatalf("config set hook empty: exit code %d\noutput: %s", code, out)
 	}
-	projectYML := filepath.Join(dir, ".git-agent", "project.yml")
-	data, err := os.ReadFile(projectYML)
+	data, err := os.ReadFile(filepath.Join(dir, ".git-agent", "config.yml"))
 	if err != nil {
-		t.Fatalf("project.yml not created: %v", err)
+		t.Fatalf("config.yml not created: %v", err)
 	}
-	if !strings.Contains(string(data), "hook_type: empty") {
-		t.Errorf("project.yml missing hook_type: empty, got:\n%s", data)
+	if !strings.Contains(string(data), "empty") {
+		t.Errorf("config.yml missing 'empty', got:\n%s", data)
 	}
 }

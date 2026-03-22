@@ -13,7 +13,7 @@ import (
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
-func runGitignore(cmd *cobra.Command, force bool, out io.Writer) error {
+func runGitignore(cmd *cobra.Command, out io.Writer) error {
 	providerCfg, err := initProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -23,15 +23,11 @@ func runGitignore(cmd *cobra.Command, force bool, out io.Writer) error {
 	}
 
 	gitClient := infraGit.NewClient()
-	if !gitClient.IsGitRepo(cmd.Context()) {
-		return fmt.Errorf("not a git repository")
-	}
-
 	openaiClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
 	toptalClient := infraGitignore.NewToptalClient()
 	svc := application.NewGitignoreService(openaiClient, toptalClient, gitClient)
 
-	techs, err := svc.Generate(cmd.Context(), application.GitignoreRequest{Force: force})
+	techs, err := svc.Generate(cmd.Context(), application.GitignoreRequest{})
 	if err != nil {
 		return err
 	}

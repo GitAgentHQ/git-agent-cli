@@ -1,198 +1,71 @@
 ---
 name: use-git-agent
-description: Operates the git-agent CLI — commits, init, config, and provider setup via ~/.config/git-agent/config.yml or git config. Provider CLI overrides belong in exception flows only. Use whenever the user mentions git-agent, wants to commit/init, or needs to configure a provider.
+description: Use git-agent to commit changes with AI-generated conventional commit messages. Immediately runs git-agent commit when loaded — no setup or configuration questions unless an error occurs.
 ---
 
-# Git Agent CLI
+# Git Agent Commit
 
-`git-agent` is an AI-first Git CLI. Use the `git agent` form by default — it integrates with git as a subcommand:
+When this skill is loaded, **immediately** run `git-agent commit`. Do not ask the user what to do. Do not show a menu.
 
-```
-git agent <command> [flags]
-```
+## Steps
 
-Fall back to `git-agent <command> [flags]` only when the git subcommand form fails.
+1. **Intent** — derive a one-sentence intent from the conversation. If no signal exists, run `git diff --stat` to understand what changed, then form the intent from that.
 
-**Global flag:** `-v, --verbose`
+2. **Commit** — run:
+   ```
+   git-agent commit --intent "..."
+   ```
+   No provider flags on the first attempt.
 
----
+3. **On auth error (401 / missing key)** — retry once with `--free`:
+   ```
+   git-agent commit --intent "..." --free
+   ```
 
-## Provider setup
+4. **If `--free` also fails** — guide the user to create `~/.config/git-agent/config.yml`:
+   ```yaml
+   base_url: https://api.openai.com/v1
+   api_key: sk-...
+   model: gpt-4o
+   ```
+   Other supported providers: Cloudflare Workers AI, local Ollama.
 
-Run subcommands with no provider flags — rely on resolved config.
+## Useful flags
 
-**Config resolution order** (highest wins):
-
-1. CLI flags (`--api-key`, `--model`, `--base-url`)
-2. `git config --local git-agent.{model,base-url}`
-3. `~/.config/git-agent/config.yml` (supports `$ENV_VAR` expansion)
-4. Build-time defaults
-
-**Check active config:** `git-agent config show` — prints `mode: FREE (using built-in credentials)` when the embedded key is active.
-
-**Custom provider** — prefer `~/.config/git-agent/config.yml` or per-repo `git config` over repeating flags every invocation:
-
-```bash
-# Per-repo
-git config git-agent.base-url https://api.openai.com/v1
-git config git-agent.model gpt-4o
-
-# Global (~/.config/git-agent/config.yml)
-base_url: https://api.openai.com/v1
-api_key: sk-...
-model: gpt-4o
-no_git_agent_co_author: false  # set true to omit "Co-Authored-By: Git Agent" trailer globally
-no_model_co_author: false      # set true to ignore all --co-author trailers globally
-```
-
-Other provider examples:
-
-```yaml
-# Cloudflare Workers AI
-base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
-api_key: YOUR_CLOUDFLARE_API_TOKEN
-model: "@cf/meta/llama-3.1-8b-instruct"
-```
-
-```yaml
-# Local Ollama
-base_url: http://localhost:11434/v1
-model: llama3
-```
-
-**On error** (missing API key / not in FREE mode): if `~/.config/git-agent/config.yml` is absent and there is no per-repo `git config`, suggest creating that file with `base_url`, `api_key`, and `model` before considering CLI workarounds.
-
-**Exception flows** — use only for one-off needs (CI, scripts, temporary endpoint):
-
-```bash
-git agent commit --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
-git agent init --scope --base-url https://api.openai.com/v1 --model gpt-4o --api-key sk-...
-```
-
-Do **not** treat CLI provider flags as the default teaching path.
-
----
-
-## `git-agent commit`
-
-Generate and create commit(s) with AI-generated messages. Reads staged and unstaged changes, splits into atomic groups (capped at 5 per run), generates a Conventional Commit message for each group, and commits in sequence.
-
-```
-git-agent commit [flags]
-```
-
-| Flag | Description |
+| Flag | When to use |
 |---|---|
-| `--amend` | regenerate and amend the most recent commit |
-| `--co-author stringArray` | add a co-author trailer (repeatable) |
-| `--dry-run` | print commit message without committing |
-| `--free` | use only build-time embedded credentials; ignore config file and git config |
-| `--intent string` | describe the intent of the change |
-| `--max-diff-lines int` | maximum diff lines to send to the model (0 = no limit) |
-| `--no-attribution` | omit the default Git Agent co-author trailer |
-| `--no-stage` | skip auto-staging; only commit already-staged changes |
-| `--trailer stringArray` | add an arbitrary git trailer, format "Key: Value" (repeatable) |
+| `--dry-run` | User wants to preview the message without committing |
+| `--no-stage` | User has already staged specific files and doesn't want auto-staging |
+| `--amend` | User wants to rewrite the most recent commit message |
+| `--intent "..."` | Always set — keeps generated messages focused |
 
-`--amend` and `--no-stage` are mutually exclusive. `--free` is mutually exclusive with `--api-key`, `--model`, and `--base-url` (on both `commit` and `init`).
+`--amend` and `--no-stage` are mutually exclusive.
 
----
+## Hook failures
 
-## `git-agent init`
+If the hook keeps rejecting on the same rule (e.g. title > 50 chars), use a shorter `--intent`, e.g. `--intent "update module path"`.
 
-Initialize git-agent in the current repository. With no flags, runs scope generation, writes `hook_type: empty` to `.git-agent/project.yml`, and generates a `.gitignore`. If `project.yml` already has `hook_type` and `--force` is not passed, the hook step is skipped.
+Hook exit codes: `0` = allow, non-zero = block. After 3 retries per group and 2 re-plans, `git-agent` exits with code `2`.
 
-```
-git-agent init [flags]
-```
-
-| Flag | Description |
-|---|---|
-| `--force` | overwrite existing config/hook/.gitignore |
-| `--free` | use only build-time embedded credentials; ignore config file and git config |
-| `--gitignore` | generate .gitignore via AI |
-| `--hook-script string` | path to custom hook script (copies to `.git-agent/hooks/pre-commit`, writes hook_type to project.yml) |
-| `--hook-type string` | built-in hook template: `conventional` or `empty` (writes hook_type to project.yml) |
-| `--max-commits int` | max commits to analyze for scope generation (default 200) |
-| `--scope` | generate scopes via AI |
-
----
-
-## `git-agent config`
-
-```
-git-agent config show    # masked api-key, model, base-url; or "mode: FREE" if embedded key active
-git-agent config scopes  # list scopes from .git-agent/project.yml
-```
-
----
-
-## Project config (`.git-agent/project.yml`)
-
-Generated by `git-agent init`. Defines commit scopes and hook settings:
-
-```yaml
-scopes:
-  - api
-  - core
-  - auth
-  - infra
-hook_type: empty
-no_git_agent_co_author: false  # set true to omit "Co-Authored-By: Git Agent" trailer
-no_model_co_author: false      # set true to ignore all --co-author trailers
-```
-
----
-
-## Hooks
-
-`git-agent commit` reads `hook_type` from `.git-agent/project.yml`:
-
-| `hook_type` | Behavior |
-|---|---|
-| `empty` or unset | No validation; commit proceeds |
-| `conventional` | In-process Conventional Commits validation |
-| Absolute path to a script | Go validation first, then that executable |
-
-Custom hook scripts receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`); exit 0 to allow, non-zero to block. On block, `git-agent` retries generation up to 3 times per group and may re-plan the split up to 2 times before exiting with code 2.
-
----
-
-## Exit Codes
-
-| Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | General error — no changes, API failure, missing config |
-| 2 | Hook blocked after retries |
-
----
-
-## Commit Format
+## Commit format
 
 ```
 <type>(<scope>): <description>
 
 - <Action> <component> <detail>
 
-<explanation paragraph — explains the "why">
+<explanation paragraph>
 
 Co-Authored-By: Git Agent
 ```
 
-- Title: all lowercase, ≤50 chars, no period
-- Body lines: ≤72 chars, bullet points with `- ` prefix, imperative verbs
-- Explanation paragraph: required, explains motivation not just what changed
+- Title: lowercase, ≤50 chars, no period
+- Body lines: ≤72 chars, `- ` prefix, imperative verbs
+- Explanation paragraph: required
 
----
+## CLI reference
 
-## Suggested workflow
-
-When driving `git-agent commit` as an AI assistant:
-
-1. **Intent** — one short sentence from the conversation. Use the diff only if the conversation gives no usable signal.
-
-2. **Run** `git-agent commit --intent "..."` — no provider flags on the first attempt. If commit fails for missing key and there is no config, suggest creating `~/.config/git-agent/config.yml`. Use exception-flow flags only when that path is insufficient or the user explicitly needs a one-off override.
-
-   Add when relevant: `--dry-run` (preview), `--no-stage` (staged only), `--amend` (rewrite last commit).
-
-   If the hook keeps failing on the same rule (e.g. title > 50 chars), narrow `--intent` to a short phrase, e.g. `--intent "update module path"`.
+```
+git agent commit [flags]   # preferred form
+git-agent commit [flags]   # fallback if git subcommand form fails
+```

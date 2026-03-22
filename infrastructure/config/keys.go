@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+
 const (
 	ScopeUser    = "user"
 	ScopeProject = "project"
@@ -15,7 +16,7 @@ const (
 // KeyDef describes a config key's type and which scopes allow it.
 type KeyDef struct {
 	Name         string
-	Type         string // "string", "bool", "stringslice"
+	Type         string // "string", "bool", "stringslice", "int"
 	AllowUser    bool
 	AllowProject bool
 	AllowLocal   bool
@@ -27,7 +28,8 @@ var KeyRegistry = map[string]KeyDef{
 	"base_url":               {Name: "base_url", Type: "string", AllowUser: true},
 	"model":                  {Name: "model", Type: "string", AllowUser: true},
 	"scopes":                 {Name: "scopes", Type: "stringslice", AllowProject: true, AllowLocal: true},
-	"hook_type":              {Name: "hook_type", Type: "string", AllowProject: true, AllowLocal: true},
+	"hook":                   {Name: "hook", Type: "stringslice", AllowProject: true, AllowLocal: true},
+	"max_diff_lines":         {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
 	"no_git_agent_co_author": {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"no_model_co_author":     {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 }
@@ -82,6 +84,12 @@ func NormalizeValue(key, raw string) (string, error) {
 			return "", fmt.Errorf("invalid boolean value %q for %q: must be true or false", raw, key)
 		}
 		return strconv.FormatBool(b), nil
+	case "int":
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid integer value %q for %q", raw, key)
+		}
+		return strconv.Itoa(n), nil
 	case "stringslice":
 		parts := strings.Split(raw, ",")
 		var normalized []string

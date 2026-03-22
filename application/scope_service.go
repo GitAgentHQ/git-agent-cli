@@ -40,11 +40,29 @@ func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]string, 
 		return nil, fmt.Errorf("generating scopes: %w", err)
 	}
 
-	return scopes, nil
+	return filterConventionalTypes(scopes), nil
+}
+
+// conventionalTypes is the standard set of conventional commit types.
+// Scopes must not duplicate these names.
+var conventionalTypes = map[string]bool{
+	"build": true, "ci": true, "docs": true, "feat": true, "fix": true,
+	"perf": true, "refactor": true, "style": true, "test": true,
+	"chore": true, "revert": true,
+}
+
+func filterConventionalTypes(scopes []string) []string {
+	result := scopes[:0:0]
+	for _, s := range scopes {
+		if !conventionalTypes[strings.ToLower(s)] {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []string) error {
-	// Read full YAML map to preserve all existing keys (e.g., hook_type).
+	// Read full YAML map to preserve all existing keys (e.g., hook).
 	rawMap := readExistingYAMLMap(path)
 
 	var existingScopes []string

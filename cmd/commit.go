@@ -46,7 +46,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
-	maxDiffLines, _ := cmd.Flags().GetInt("max-diff-lines")
+	maxDiffLinesFlag, _ := cmd.Flags().GetInt("max-diff-lines")
+	maxDiffLinesFlagChanged := cmd.Flags().Changed("max-diff-lines")
 	if amend && noStage {
 		return fmt.Errorf("--amend and --no-stage are mutually exclusive")
 	}
@@ -120,6 +121,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	var logWriter io.Writer
 	if verbose {
 		logWriter = cmd.ErrOrStderr()
+	}
+
+	maxDiffLines := maxDiffLinesFlag
+	if !maxDiffLinesFlagChanged && projCfg != nil && projCfg.MaxDiffLines > 0 {
+		maxDiffLines = projCfg.MaxDiffLines
 	}
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{

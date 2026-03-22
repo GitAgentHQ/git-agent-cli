@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -86,6 +88,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("repo root: %w", err)
 		}
+		value, err = installHookScript(root, key, value, cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
 		path := infraConfig.ProjectConfigWritePath(root)
 		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
 			return fmt.Errorf("writing project config: %w", err)
@@ -98,6 +104,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("repo root: %w", err)
 		}
+		value, err = installHookScript(root, key, value, cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
 		path := infraConfig.LocalConfigPath(root)
 		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
 			return fmt.Errorf("writing local config: %w", err)
@@ -105,6 +115,36 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (local)\n", key, value)
 	}
 	return nil
+}
+
+// installHookScript handles hook values that are file paths: copies the
+// script to .git-agent/hooks/pre-commit and returns the resolved absolute path.
+// For built-in values ("conventional", "empty") the value is returned unchanged.
+func installHookScript(repoRoot, key, value string, out interface{ Write([]byte) (int, error) }) (string, error) {
+	if key != "hook" {
+		return value, nil
+	}
+	switch value {
+	case "conventional", "empty":
+		return value, nil
+	}
+	absPath, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("resolving hook path %q: %w", value, err)
+	}
+	data, err := os.ReadFile(value)
+	if err != nil {
+		return "", fmt.Errorf("reading hook file %q: %w", value, err)
+	}
+	dest := filepath.Join(repoRoot, ".git-agent", "hooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return "", fmt.Errorf("creating hooks dir: %w", err)
+	}
+	if err := os.WriteFile(dest, data, 0755); err != nil {
+		return "", fmt.Errorf("installing hook: %w", err)
+	}
+	fmt.Fprintf(out, "installed hook: %s\n", value)
+	return absPath, nil
 }
 
 func runConfigGet(cmd *cobra.Command, args []string) error {

@@ -40,7 +40,9 @@ func LocalConfigPath(repoRoot string) string {
 // rawProjectConfig is the YAML shape for project/local config files.
 type rawProjectConfig struct {
 	Scopes             []string `yaml:"scopes,omitempty"`
-	HookType           string   `yaml:"hook_type,omitempty"`
+	Hooks              []string `yaml:"hook,omitempty"`
+	HookTypeLegacy     string   `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
+	MaxDiffLines       *int     `yaml:"max_diff_lines,omitempty"`
 	NoGitAgentCoAuthor *bool    `yaml:"no_git_agent_co_author,omitempty"`
 	NoModelCoAuthor    *bool    `yaml:"no_model_co_author,omitempty"`
 }
@@ -55,6 +57,17 @@ func loadRawProjectConfig(path string) rawProjectConfig {
 	return raw
 }
 
+// migrateHooks returns the effective hooks slice, migrating legacy hook_type to hook array.
+func migrateHooks(raw rawProjectConfig) []string {
+	if len(raw.Hooks) > 0 {
+		return raw.Hooks
+	}
+	if raw.HookTypeLegacy != "" {
+		return []string{raw.HookTypeLegacy}
+	}
+	return nil
+}
+
 // LoadProjectConfig loads and merges local > project config into a domain Config.
 // Returns nil when no config files exist.
 func LoadProjectConfig(repoRoot string) *project.Config {
@@ -62,11 +75,18 @@ func LoadProjectConfig(repoRoot string) *project.Config {
 	local := loadRawProjectConfig(LocalConfigPath(repoRoot))
 
 	merged := proj
+	merged.Hooks = migrateHooks(proj)
+	merged.HookTypeLegacy = ""
+
 	if len(local.Scopes) > 0 {
 		merged.Scopes = local.Scopes
 	}
-	if local.HookType != "" {
-		merged.HookType = local.HookType
+	localHooks := migrateHooks(local)
+	if len(localHooks) > 0 {
+		merged.Hooks = localHooks
+	}
+	if local.MaxDiffLines != nil {
+		merged.MaxDiffLines = local.MaxDiffLines
 	}
 	if local.NoGitAgentCoAuthor != nil {
 		merged.NoGitAgentCoAuthor = local.NoGitAgentCoAuthor
@@ -75,14 +95,17 @@ func LoadProjectConfig(repoRoot string) *project.Config {
 		merged.NoModelCoAuthor = local.NoModelCoAuthor
 	}
 
-	if len(merged.Scopes) == 0 && merged.HookType == "" &&
+	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
 		merged.NoGitAgentCoAuthor == nil && merged.NoModelCoAuthor == nil {
 		return nil
 	}
 
 	cfg := &project.Config{
-		Scopes:   merged.Scopes,
-		HookType: merged.HookType,
+		Scopes: merged.Scopes,
+		Hooks:  merged.Hooks,
+	}
+	if merged.MaxDiffLines != nil {
+		cfg.MaxDiffLines = *merged.MaxDiffLines
 	}
 	if merged.NoGitAgentCoAuthor != nil {
 		cfg.NoGitAgentCoAuthor = *merged.NoGitAgentCoAuthor
@@ -105,6 +128,9 @@ func WriteProjectField(path, key, value string) error {
 	case "bool":
 		b, _ := strconv.ParseBool(value)
 		rawMap[key] = b
+	case "int":
+		n, _ := strconv.Atoi(value)
+		rawMap[key] = n
 	case "stringslice":
 		parts := strings.Split(value, ",")
 		var trimmed []string
@@ -155,6 +181,8 @@ func yamlValueToString(v any) string {
 	switch val := v.(type) {
 	case bool:
 		return strconv.FormatBool(val)
+	case int:
+		return strconv.Itoa(val)
 	case []any:
 		var parts []string
 		for _, item := range val {
