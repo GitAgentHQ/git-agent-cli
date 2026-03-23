@@ -39,14 +39,43 @@ func isReasoningModel(model string) bool {
 	return false
 }
 
-// extractJSON finds the first {...} block in s, handling models that wrap JSON in prose.
 func extractJSON(s string) string {
-	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start == -1 || end == -1 || end < start {
-		return s
+	for _, pair := range [][2]byte{{'{', '}'}, {'[', ']'}} {
+		start := strings.Index(s, string(pair[0:1]))
+		if start == -1 {
+			continue
+		}
+		depth := 0
+		inString := false
+		escaped := false
+		for i := start; i < len(s); i++ {
+			if escaped {
+				escaped = false
+				continue
+			}
+			ch := s[i]
+			if ch == '\\' && inString {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = !inString
+				continue
+			}
+			if inString {
+				continue
+			}
+			if ch == pair[0] {
+				depth++
+			} else if ch == pair[1] {
+				depth--
+				if depth == 0 {
+					return s[start : i+1]
+				}
+			}
+		}
 	}
-	return s[start : end+1]
+	return s
 }
 
 // AllSystemPrompts returns every static system prompt sent by this client.
@@ -130,6 +159,45 @@ Rules (STRICTLY enforce):
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scopes lowercase`
 
+// callLLM sends a chat completion request with retry logic for transient failures and empty responses.
+func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int) (string, error) {
+	const maxAttempts = 3
+
+	msgs := []goopenai.ChatCompletionMessage{
+		{Role: goopenai.ChatMessageRoleSystem, Content: system},
+		{Role: goopenai.ChatMessageRoleUser, Content: user},
+	}
+
+	req := goopenai.ChatCompletionRequest{
+		Model:               c.model,
+		Messages:            msgs,
+		MaxCompletionTokens: maxTokens,
+	}
+
+	if isReasoningModel(c.model) {
+		req.ReasoningEffort = "low"
+	} else {
+		req.Temperature = 0
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := c.inner.CreateChatCompletion(ctx, req)
+		if err != nil {
+			lastErr = fmt.Errorf("openai chat completion: %w", err)
+			continue
+		}
+
+		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			lastErr = fmt.Errorf("LLM returned empty response (model=%s, attempt=%d/%d)", c.model, attempt+1, maxAttempts)
+			continue
+		}
+
+		return resp.Choices[0].Message.Content, nil
+	}
+	return "", lastErr
+}
+
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	var systemPrompt, userPrompt string
 
@@ -168,48 +236,20 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		chatReq := goopenai.ChatCompletionRequest{
-			Model: c.model,
-			Messages: []goopenai.ChatCompletionMessage{
-				{
-					Role:    goopenai.ChatMessageRoleSystem,
-					Content: systemPrompt,
-				},
-				{
-					Role:    goopenai.ChatMessageRoleUser,
-					Content: userPrompt,
-				},
-			},
-			MaxCompletionTokens: 4096,
-		}
-		if !isReasoningModel(c.model) {
-			chatReq.Temperature = 0
-		} else {
-			chatReq.ReasoningEffort = "low"
-		}
-		resp, err := c.inner.CreateChatCompletion(ctx, chatReq)
+		raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 4096)
 		if err != nil {
-			return nil, fmt.Errorf("openai chat completion: %w", err)
+			return nil, err
 		}
 
-		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-			return nil, fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
-				len(resp.Choices), func() string {
-					if len(resp.Choices) > 0 {
-						return string(resp.Choices[0].FinishReason)
-					}
-					return "n/a"
-				}())
-		}
-
-		raw := extractJSON(resp.Choices[0].Message.Content)
+		cleaned := extractJSON(raw)
 		var result struct {
 			Title       string   `json:"title"`
 			Bullets     []string `json:"bullets"`
 			Explanation string   `json:"explanation"`
 		}
-		if err := json.Unmarshal([]byte(raw), &result); err != nil {
-			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+		if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+			_ = attempt // retry with same prompts
 			continue
 		}
 
@@ -251,35 +291,12 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
-	planReq := goopenai.ChatCompletionRequest{
-		Model: c.model,
-		Messages: []goopenai.ChatCompletionMessage{
-			{
-				Role:    goopenai.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-			{
-				Role:    goopenai.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		MaxCompletionTokens: 8192,
-	}
-	if !isReasoningModel(c.model) {
-		planReq.Temperature = 0
-	} else {
-		planReq.ReasoningEffort = "low"
-	}
-	resp, err := c.inner.CreateChatCompletion(ctx, planReq)
+	raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 8192)
 	if err != nil {
-		return nil, fmt.Errorf("openai chat completion: %w", err)
+		return nil, err
 	}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("LLM returned empty response")
-	}
-
-	raw := extractJSON(resp.Choices[0].Message.Content)
+	cleaned := extractJSON(raw)
 	var result struct {
 		Groups []struct {
 			Files       []string `json:"files"`
@@ -288,8 +305,8 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 			Explanation string   `json:"explanation"`
 		} `json:"groups"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
 	}
 
 	plan := &commit.CommitPlan{}
@@ -313,40 +330,17 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 		strings.Join(req.Files, "\n"),
 	)
 
-	detectReq := goopenai.ChatCompletionRequest{
-		Model: c.model,
-		Messages: []goopenai.ChatCompletionMessage{
-			{
-				Role:    goopenai.ChatMessageRoleSystem,
-				Content: detectTechSystemPrompt,
-			},
-			{
-				Role:    goopenai.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		MaxCompletionTokens: 1024,
-	}
-	if !isReasoningModel(c.model) {
-		detectReq.Temperature = 0
-	} else {
-		detectReq.ReasoningEffort = "low"
-	}
-	resp, err := c.inner.CreateChatCompletion(ctx, detectReq)
+	raw, err := c.callLLM(ctx, detectTechSystemPrompt, userPrompt, 1024)
 	if err != nil {
-		return nil, fmt.Errorf("openai chat completion: %w", err)
+		return nil, err
 	}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("LLM returned empty response")
-	}
-
-	raw := extractJSON(resp.Choices[0].Message.Content)
+	cleaned := extractJSON(raw)
 	var result struct {
 		Technologies []string `json:"technologies"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, raw)
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
 	}
 
 	return result.Technologies, nil
@@ -359,46 +353,17 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		strings.Join(files, "\n"),
 	)
 
-	scopesReq := goopenai.ChatCompletionRequest{
-		Model: c.model,
-		Messages: []goopenai.ChatCompletionMessage{
-			{
-				Role:    goopenai.ChatMessageRoleSystem,
-				Content: generateScopesSystemPrompt,
-			},
-			{
-				Role:    goopenai.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		MaxCompletionTokens: 8192,
-	}
-	if !isReasoningModel(c.model) {
-		scopesReq.Temperature = 0
-	} else {
-		scopesReq.ReasoningEffort = "low"
-	}
-	resp, err := c.inner.CreateChatCompletion(ctx, scopesReq)
+	raw, err := c.callLLM(ctx, generateScopesSystemPrompt, userPrompt, 8192)
 	if err != nil {
-		return nil, "", fmt.Errorf("openai chat completion: %w", err)
+		return nil, "", err
 	}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return nil, "", fmt.Errorf("LLM returned empty response (choices=%d, finish_reason=%s)",
-			len(resp.Choices), func() string {
-				if len(resp.Choices) > 0 {
-					return string(resp.Choices[0].FinishReason)
-				}
-				return "n/a"
-			}())
-	}
-
-	raw := extractJSON(resp.Choices[0].Message.Content)
+	cleaned := extractJSON(raw)
 	var result struct {
 		Scopes    []string `json:"scopes"`
 		Reasoning string   `json:"reasoning"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, "", fmt.Errorf("parse response json: %w", err)
 	}
 
