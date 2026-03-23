@@ -160,7 +160,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 func init() {
 	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")

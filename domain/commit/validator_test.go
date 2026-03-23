@@ -13,10 +13,10 @@ func validMsg() string {
 
 func TestValidateConventional(t *testing.T) {
 	cases := []struct {
-		name        string
-		msg         string
-		wantErrors  bool
-		errContains string
+		name         string
+		msg          string
+		wantErrors   bool
+		errContains  string
 		warnContains string
 	}{
 		// --- passing ---

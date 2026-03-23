@@ -117,4 +117,3 @@ func TestInitService_NotGitRepo(t *testing.T) {
 		t.Fatal("expected error when not in a git repo")
 	}
 }
-

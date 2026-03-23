@@ -309,8 +309,8 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{}, Content: "", Lines: 0},                         // preStagedDiff (nothing pre-staged)
-			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2},      // fullStagedDiff after AddAll
+			{Files: []string{}, Content: "", Lines: 0},                   // preStagedDiff (nothing pre-staged)
+			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // fullStagedDiff after AddAll
 		},
 		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // per-group fallback
 	}
@@ -502,7 +502,8 @@ func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
 	}
 }
 
-func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {	gen := &mockCommitGenerator{msg: defaultMsg()}
+func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
 	nonEmpty := &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}
 	empty := &diff.StagedDiff{}
 

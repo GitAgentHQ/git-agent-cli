@@ -41,7 +41,7 @@ func TestGitUnquote(t *testing.T) {
 			want:  "line1\nline2",
 		},
 		{
-			name:  "octal UTF-8 sequence",
+			name: "octal UTF-8 sequence",
 			// \303\251 is the UTF-8 encoding of é
 			input: `"\303\251"`,
 			want:  "é",

@@ -27,4 +27,6 @@ To run a single test by name:
 go test ./application/... -run TestCommitService_NoStagedChanges
 ```
 
+If an e2e test fails, read the failing test file in `e2e/` to understand the setup and assertions before investigating the source code.
+
 Report back with the test output, highlighting any failures and their likely cause.

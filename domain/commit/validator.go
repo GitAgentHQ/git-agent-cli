@@ -10,7 +10,7 @@ import (
 type Severity int
 
 const (
-	SeverityError   Severity = iota
+	SeverityError Severity = iota
 	SeverityWarning
 )
 
@@ -58,10 +58,10 @@ func (r *ValidationResult) Warnings() []string {
 }
 
 var (
-	headerRe  = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
+	headerRe   = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
 	coAuthorRe = regexp.MustCompile(`^Co-Authored-By: .+ <[^>]+@[^>]+>$`)
-	footerRe  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): `)
-	pastVerbs = []string{
+	footerRe   = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): `)
+	pastVerbs  = []string{
 		"added", "removed", "updated", "changed", "fixed", "created", "deleted",
 		"modified", "implemented", "refactored", "renamed", "moved", "replaced",
 		"improved", "enhanced", "upgraded", "downgraded", "reverted", "resolved",

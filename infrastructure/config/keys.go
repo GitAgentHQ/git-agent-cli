@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-
 const (
 	ScopeUser    = "user"
 	ScopeProject = "project"

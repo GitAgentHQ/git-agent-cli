@@ -10,7 +10,6 @@ import (
 	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
-
 const (
 	autoGenStart  = "### git-agent auto-generated — DO NOT EDIT this block ###"
 	autoGenEnd    = "### end git-agent ###"
