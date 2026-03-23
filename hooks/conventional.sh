@@ -1,19 +1,19 @@
 #!/bin/sh
 # conventional commit hook - validates commit message format
-# receives JSON payload on stdin: {"commit_message": "...", ...}
+# receives JSON payload on stdin: {"commitMessage": "...", ...}
 
-# --- extract commit_message from JSON payload ---
+# --- extract commitMessage from JSON payload ---
 if command -v python3 >/dev/null 2>&1; then
-  MSG=$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("commit_message",""))')
+  MSG=$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("commitMessage",""))')
 elif command -v jq >/dev/null 2>&1; then
-  MSG=$(jq -r '.commit_message')
+  MSG=$(jq -r '.commitMessage')
 else
   echo "git-agent: pre-commit hook requires python3 or jq" >&2
   exit 1
 fi
 
 if [ -z "$MSG" ]; then
-  echo "git-agent: failed to extract commit_message from payload" >&2
+  echo "git-agent: failed to extract commitMessage from payload" >&2
   exit 1
 fi
 

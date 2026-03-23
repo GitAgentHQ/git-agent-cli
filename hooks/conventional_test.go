@@ -20,10 +20,10 @@ func TestConventionalHook(t *testing.T) {
 	}
 
 	type payload struct {
-		CommitMessage string   `json:"commit_message"`
+		CommitMessage string   `json:"commitMessage"`
 		Diff          string   `json:"diff"`
 		Intent        string   `json:"intent"`
-		StagedFiles   []string `json:"staged_files"`
+		StagedFiles   []string `json:"stagedFiles"`
 		Config        struct {
 			Scopes []string `json:"scopes"`
 		} `json:"config"`
