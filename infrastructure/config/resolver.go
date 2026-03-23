@@ -19,20 +19,20 @@ var (
 )
 
 type ProviderConfig struct {
-	APIKey        string
-	BaseURL       string
-	Model         string
-	FreeMode      bool // When true, use only build-time proxy credentials; all user config sources are ignored
+	APIKey             string
+	BaseURL            string
+	Model              string
+	FreeMode           bool // When true, use only build-time proxy credentials; all user config sources are ignored
 	NoGitAgentCoAuthor bool // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor         bool // When true, ignore all --co-author trailers
+	NoModelCoAuthor    bool // When true, ignore all --co-author trailers
 }
 
 type fileConfig struct {
-	APIKey        string `yaml:"api_key"`
-	BaseURL       string `yaml:"base_url"`
-	Model         string `yaml:"model"`
-	NoGitAgentCoAuthor bool `yaml:"no_git_agent_co_author"`
-	NoModelCoAuthor         bool `yaml:"no_model_co_author"`
+	APIKey             string `yaml:"api_key"`
+	BaseURL            string `yaml:"base_url"`
+	Model              string `yaml:"model"`
+	NoGitAgentCoAuthor bool   `yaml:"no_git_agent_co_author"`
+	NoModelCoAuthor    bool   `yaml:"no_model_co_author"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -61,8 +61,9 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 			return nil, err
 		}
 		if err == nil {
-			// Silently ignore parse errors — treat as empty config.
-			_ = yaml.Unmarshal(data, &file)
+			if err := yaml.Unmarshal(data, &file); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to parse config %s: %v\n", configPath, err)
+			}
 			file.APIKey = os.ExpandEnv(file.APIKey)
 			file.BaseURL = os.ExpandEnv(file.BaseURL)
 			file.Model = os.ExpandEnv(file.Model)
