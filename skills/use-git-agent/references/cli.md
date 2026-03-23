@@ -60,11 +60,19 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `1` | General error (no API key, git error, etc.) |
 | `2` | Commit blocked by hook after retries |
 
+### Multi-commit splitting
+
+The AI planner can split staged changes into multiple atomic commits (max 5 commit groups per run). For each group, git-agent unstages all files, re-stages only the group's files, generates a message, and commits.
+
 ### Hook retry logic
 
 - 3 retries per commit group
 - 2 re-plans maximum if retries are exhausted
 - After all retries and re-plans fail: exits with code `2`
+
+### Auto-scope
+
+If no scopes are configured (project config is nil or has empty scopes), git-agent automatically generates scopes from git history before planning. If any planned commit group lacks a scope, scopes are refreshed once and the plan is regenerated.
 
 ---
 
@@ -103,9 +111,21 @@ With no flags, runs the full setup wizard:
 | `empty` | No-op; always passes |
 | `<file path>` | Go validation + shell script at that path |
 
-Shell hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`). Exit 0 = allow, non-zero = block.
+Shell hooks receive a JSON payload on stdin with the following fields:
 
-To reconfigure hooks after init: `git-agent config set hook <value>`
+```json
+{
+  "diff": "...",
+  "commitMessage": "feat(cli): add feature\n\n- Detail one\n- Detail two\n\nExplanation.",
+  "intent": "add new feature",
+  "stagedFiles": ["cmd/feature.go", "cmd/feature_test.go"],
+  "config": { "scopes": ["cli"], "hooks": ["conventional"], "maxDiffLines": 0, "noGitAgentCoAuthor": false, "noModelCoAuthor": false }
+}
+```
+
+Exit 0 = allow, non-zero = block.
+
+To reconfigure hooks after init: `git-agent config set hook <value>` (when setting a file path, the script is copied to `.git-agent/hooks/pre-commit` automatically)
 
 ---
 
@@ -184,6 +204,51 @@ git-agent config get <key> [flags]
 
 Show the resolved value of a configuration key and its source scope. Accepts both snake_case and kebab-case keys.
 
+Resolution order for non-provider keys: local > project > user. Provider-only keys (api_key, base_url, model) resolve from user scope only.
+
+---
+
+## git-agent completion
+
+```
+git-agent completion [bash|zsh|fish|powershell]
+```
+
+Generate shell completion scripts for git-agent.
+
+### Loading completions
+
+**Bash:**
+```bash
+source <(git-agent completion bash)
+# Persist (Linux):
+git-agent completion bash > /etc/bash_completion.d/git-agent
+# Persist (macOS):
+git-agent completion bash > $(brew --prefix)/etc/bash_completion.d/git-agent
+```
+
+**Zsh:**
+```bash
+# Enable completion if not already:
+echo "autoload -U compinit; compinit" >> ~/.zshrc
+# Install:
+git-agent completion zsh > "${fpath[1]}/_git-agent"
+```
+
+**Fish:**
+```bash
+git-agent completion fish | source
+# Persist:
+git-agent completion fish > ~/.config/fish/completions/git-agent.fish
+```
+
+**PowerShell:**
+```powershell
+git-agent completion powershell | Out-String | Invoke-Expression
+# Persist:
+git-agent completion powershell >> $PROFILE
+```
+
 ---
 
 ## git-agent version
@@ -193,3 +258,21 @@ git-agent version
 ```
 
 Print the build version (injected via ldflags; defaults to `dev` in local builds).
+
+---
+
+## Defaults and legacy notes
+
+### Hardcoded defaults
+
+When no provider config is found at any level, git-agent falls back to:
+
+| Key | Default |
+|-----|---------|
+| `base_url` | `https://api.anthropic.com/v1` |
+| `model` | `claude-3-5-haiku-20241022` |
+
+### Legacy config migration
+
+- **Project config filename**: `.git-agent/project.yml` is still read for backward compatibility but `.git-agent/config.yml` is the canonical write path. When both exist, `config.yml` takes priority.
+- **`hook_type` key**: The old single-string `hook_type` key is automatically migrated to the `hook` array on load. New configs should use `hook`.

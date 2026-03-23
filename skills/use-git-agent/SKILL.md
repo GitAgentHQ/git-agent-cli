@@ -38,8 +38,20 @@ When this skill is loaded, **immediately** run `git-agent commit`. Do not ask th
 | `--no-stage` | User has already staged specific files and doesn't want auto-staging |
 | `--amend` | User wants to rewrite the most recent commit message |
 | `--intent "..."` | Always set — keeps generated messages focused |
+| `--co-author "Name <email>"` | Attribute a co-author (repeatable); skipped if `no_model_co_author` is set in config |
+| `--trailer "Key: Value"` | Add an arbitrary git trailer (repeatable) |
+| `--no-attribution` | Omit the default `Co-Authored-By: Git Agent` trailer |
+| `--max-diff-lines N` | Cap diff size sent to the model (0 = no limit) |
 
 `--amend` and `--no-stage` are mutually exclusive.
+
+## Multi-commit splitting
+
+git-agent automatically splits staged changes into multiple atomic commits (up to 5 groups) when the AI planner detects logically distinct changes. Each group is staged, committed, and hook-validated separately. No user action is needed — this is the default behavior.
+
+## Auto-scope
+
+If no scopes are configured for the project, git-agent generates scopes from git history automatically before planning. To trigger scope generation manually: `git-agent init --scope`.
 
 ## Hook failures
 
@@ -68,6 +80,18 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 - Bullets: uppercase first letter, imperative mood, ≤72 chars per bullet; LLM generates as a JSON array — trailers never enter LLM context
 - Explanation: required, sentence case; lines >100 chars are wrapped to ~72 chars
 - Terminal output shows only the explanation paragraph (bullets appear in the git commit body but not in the CLI output)
+
+## Other commands
+
+| Command | What it does |
+|---|---|
+| `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
+| `git-agent init --scope` | Regenerate scopes only |
+| `git-agent config show` | Show resolved provider configuration |
+| `git-agent config set <key> <value>` | Set a config value (auto-selects scope) |
+| `git-agent config get <key>` | Show a config value and its source scope |
+| `git-agent completion <shell>` | Generate shell completions (bash/zsh/fish/powershell) |
+| `git-agent version` | Print build version |
 
 ## CLI reference
 
