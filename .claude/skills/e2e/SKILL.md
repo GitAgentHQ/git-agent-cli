@@ -6,7 +6,7 @@ description: Run only the end-to-end tests (builds the binary via TestMain, then
 Run the e2e test suite:
 
 ```bash
-cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli && go test -count=1 ./e2e/...
+go test -count=1 ./e2e/...
 ```
 
 `TestMain` in `e2e/` rebuilds the `git-agent` binary before tests run, so a stale binary is not a concern here.
