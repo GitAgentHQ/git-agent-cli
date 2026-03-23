@@ -107,7 +107,7 @@ func TestExecute_HookNotExecutable(t *testing.T) {
 func TestExecute_JSONPayloadStructure(t *testing.T) {
 	script := writeTempScript(t, `#!/bin/sh
 input=$(cat)
-for field in diff commit_message intent staged_files config; do
+for field in diff commitMessage intent stagedFiles config; do
   echo "$input" | grep -q "\"$field\"" || { echo "missing field: $field" >&2; exit 2; }
 done
 exit 0
@@ -135,7 +135,7 @@ exit 0
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatalf("unmarshal input: %v", err)
 	}
-	for _, key := range []string{"diff", "commit_message", "intent", "staged_files", "config"} {
+	for _, key := range []string{"diff", "commitMessage", "intent", "stagedFiles", "config"} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("JSON payload missing key %q", key)
 		}
