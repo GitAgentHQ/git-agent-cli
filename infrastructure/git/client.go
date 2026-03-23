@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gitagenthq/git-agent/domain/commit"
 	"github.com/gitagenthq/git-agent/domain/diff"
@@ -20,14 +21,26 @@ func NewClient() *Client {
 }
 
 func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--ignore-submodules=all").Output()
-	if err != nil {
-		return nil, err
-	}
+	var contentOut, namesOut []byte
+	var contentErr, namesErr error
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
-	if err != nil {
-		return nil, err
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		contentOut, contentErr = exec.CommandContext(ctx, "git", "diff", "--staged", "--ignore-submodules=all").Output()
+	}()
+	go func() {
+		defer wg.Done()
+		namesOut, namesErr = exec.CommandContext(ctx, "git", "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
+	}()
+	wg.Wait()
+
+	if contentErr != nil {
+		return nil, contentErr
+	}
+	if namesErr != nil {
+		return nil, namesErr
 	}
 
 	content := string(contentOut)
@@ -175,14 +188,26 @@ func (c *Client) GitDir(ctx context.Context) (string, error) {
 }
 
 func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff", "--ignore-submodules=all").Output()
-	if err != nil {
-		return nil, err
-	}
+	var contentOut, namesOut []byte
+	var contentErr, namesErr error
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "--name-status", "--ignore-submodules=all").Output()
-	if err != nil {
-		return nil, err
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		contentOut, contentErr = exec.CommandContext(ctx, "git", "diff", "--ignore-submodules=all").Output()
+	}()
+	go func() {
+		defer wg.Done()
+		namesOut, namesErr = exec.CommandContext(ctx, "git", "diff", "--name-status", "--ignore-submodules=all").Output()
+	}()
+	wg.Wait()
+
+	if contentErr != nil {
+		return nil, contentErr
+	}
+	if namesErr != nil {
+		return nil, namesErr
 	}
 
 	content := string(contentOut)
@@ -212,6 +237,9 @@ func (c *Client) StageFiles(ctx context.Context, files []string) error {
 	}
 	if staged == 0 {
 		return fmt.Errorf("no files could be staged: %w", lastErr)
+	}
+	if staged < len(files) {
+		return fmt.Errorf("partial staging: %d/%d files staged, last error: %w", staged, len(files), lastErr)
 	}
 	return nil
 }
