@@ -115,6 +115,7 @@ jobs:
 
             def install
               bin.install "git-agent"
+              generate_completions_from_executable(bin/"git-agent", "completion")
             end
 
             test do
