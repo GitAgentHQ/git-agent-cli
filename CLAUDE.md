@@ -42,7 +42,7 @@ cmd → application → domain ← infrastructure
 
 ## Key Design Decisions
 
-**Hook dispatch**: driven by `hook_type` in `project.yml`. `""` or `"empty"` → skip validation entirely. `"conventional"` → Go-native `ValidateConventional` only (not the `conventional.sh` shell script). Any other value → Go validation first, then treat as a file path and run via shell. Shell hooks receive a JSON payload on stdin; exit 0 = allow, non-zero = block. After 3 retries, `git-agent` exits with code 2.
+**Hook dispatch**: driven by `hook` in `.git-agent/config.yml` (legacy `hook_type` in `project.yml` is auto-migrated). `""` or `"empty"` → skip validation entirely. `"conventional"` → Go-native `ValidateConventional` only (not the `conventional.sh` shell script). Any other value → Go validation first, then treat as a file path and run via shell. Shell hooks receive a JSON payload on stdin; exit 0 = allow, non-zero = block. After 3 retries, `git-agent` exits with code 2.
 
 **Multi-commit flow**: for each planned `CommitGroup`, `CommitService` calls `git.UnstageAll()` then `git.StageFiles(group.Files)` before generating and committing. Hook failures after 3 retries trigger a re-plan of remaining files (capped at 2 re-plans). If any group title lacks a scope, scopes are refreshed and the plan is regenerated once.
 
@@ -50,7 +50,7 @@ cmd → application → domain ← infrastructure
 
 **Auto-scope**: if `CommitRequest.Config` is nil or has no scopes, `CommitService` calls `ScopeService.Generate()` and `MergeAndSave()` automatically before planning. Pass `Config: &project.Config{}` (non-nil, empty) to suppress this.
 
-**Config precedence**: CLI flag > `~/.config/git-agent/config.yml` > zero-config default. Project config (`.git-agent/project.yml`) provides scopes only — credentials never go there.
+**Config precedence**: CLI flag > `~/.config/git-agent/config.yml` > zero-config default. Project config (`.git-agent/config.yml`) provides scopes, hooks, and behavior flags — credentials never go there. Local overrides in `.git-agent/config.local.yml` take precedence over project config.
 
 **Trailer handling**: trailers are assembled in `cmd/commit.go` and appended via `git interpret-trailers` before each `git.Commit()`. On hook retry, `previousMessage = preTrailer` (title + body without trailers) so trailers never enter LLM context.
 

@@ -149,7 +149,7 @@ Configured via `--hook` during `init` or updated later with `git-agent config se
 | `empty` | Placeholder that always passes |
 | `<file path>` | Go validation + shell script at that path |
 
-Custom hooks receive a JSON payload on stdin (`diff`, `commit_message`, `intent`, `staged_files`, `config`) and should exit 0 to allow or non-zero to block. On block, `git-agent` retries up to 3 times before exiting with code 2.
+Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`, `stagedFiles`, `config`) and should exit 0 to allow or non-zero to block. On block, `git-agent` retries up to 3 times before exiting with code 2.
 
 ## Flags
 

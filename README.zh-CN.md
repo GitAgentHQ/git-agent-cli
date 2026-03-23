@@ -149,7 +149,7 @@ hook: conventional
 | `empty` | 始终通过的占位钩子 |
 | `<文件路径>` | Go 验证 + 指定路径的 shell 脚本 |
 
-自定义钩子通过 stdin 接收 JSON 载荷（`diff`、`commit_message`、`intent`、`staged_files`、`config`），退出 0 表示允许，非 0 表示阻止。阻止时，`git-agent` 最多重试 3 次，之后以退出码 2 结束。
+自定义钩子通过 stdin 接收 JSON 载荷（`diff`、`commitMessage`、`intent`、`stagedFiles`、`config`），退出 0 表示允许，非 0 表示阻止。阻止时，`git-agent` 最多重试 3 次，之后以退出码 2 结束。
 
 ## 参数
 
