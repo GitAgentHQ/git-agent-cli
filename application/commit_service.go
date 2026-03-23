@@ -75,7 +75,7 @@ type CommitService struct {
 	planner   commit.CommitPlanner
 	git       CommitGitClient
 	hookExec  hook.HookExecutor
-	scopeSvc  *ScopeService  // nil = no auto-scope
+	scopeSvc  *ScopeService      // nil = no auto-scope
 	filter    diff.DiffFilter    // nil = no filtering
 	truncator diff.DiffTruncator // nil = no truncation
 }
@@ -188,10 +188,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			}
 		}
 		if len(unstaged.Files) > 0 {
-			unstaged, err = s.filter.Filter(ctx, unstaged)
+			filtered, err := s.filter.Filter(ctx, unstaged)
 			if err != nil {
-				s.vlog(req, "filter unstaged diff (ignoring): %v", err)
-				unstaged = &diff.StagedDiff{}
+				s.vlog(req, "filter unstaged diff (using unfiltered): %v", err)
+			} else {
+				unstaged = filtered
 			}
 		}
 	}
@@ -241,7 +242,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				if configPath == "" {
 					configPath = ".git-agent/project.yml"
 				}
-				_ = s.scopeSvc.MergeAndSave(ctx, configPath, scopes)
+				if err := s.scopeSvc.MergeAndSave(ctx, configPath, scopes); err != nil {
+					s.vlog(req, "save scopes (non-fatal): %v", err)
+				}
 				req.Config = &project.Config{Scopes: scopes}
 				s.vlog(req, "scopes: %v", scopes)
 			}
@@ -292,7 +295,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				if configPath == "" {
 					configPath = ".git-agent/project.yml"
 				}
-				_ = s.scopeSvc.MergeAndSave(ctx, configPath, newScopes)
+				if err := s.scopeSvc.MergeAndSave(ctx, configPath, newScopes); err != nil {
+					s.vlog(req, "save scopes (non-fatal): %v", err)
+				}
 				req.Config = &project.Config{Scopes: newScopes}
 				s.vlog(req, "updated scopes: %v — re-planning...", newScopes)
 				plan, err = s.planner.Plan(ctx, commit.PlanRequest{
