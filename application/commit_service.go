@@ -246,7 +246,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
 				req.Config = &project.Config{Scopes: scopes}
-				s.vlog(req, "scopes: %v", scopes)
+				s.vlog(req, "scopes: %v", req.Config.ScopeNames())
 			}
 		}
 	}
@@ -299,7 +299,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
 				req.Config = &project.Config{Scopes: newScopes}
-				s.vlog(req, "updated scopes: %v — re-planning...", newScopes)
+				s.vlog(req, "updated scopes: %v — re-planning...", req.Config.ScopeNames())
 				plan, err = s.planner.Plan(ctx, commit.PlanRequest{
 					StagedDiff:   staged,
 					UnstagedDiff: unstaged,

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 type ScopeService struct {
@@ -19,7 +21,7 @@ func NewScopeService(llm LLMClient, git GitReader) *ScopeService {
 	return &ScopeService{llm: llm, git: git}
 }
 
-func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]string, error) {
+func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]project.Scope, error) {
 	commits, err := s.git.CommitLog(ctx, maxCommits)
 	if err != nil {
 		return nil, fmt.Errorf("reading commit log: %w", err)
@@ -51,32 +53,23 @@ var conventionalTypes = map[string]bool{
 	"chore": true, "revert": true,
 }
 
-func filterConventionalTypes(scopes []string) []string {
+func filterConventionalTypes(scopes []project.Scope) []project.Scope {
 	result := scopes[:0:0]
 	for _, s := range scopes {
-		if !conventionalTypes[strings.ToLower(s)] {
+		if !conventionalTypes[strings.ToLower(s.Name)] {
 			result = append(result, s)
 		}
 	}
 	return result
 }
 
-func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []string) error {
+func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []project.Scope) error {
 	// Read full YAML map to preserve all existing keys (e.g., hook).
 	rawMap := readExistingYAMLMap(path)
 
-	var existingScopes []string
+	var existingScopes []project.Scope
 	if v, ok := rawMap["scopes"]; ok {
-		switch sv := v.(type) {
-		case []interface{}:
-			for _, item := range sv {
-				if str, ok := item.(string); ok {
-					existingScopes = append(existingScopes, str)
-				}
-			}
-		case []string:
-			existingScopes = sv
-		}
+		existingScopes = parseScopesFromYAML(v)
 	}
 
 	rawMap["scopes"] = mergeScopes(existingScopes, newScopes)
@@ -93,6 +86,33 @@ func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes 
 	return os.WriteFile(path, data, 0644)
 }
 
+// parseScopesFromYAML handles both legacy string format and new structured format.
+func parseScopesFromYAML(v any) []project.Scope {
+	switch sv := v.(type) {
+	case []interface{}:
+		var scopes []project.Scope
+		for _, item := range sv {
+			switch val := item.(type) {
+			case string:
+				scopes = append(scopes, project.Scope{Name: val})
+			case map[string]interface{}:
+				s := project.Scope{}
+				if name, ok := val["name"].(string); ok {
+					s.Name = name
+				}
+				if desc, ok := val["description"].(string); ok {
+					s.Description = desc
+				}
+				if s.Name != "" {
+					scopes = append(scopes, s)
+				}
+			}
+		}
+		return scopes
+	}
+	return nil
+}
+
 func readExistingYAMLMap(path string) map[string]any {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -105,17 +125,23 @@ func readExistingYAMLMap(path string) map[string]any {
 	return m
 }
 
-func mergeScopes(existing, newScopes []string) []string {
-	seen := make(map[string]bool, len(existing))
-	for _, s := range existing {
-		seen[strings.ToLower(s)] = true
+func mergeScopes(existing, newScopes []project.Scope) []project.Scope {
+	seen := make(map[string]int, len(existing))
+	for i, s := range existing {
+		seen[strings.ToLower(s.Name)] = i
 	}
-	result := make([]string, len(existing))
+	result := make([]project.Scope, len(existing))
 	copy(result, existing)
 	for _, s := range newScopes {
-		if !seen[strings.ToLower(s)] {
+		key := strings.ToLower(s.Name)
+		if idx, ok := seen[key]; ok {
+			// Update description if the existing one is empty and the new one has one.
+			if result[idx].Description == "" && s.Description != "" {
+				result[idx].Description = s.Description
+			}
+		} else {
 			result = append(result, s)
-			seen[strings.ToLower(s)] = true
+			seen[key] = len(result) - 1
 		}
 	}
 	return result

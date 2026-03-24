@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 func TestScopeService_Generate(t *testing.T) {
-	llm := &mockLLMClient{scopes: []string{"cmd", "app"}, reasoning: "top dirs"}
+	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cmd", Description: "CLI commands"}, {Name: "app", Description: "business logic"}}, reasoning: "top dirs"}
 	git := &mockGitReader{
 		commits:   []string{"feat: init"},
 		dirs:      []string{"cmd", "application"},
@@ -26,6 +27,9 @@ func TestScopeService_Generate(t *testing.T) {
 	}
 	if len(scopes) != 2 {
 		t.Errorf("expected 2 scopes, got %d: %v", len(scopes), scopes)
+	}
+	if scopes[0].Description != "CLI commands" {
+		t.Errorf("expected description preserved, got %q", scopes[0].Description)
 	}
 }
 
@@ -45,7 +49,7 @@ func TestScopeService_MergeAndSave_CreatesFile(t *testing.T) {
 	path := filepath.Join(dir, "project.yml")
 
 	svc := application.NewScopeService(nil, nil)
-	if err := svc.MergeAndSave(context.Background(), path, []string{"cmd", "app"}); err != nil {
+	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -60,11 +64,11 @@ func TestScopeService_MergeAndSave_DeduplicatesScopes(t *testing.T) {
 
 	svc := application.NewScopeService(nil, nil)
 
-	if err := svc.MergeAndSave(context.Background(), path, []string{"cmd", "app"}); err != nil {
+	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error on first write: %v", err)
 	}
 	// "app" is duplicate, "infra" is new
-	if err := svc.MergeAndSave(context.Background(), path, []string{"app", "infra"}); err != nil {
+	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "app"}, {Name: "infra"}}); err != nil {
 		t.Fatalf("unexpected error on second write: %v", err)
 	}
 
@@ -91,10 +95,10 @@ func TestScopeService_MergeAndSave_CaseInsensitiveDedupe(t *testing.T) {
 
 	svc := application.NewScopeService(nil, nil)
 
-	if err := svc.MergeAndSave(context.Background(), path, []string{"CMD"}); err != nil {
+	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "CMD"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := svc.MergeAndSave(context.Background(), path, []string{"cmd"}); err != nil {
+	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}}); err != nil {
 		t.Fatalf("unexpected error on second write: %v", err)
 	}
 

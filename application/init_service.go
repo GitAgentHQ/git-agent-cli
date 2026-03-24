@@ -3,10 +3,12 @@ package application
 import (
 	"context"
 	"fmt"
+
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 type LLMClient interface {
-	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error)
+	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error)
 }
 
 type GitReader interface {

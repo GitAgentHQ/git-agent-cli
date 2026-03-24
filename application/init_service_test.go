@@ -8,16 +8,17 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 // mockLLMClient implements application.LLMClient.
 type mockLLMClient struct {
-	scopes    []string
+	scopes    []project.Scope
 	reasoning string
 	err       error
 }
 
-func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {
+func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error) {
 	return m.scopes, m.reasoning, m.err
 }
 
@@ -54,7 +55,7 @@ func TestInitService_WritesProjectYML(t *testing.T) {
 	dir := t.TempDir()
 	ymlPath := filepath.Join(dir, "project.yml")
 
-	llm := &mockLLMClient{scopes: []string{"cmd", "application"}, reasoning: "top dirs"}
+	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cmd", Description: "CLI entry point"}, {Name: "application", Description: "business logic"}}, reasoning: "top dirs"}
 	git := &mockGitReader{commits: []string{"feat: add init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
 	svc := application.NewInitService(llm, git)
 
@@ -78,7 +79,7 @@ func TestInitService_MergesExistingScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	llm := &mockLLMClient{scopes: []string{"cmd", "application"}}
+	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cmd"}, {Name: "application"}}}
 	git := &mockGitReader{commits: []string{"fix: bug"}, dirs: []string{"cmd"}, isGitRepo: true}
 	svc := application.NewInitService(llm, git)
 
