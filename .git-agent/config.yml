@@ -1,18 +1,27 @@
 hook:
     - conventional
 scopes:
-    - app
-    - cli
-    - config
-    - domain
-    - e2e
-    - hooks
-    - infra
-    - openai
-    - git
-    - diff
-    - gitignore
-    - pkg
-    - scripts
-    - skills
-    - proxy
+    - name: app
+      description: Application-level services and logic
+    - name: cli
+      description: Command-line interface commands and flags
+    - name: config
+    - name: domain
+      description: Business domain interfaces and entities
+    - name: e2e
+      description: End-to-end tests for workflow verification
+    - name: hooks
+      description: Git hook scripts and executor logic
+    - name: infra
+      description: Infrastructure integration adapters and configuration
+    - name: openai
+    - name: git
+    - name: diff
+    - name: gitignore
+    - name: pkg
+      description: Utility packages and shared helpers
+    - name: scripts
+      description: Build, CI, and deployment scripts
+    - name: skills
+      description: Skill definitions and documentation for CLI usage
+    - name: proxy
