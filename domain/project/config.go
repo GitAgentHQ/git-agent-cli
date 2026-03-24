@@ -1,12 +1,32 @@
 package project
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Scope represents a commit scope with an optional description to help AI
 // understand the scope's purpose during commit message generation.
 type Scope struct {
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+}
+
+// UnmarshalJSON allows Scope to be decoded from either a plain string ("app")
+// or a full object ({"name":"app","description":"..."}).
+func (s *Scope) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		s.Name = name
+		return nil
+	}
+	type alias Scope
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*s = Scope(a)
+	return nil
 }
 
 // Config holds project-level configuration for git-agent.

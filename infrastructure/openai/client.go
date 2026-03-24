@@ -44,42 +44,70 @@ func isReasoningModel(model string) bool {
 }
 
 func extractJSON(s string) string {
+	// Find the earliest opening delimiter — whichever of '{' or '[' appears
+	// first wins. This ensures bare arrays like [{"name":"app"}] are not
+	// truncated to just the first inner object.
+	open, close := byte(0), byte(0)
+	start := -1
 	for _, pair := range [][2]byte{{'{', '}'}, {'[', ']'}} {
-		start := strings.Index(s, string(pair[0:1]))
-		if start == -1 {
+		idx := strings.Index(s, string(pair[0:1]))
+		if idx != -1 && (start == -1 || idx < start) {
+			open, close = pair[0], pair[1]
+			start = idx
+		}
+	}
+	if start == -1 {
+		return s
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		if escaped {
+			escaped = false
 			continue
 		}
-		depth := 0
-		inString := false
-		escaped := false
-		for i := start; i < len(s); i++ {
-			if escaped {
-				escaped = false
-				continue
-			}
-			ch := s[i]
-			if ch == '\\' && inString {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = !inString
-				continue
-			}
-			if inString {
-				continue
-			}
-			if ch == pair[0] {
-				depth++
-			} else if ch == pair[1] {
-				depth--
-				if depth == 0 {
-					return s[start : i+1]
-				}
+		ch := s[i]
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == open {
+			depth++
+		} else if ch == close {
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
 			}
 		}
 	}
 	return s
+}
+
+// unmarshalLLMJSON extracts JSON from a raw LLM response and unmarshals it
+// into dest. If wrapKey is non-empty and the extracted JSON is a bare array,
+// it wraps the array as {wrapKey: <array>} and retries — handling the common
+// case where the LLM omits the expected wrapper object.
+func unmarshalLLMJSON(raw, wrapKey string, dest any) error {
+	cleaned := extractJSON(raw)
+	if err := json.Unmarshal([]byte(cleaned), dest); err != nil {
+		if wrapKey != "" && len(cleaned) > 0 && cleaned[0] == '[' {
+			wrapped := `{"` + wrapKey + `":` + cleaned + `}`
+			if err2 := json.Unmarshal([]byte(wrapped), dest); err2 == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	}
+	return nil
 }
 
 // AllSystemPrompts returns every static system prompt sent by this client.
@@ -325,18 +353,17 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			return nil, err
 		}
 
-		cleaned := extractJSON(raw)
 		var result struct {
 			Title       string   `json:"title"`
 			Bullets     []string `json:"bullets"`
 			Explanation string   `json:"explanation"`
 		}
-		if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+		if err := unmarshalLLMJSON(raw, "", &result); err != nil {
+			lastErr = err
 			continue
 		}
 		if result.Title == "" {
-			lastErr = fmt.Errorf("LLM returned empty commit message\nraw: %s", cleaned)
+			lastErr = fmt.Errorf("LLM returned empty commit message\nraw: %s", extractJSON(raw))
 			continue
 		}
 
@@ -383,7 +410,6 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		return nil, err
 	}
 
-	cleaned := extractJSON(raw)
 	var result struct {
 		Groups []struct {
 			Files       []string `json:"files"`
@@ -392,11 +418,11 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 			Explanation string   `json:"explanation"`
 		} `json:"groups"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	if err := unmarshalLLMJSON(raw, "groups", &result); err != nil {
+		return nil, err
 	}
 	if len(result.Groups) == 0 {
-		return nil, fmt.Errorf("LLM returned empty plan (no commit groups)\nraw: %s", cleaned)
+		return nil, fmt.Errorf("LLM returned empty plan (no commit groups)\nraw: %s", extractJSON(raw))
 	}
 
 	plan := &commit.CommitPlan{}
@@ -425,15 +451,14 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 		return nil, err
 	}
 
-	cleaned := extractJSON(raw)
 	var result struct {
 		Technologies []string `json:"technologies"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	if err := unmarshalLLMJSON(raw, "technologies", &result); err != nil {
+		return nil, err
 	}
 	if len(result.Technologies) == 0 {
-		return nil, fmt.Errorf("LLM returned empty technologies\nraw: %s", cleaned)
+		return nil, fmt.Errorf("LLM returned empty technologies\nraw: %s", extractJSON(raw))
 	}
 
 	return result.Technologies, nil
@@ -451,27 +476,15 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		return nil, "", err
 	}
 
-	cleaned := extractJSON(raw)
-
-	// Try the expected wrapped format first: {"scopes": [...], "reasoning": "..."}
 	var result struct {
 		Scopes    []project.Scope `json:"scopes"`
 		Reasoning string          `json:"reasoning"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &result); err == nil {
-		if len(result.Scopes) == 0 {
-			return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", cleaned)
-		}
-		return result.Scopes, result.Reasoning, nil
+	if err := unmarshalLLMJSON(raw, "scopes", &result); err != nil {
+		return nil, "", err
 	}
-
-	// Fallback: LLM may return a bare array of scopes.
-	var scopes []project.Scope
-	if err := json.Unmarshal([]byte(cleaned), &scopes); err != nil {
-		return nil, "", fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	if len(result.Scopes) == 0 {
+		return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", extractJSON(raw))
 	}
-	if len(scopes) == 0 {
-		return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", cleaned)
-	}
-	return scopes, "", nil
+	return result.Scopes, result.Reasoning, nil
 }
