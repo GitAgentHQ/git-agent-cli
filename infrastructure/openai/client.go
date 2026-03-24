@@ -432,6 +432,9 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
 	}
+	if len(result.Technologies) == 0 {
+		return nil, fmt.Errorf("LLM returned empty technologies\nraw: %s", cleaned)
+	}
 
 	return result.Technologies, nil
 }
@@ -456,6 +459,9 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		Reasoning string          `json:"reasoning"`
 	}
 	if err := json.Unmarshal([]byte(cleaned), &result); err == nil {
+		if len(result.Scopes) == 0 {
+			return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", cleaned)
+		}
 		return result.Scopes, result.Reasoning, nil
 	}
 
@@ -463,6 +469,9 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 	var scopes []project.Scope
 	if err := json.Unmarshal([]byte(cleaned), &scopes); err != nil {
 		return nil, "", fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	}
+	if len(scopes) == 0 {
+		return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", cleaned)
 	}
 	return scopes, "", nil
 }
