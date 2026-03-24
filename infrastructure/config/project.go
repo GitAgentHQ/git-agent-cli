@@ -37,14 +37,30 @@ func LocalConfigPath(repoRoot string) string {
 	return filepath.Join(repoRoot, ".git-agent", "config.local.yml")
 }
 
+// rawScope supports both legacy string format and structured format in YAML.
+type rawScope struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description,omitempty"`
+}
+
+// UnmarshalYAML allows a scope to be either a plain string or a map with name/description.
+func (s *rawScope) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s.Name = value.Value
+		return nil
+	}
+	type plain rawScope
+	return value.Decode((*plain)(s))
+}
+
 // rawProjectConfig is the YAML shape for project/local config files.
 type rawProjectConfig struct {
-	Scopes             []string `yaml:"scopes,omitempty"`
-	Hooks              []string `yaml:"hook,omitempty"`
-	HookTypeLegacy     string   `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
-	MaxDiffLines       *int     `yaml:"max_diff_lines,omitempty"`
-	NoGitAgentCoAuthor *bool    `yaml:"no_git_agent_co_author,omitempty"`
-	NoModelCoAuthor    *bool    `yaml:"no_model_co_author,omitempty"`
+	Scopes             []rawScope `yaml:"scopes,omitempty"`
+	Hooks              []string   `yaml:"hook,omitempty"`
+	HookTypeLegacy     string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
+	MaxDiffLines       *int       `yaml:"max_diff_lines,omitempty"`
+	NoGitAgentCoAuthor *bool      `yaml:"no_git_agent_co_author,omitempty"`
+	NoModelCoAuthor    *bool      `yaml:"no_model_co_author,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {
@@ -100,8 +116,13 @@ func LoadProjectConfig(repoRoot string) *project.Config {
 		return nil
 	}
 
+	scopes := make([]project.Scope, len(merged.Scopes))
+	for i, s := range merged.Scopes {
+		scopes[i] = project.Scope{Name: s.Name, Description: s.Description}
+	}
+
 	cfg := &project.Config{
-		Scopes: merged.Scopes,
+		Scopes: scopes,
 		Hooks:  merged.Hooks,
 	}
 	if merged.MaxDiffLines != nil {
