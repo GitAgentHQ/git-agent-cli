@@ -10,6 +10,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/domain/commit"
 	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 type Client struct {
@@ -144,20 +145,21 @@ Rules:
 
 const generateScopesSystemPrompt = `You are an expert software engineer. Derive commit scopes from the top-level directories of the project, using commit history to validate and refine them.
 
-Respond ONLY with valid JSON: {"scopes": ["..."], "reasoning": "..."}
+Respond ONLY with valid JSON: {"scopes": [{"name": "...", "description": "..."}], "reasoning": "..."}
 
 Rules (STRICTLY enforce):
 - Generate one scope per meaningful source directory listed in "Top-level directories"
 - Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
 - Skip documentation and asset directories (docs, doc, documentation, assets, static, public, resources)
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
-- ALL scopes MUST be short — single words or abbreviations only
+- ALL scope names MUST be short — single words or abbreviations only
 - Single-word names: use as-is, EXCEPT apply well-known short forms for long words ("application" -> "app", "infrastructure" -> "infra", "cmd" -> "cli")
 - Hyphenated or multi-word names: MUST convert to initials/acronym ("git-agent-proxy" -> "gap", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
 - If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation over any derived form
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
-- All scopes lowercase`
+- All scope names lowercase
+- Each scope MUST have a "description" field: a concise phrase (under 15 words) explaining what the scope covers, so AI can choose the right scope when generating commit messages`
 
 // callLLM sends a chat completion request with retry logic for transient failures and empty responses.
 func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int) (string, error) {
@@ -221,7 +223,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 		}
 		if hasScopes {
-			promptParts = append(promptParts, "REQUIRED scopes (use the most appropriate one): "+strings.Join(req.Config.Scopes, ", "))
+			promptParts = append(promptParts, "REQUIRED scopes (use the most appropriate one):\n- "+req.Config.FormatScopesForLLM())
 		}
 		promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
 			req.Diff.Content,
@@ -277,7 +279,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 	}
 	if hasScopes {
-		planParts = append(planParts, "REQUIRED scopes (use the most appropriate one per group): "+strings.Join(req.Config.Scopes, ", "))
+		planParts = append(planParts, "REQUIRED scopes (use the most appropriate one per group):\n- "+req.Config.FormatScopesForLLM())
 	}
 	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
 		planParts = append(planParts, fmt.Sprintf("Staged files (already staged by user — keep as group 0):\n%s",
@@ -346,7 +348,7 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 	return result.Technologies, nil
 }
 
-func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]string, string, error) {
+func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error) {
 	userPrompt := fmt.Sprintf("Commit log (subject + changed files):\n%s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
 		strings.Join(commits, "\n---\n"),
 		strings.Join(dirs, "\n"),
@@ -359,13 +361,20 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 	}
 
 	cleaned := extractJSON(raw)
+
+	// Try the expected wrapped format first: {"scopes": [...], "reasoning": "..."}
 	var result struct {
-		Scopes    []string `json:"scopes"`
-		Reasoning string   `json:"reasoning"`
+		Scopes    []project.Scope `json:"scopes"`
+		Reasoning string          `json:"reasoning"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return nil, "", fmt.Errorf("parse response json: %w", err)
+	if err := json.Unmarshal([]byte(cleaned), &result); err == nil {
+		return result.Scopes, result.Reasoning, nil
 	}
 
-	return result.Scopes, result.Reasoning, nil
+	// Fallback: LLM may return a bare array of scopes.
+	var scopes []project.Scope
+	if err := json.Unmarshal([]byte(cleaned), &scopes); err != nil {
+		return nil, "", fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	}
+	return scopes, "", nil
 }
