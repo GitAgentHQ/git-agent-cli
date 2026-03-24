@@ -44,13 +44,11 @@ func isReasoningModel(model string) bool {
 }
 
 func extractJSON(s string) string {
-	// Find the earliest opening delimiter — whichever of '{' or '[' appears
-	// first wins. This ensures bare arrays like [{"name":"app"}] are not
-	// truncated to just the first inner object.
+	// Pick whichever of '{' or '[' appears first.
 	open, close := byte(0), byte(0)
 	start := -1
 	for _, pair := range [][2]byte{{'{', '}'}, {'[', ']'}} {
-		idx := strings.Index(s, string(pair[0:1]))
+		idx := strings.IndexByte(s, pair[0])
 		if idx != -1 && (start == -1 || idx < start) {
 			open, close = pair[0], pair[1]
 			start = idx
