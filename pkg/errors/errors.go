@@ -20,3 +20,17 @@ var (
 	ErrNotGitRepo      = NewExitCodeError(1, "error: not a git repository")
 	ErrGitNotFound     = NewExitCodeError(1, "error: git not found in PATH")
 )
+
+// APIError represents an error returned by the LLM API (rate limit, auth failure, etc.).
+type APIError struct {
+	HTTPStatusCode int
+	Message        string
+}
+
+func (e *APIError) Error() string {
+	return e.Message
+}
+
+func NewAPIError(statusCode int, message string) *APIError {
+	return &APIError{HTTPStatusCode: statusCode, Message: message}
+}

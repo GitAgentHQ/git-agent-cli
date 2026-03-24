@@ -122,6 +122,10 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		ProjectConfigPath: projCfgPath,
 	})
 	if err != nil {
+		var apiErr *agentErrors.APIError
+		if errors.As(err, &apiErr) {
+			return agentErrors.NewExitCodeError(1, apiErr.Message)
+		}
 		if errors.Is(err, application.ErrHookBlocked) {
 			var hbe *application.HookBlockedError
 			if errors.As(err, &hbe) {

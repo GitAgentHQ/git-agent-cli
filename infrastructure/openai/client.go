@@ -3,7 +3,9 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	goopenai "github.com/sashabaranov/go-openai"
@@ -11,6 +13,7 @@ import (
 	"github.com/gitagenthq/git-agent/domain/commit"
 	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 	"github.com/gitagenthq/git-agent/domain/project"
+	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 type Client struct {
@@ -186,6 +189,10 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		resp, err := c.inner.CreateChatCompletion(ctx, req)
 		if err != nil {
+			// Check for non-transient API errors that should not be retried.
+			if apiErr := classifyAPIError(err); apiErr != nil {
+				return "", apiErr
+			}
 			lastErr = fmt.Errorf("openai chat completion: %w", err)
 			continue
 		}
@@ -198,6 +205,54 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 		return resp.Choices[0].Message.Content, nil
 	}
 	return "", lastErr
+}
+
+// classifyAPIError inspects an error from the go-openai library and returns a
+// typed *agentErrors.APIError for non-transient failures (rate limit, auth,
+// bad request, etc.) that should NOT be retried. Returns nil for transient
+// errors that the caller's retry loop should handle.
+func classifyAPIError(err error) *agentErrors.APIError {
+	var apiErr *goopenai.APIError
+	if ok := stderrors.As(err, &apiErr); ok {
+		switch apiErr.HTTPStatusCode {
+		case http.StatusTooManyRequests:
+			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+				fmt.Sprintf("error: API rate limited (429): %s", apiErr.Message))
+		case http.StatusUnauthorized:
+			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+				fmt.Sprintf("error: API authentication failed (401): %s", apiErr.Message))
+		case http.StatusForbidden:
+			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+				fmt.Sprintf("error: API access denied (403): %s", apiErr.Message))
+		case http.StatusBadRequest:
+			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+				fmt.Sprintf("error: API bad request (400): %s", apiErr.Message))
+		case http.StatusNotFound:
+			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+				fmt.Sprintf("error: API endpoint or model not found (404): %s", apiErr.Message))
+		default:
+			if apiErr.HTTPStatusCode >= 400 && apiErr.HTTPStatusCode < 500 {
+				return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+					fmt.Sprintf("error: API error (%d): %s", apiErr.HTTPStatusCode, apiErr.Message))
+			}
+		}
+		// 5xx errors are transient — let the retry loop handle them.
+		return nil
+	}
+
+	var reqErr *goopenai.RequestError
+	if ok := stderrors.As(err, &reqErr); ok {
+		if reqErr.HTTPStatusCode == http.StatusTooManyRequests {
+			return agentErrors.NewAPIError(reqErr.HTTPStatusCode,
+				fmt.Sprintf("error: API rate limited (429): %s", reqErr.Error()))
+		}
+		if reqErr.HTTPStatusCode >= 400 && reqErr.HTTPStatusCode < 500 {
+			return agentErrors.NewAPIError(reqErr.HTTPStatusCode,
+				fmt.Sprintf("error: API error (%d): %s", reqErr.HTTPStatusCode, reqErr.Error()))
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
