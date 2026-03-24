@@ -39,7 +39,7 @@ func sampleInput() domainHook.HookInput {
 		CommitMessage: "feat: add foo",
 		Intent:        "add feature",
 		StagedFiles:   []string{"foo.go", "bar.go"},
-		Config:        domainProject.Config{Scopes: []string{"api", "cli"}},
+		Config:        domainProject.Config{Scopes: []domainProject.Scope{{Name: "api"}, {Name: "cli"}}},
 	}
 }
 
