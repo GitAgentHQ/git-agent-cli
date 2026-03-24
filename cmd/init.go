@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
@@ -63,10 +65,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if fullWizard && !force {
-		configDir := filepath.Dir(configPath)
-		if _, err := os.Stat(configDir); err == nil {
-			return fmt.Errorf(".git-agent already exists in this repository\nhint: use --force to reinitialize")
+	if !force {
+		if _, err := os.Stat(configPath); err == nil {
+			return fmt.Errorf(".git-agent/config.yml already exists\nhint: use --force to reinitialize")
 		}
 	}
 
@@ -160,12 +161,13 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 	return nil
 }
 
-func writeScopes(path string, scopes []string) error {
-	content := "scopes:\n"
-	for _, s := range scopes {
-		content += "  - " + s + "\n"
+func writeScopes(path string, scopes []project.Scope) error {
+	data := map[string]any{"scopes": scopes}
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshalling scopes: %w", err)
 	}
-	return os.WriteFile(path, []byte(content), 0644)
+	return os.WriteFile(path, out, 0644)
 }
 
 func writeHooks(configPath string, hooks []string) error {
@@ -173,6 +175,23 @@ func writeHooks(configPath string, hooks []string) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 	return infraConfig.WriteProjectField(configPath, "hook", strings.Join(hooks, ","))
+}
+
+// ResetInitFlags resets all init command flags to their defaults.
+// Required for testing since cobra retains flag values across invocations.
+func ResetInitFlags() {
+	initCmd.Flags().Set("scope", "false")
+	initCmd.Flags().Set("gitignore", "false")
+	initCmd.Flags().Set("force", "false")
+	initCmd.Flags().Set("max-commits", "200")
+	initCmd.Flags().Set("local", "false")
+	initCmd.ResetFlags()
+	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
+	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
+	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
+	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
+	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
+	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 }
 
 func init() {
