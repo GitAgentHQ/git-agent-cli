@@ -202,9 +202,36 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 			continue
 		}
 
-		return resp.Choices[0].Message.Content, nil
+		content := resp.Choices[0].Message.Content
+		if apiErr := detectResponseError(content); apiErr != nil {
+			return "", apiErr
+		}
+		return content, nil
 	}
 	return "", lastErr
+}
+
+// detectResponseError checks if a successful LLM response body contains an
+// error payload (e.g., a gateway returning 200 OK with {"error": {...}}).
+// Returns an *agentErrors.APIError if detected, nil otherwise.
+func detectResponseError(content string) *agentErrors.APIError {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+	var probe struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return nil
+	}
+	if probe.Error.Message != "" {
+		return agentErrors.NewAPIError(0,
+			fmt.Sprintf("error: API returned error in response body: %s", probe.Error.Message))
+	}
+	return nil
 }
 
 // classifyAPIError inspects an error from the go-openai library and returns a
@@ -306,7 +333,10 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 		}
 		if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 			lastErr = fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
-			_ = attempt // retry with same prompts
+			continue
+		}
+		if result.Title == "" {
+			lastErr = fmt.Errorf("LLM returned empty commit message\nraw: %s", cleaned)
 			continue
 		}
 
@@ -364,6 +394,9 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 	}
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, fmt.Errorf("parse response json: %w\nraw: %s", err, cleaned)
+	}
+	if len(result.Groups) == 0 {
+		return nil, fmt.Errorf("LLM returned empty plan (no commit groups)\nraw: %s", cleaned)
 	}
 
 	plan := &commit.CommitPlan{}

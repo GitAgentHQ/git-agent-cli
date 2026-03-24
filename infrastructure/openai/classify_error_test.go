@@ -3,6 +3,7 @@ package openai
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	goopenai "github.com/sashabaranov/go-openai"
@@ -115,6 +116,50 @@ func TestClassifyAPIError_WrappedAPIError(t *testing.T) {
 	}
 	if result.HTTPStatusCode != 429 {
 		t.Errorf("expected status 429, got %d", result.HTTPStatusCode)
+	}
+}
+
+func TestDetectResponseError_ErrorJSON(t *testing.T) {
+	content := `{"error": {"message": "rate limit exceeded"}}`
+	result := detectResponseError(content)
+	if result == nil {
+		t.Fatal("expected non-nil APIError for error JSON")
+	}
+	if result.HTTPStatusCode != 0 {
+		t.Errorf("expected status 0, got %d", result.HTTPStatusCode)
+	}
+	if !strings.Contains(result.Message, "rate limit exceeded") {
+		t.Errorf("expected message to contain 'rate limit exceeded', got: %s", result.Message)
+	}
+}
+
+func TestDetectResponseError_ValidPlanJSON(t *testing.T) {
+	content := `{"groups": [{"files": ["main.go"], "title": "feat: init"}]}`
+	result := detectResponseError(content)
+	if result != nil {
+		t.Errorf("expected nil for valid plan JSON, got %+v", result)
+	}
+}
+
+func TestDetectResponseError_PlainText(t *testing.T) {
+	result := detectResponseError("I cannot help with that request")
+	if result != nil {
+		t.Errorf("expected nil for plain text, got %+v", result)
+	}
+}
+
+func TestDetectResponseError_EmptyErrorMessage(t *testing.T) {
+	content := `{"error": {"message": ""}}`
+	result := detectResponseError(content)
+	if result != nil {
+		t.Errorf("expected nil for empty error message, got %+v", result)
+	}
+}
+
+func TestDetectResponseError_EmptyString(t *testing.T) {
+	result := detectResponseError("")
+	if result != nil {
+		t.Errorf("expected nil for empty string, got %+v", result)
 	}
 }
 
