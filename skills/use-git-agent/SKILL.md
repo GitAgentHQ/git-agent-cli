@@ -51,7 +51,7 @@ git-agent automatically splits staged changes into multiple atomic commits (up t
 
 ## Auto-scope
 
-If no scopes are configured for the project, git-agent generates scopes from git history automatically before planning. To trigger scope generation manually: `git-agent init --scope`.
+If no scopes are configured for the project, git-agent generates scopes from git history automatically before planning. Each scope is a structured object with a `name` and an optional `description` (used as LLM context during commit message generation). To trigger scope generation manually: `git-agent init --scope`.
 
 ## Hook failures
 

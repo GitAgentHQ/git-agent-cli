@@ -72,7 +72,7 @@ The AI planner can split staged changes into multiple atomic commits (max 5 comm
 
 ### Auto-scope
 
-If no scopes are configured (project config is nil or has empty scopes), git-agent automatically generates scopes from git history before planning. If any planned commit group lacks a scope, scopes are refreshed once and the plan is regenerated.
+If no scopes are configured (project config is nil or has empty scopes), git-agent automatically generates scopes from git history before planning. Each scope is a structured object (`{"name": "...", "description": "..."}`) — the description provides LLM context during commit message generation. If any planned commit group lacks a scope, scopes are refreshed once and the plan is regenerated.
 
 ---
 
@@ -119,9 +119,17 @@ Shell hooks receive a JSON payload on stdin with the following fields:
   "commitMessage": "feat(cli): add feature\n\n- Detail one\n- Detail two\n\nExplanation.",
   "intent": "add new feature",
   "stagedFiles": ["cmd/feature.go", "cmd/feature_test.go"],
-  "config": { "scopes": ["cli"], "hooks": ["conventional"], "maxDiffLines": 0, "noGitAgentCoAuthor": false, "noModelCoAuthor": false }
+  "config": {
+    "scopes": [{"name": "cli", "description": "CLI commands and flags"}],
+    "hooks": ["conventional"],
+    "maxDiffLines": 0,
+    "noGitAgentCoAuthor": false,
+    "noModelCoAuthor": false
+  }
 }
 ```
+
+Scopes are structured objects with `name` and `description` fields. Plain strings (e.g., `"cli"`) are accepted for backward compatibility during JSON unmarshaling.
 
 Exit 0 = allow, non-zero = block.
 
