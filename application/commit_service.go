@@ -279,6 +279,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
 		}
 		appendPassthroughFiles(plan, allowed)
+		if len(plan.Groups) == 0 {
+			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
+		}
 		if len(plan.Groups) > maxCommitGroups {
 			s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 			plan.Groups = plan.Groups[:maxCommitGroups]
@@ -313,6 +316,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 					s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
 				}
 				appendPassthroughFiles(plan, allowed)
+				if len(plan.Groups) == 0 {
+					return nil, fmt.Errorf("re-plan produced no valid commit groups (all files were filtered out)")
+				}
 				if len(plan.Groups) > maxCommitGroups {
 					s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 					plan.Groups = plan.Groups[:maxCommitGroups]
@@ -474,7 +480,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	if len(committed) == 0 && !req.DryRun {
-		return nil, fmt.Errorf("no changes committed (all planned groups were empty)")
+		return nil, fmt.Errorf("no changes committed: all %d planned group(s) skipped (no diff after staging)", len(plan.Groups))
 	}
 
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
