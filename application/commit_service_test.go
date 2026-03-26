@@ -423,6 +423,20 @@ func TestCommitService_CapCommitGroups(t *testing.T) {
 	if len(result.Commits) != 5 {
 		t.Errorf("expected 5 commits (capped), got %d", len(result.Commits))
 	}
+
+	// All 8 files must appear across commits: capped groups are recovered into group[0].
+	allCommittedFiles := make(map[string]bool)
+	for _, c := range result.Commits {
+		for _, f := range c.Files {
+			allCommittedFiles[f] = true
+		}
+	}
+	for i := 0; i < 8; i++ {
+		f := fmt.Sprintf("file%d.go", i)
+		if !allCommittedFiles[f] {
+			t.Errorf("file %s was not committed — capped group recovery failed", f)
+		}
+	}
 }
 
 func TestCommitService_Amend_NoPreviousCommit_ReturnsError(t *testing.T) {
@@ -531,5 +545,46 @@ func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
 	}
 	if git.commitCount != 1 {
 		t.Errorf("expected git.Commit called once, got %d", git.commitCount)
+	}
+}
+
+func TestCommitService_RestagesOnCommitError(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{Files: []string{}, Content: "", Lines: 0},                   // preStagedDiff
+			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // fullStagedDiff
+		},
+		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
+		commitErr:  fmt.Errorf("simulated commit failure"),
+	}
+
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{"a.go"}},
+			{Files: []string{"b.go"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error from commit failure")
+	}
+
+	// StageFiles: call 1 = group 0 staging, call 2 = recovery re-stage.
+	if git.stageFilesCalls < 2 {
+		t.Fatalf("expected recovery StageFiles call, got %d total calls", git.stageFilesCalls)
+	}
+
+	// Recovery call should re-stage all files since no commits succeeded.
+	recoveryFiles := make(map[string]bool)
+	for _, f := range git.stagedFiles[git.stageFilesCalls-1] {
+		recoveryFiles[f] = true
+	}
+	if !recoveryFiles["a.go"] || !recoveryFiles["b.go"] {
+		t.Errorf("expected recovery to re-stage [a.go, b.go], got %v", git.stagedFiles[git.stageFilesCalls-1])
 	}
 }

@@ -116,7 +116,7 @@ const maxHookRetries = 3
 const maxRePlans = 2
 const maxCommitGroups = 5
 
-func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
+func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *CommitResult, retErr error) {
 	if req.Amend {
 		return s.commitAmend(ctx, req)
 	}
@@ -278,7 +278,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		if n := filterPlanFiles(plan, allowed); n > 0 {
 			s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
 		}
-		appendPassthroughFiles(plan, allowed)
 		if len(plan.Groups) == 0 {
 			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
 		}
@@ -286,6 +285,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
+		appendPassthroughFiles(plan, allowed)
 
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
@@ -315,7 +315,6 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 				if n := filterPlanFiles(plan, allowed); n > 0 {
 					s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
 				}
-				appendPassthroughFiles(plan, allowed)
 				if len(plan.Groups) == 0 {
 					return nil, fmt.Errorf("re-plan produced no valid commit groups (all files were filtered out)")
 				}
@@ -323,6 +322,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 					s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
 					plan.Groups = plan.Groups[:maxCommitGroups]
 				}
+				appendPassthroughFiles(plan, allowed)
 			}
 		}
 	}
@@ -332,8 +332,27 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 	s.vlog(req, "planned %d commit(s)", len(remaining))
 
 	var committed []SingleCommitResult
+	committedFiles := make(map[string]bool)
 	rePlanCount := 0
 	var inheritedFeedback string // hook feedback carried into first attempt after re-plan
+
+	// On error, best-effort re-stage uncommitted files so the index is not
+	// left in a partially-unstaged state from the UnstageAll/StageFiles loop.
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		var toRestore []string
+		for f := range allowed {
+			if !committedFiles[f] {
+				toRestore = append(toRestore, f)
+			}
+		}
+		if len(toRestore) > 0 {
+			sort.Strings(toRestore)
+			_ = s.git.StageFiles(context.Background(), toRestore)
+		}
+	}()
 
 	for len(remaining) > 0 {
 		group := remaining[0]
@@ -454,10 +473,16 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)
 			}
-			if n := filterPlanFiles(newPlan, allowed); n > 0 {
+			rePlanAllowed := make(map[string]bool, len(allowed))
+			for f := range allowed {
+				if !committedFiles[f] {
+					rePlanAllowed[f] = true
+				}
+			}
+			if n := filterPlanFiles(newPlan, rePlanAllowed); n > 0 {
 				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
 			}
-			appendPassthroughFiles(newPlan, allowed)
+			appendPassthroughFiles(newPlan, rePlanAllowed)
 			remaining = newPlan.Groups
 			continue
 		}
@@ -469,6 +494,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		}
 		if req.DryRun {
 			committed = append(committed, result)
+			for _, f := range group.Files {
+				committedFiles[f] = true
+			}
 			continue
 		}
 		gitOut, err := s.git.Commit(ctx, assembled)
@@ -477,6 +505,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 		}
 		result.GitOutput = gitOut
 		committed = append(committed, result)
+		for _, f := range group.Files {
+			committedFiles[f] = true
+		}
 	}
 
 	if len(committed) == 0 && !req.DryRun {
