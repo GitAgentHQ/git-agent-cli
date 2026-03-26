@@ -93,10 +93,10 @@ func TestInitCmd_BlocksWhenConfigExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Flags that write to config.yml should be blocked.
 	for _, flags := range [][]string{
 		{"init"},
 		{"init", "--scope"},
-		{"init", "--gitignore"},
 		{"init", "--hook", "conventional"},
 	} {
 		cmd.ResetInitFlags()
@@ -107,5 +107,13 @@ func TestInitCmd_BlocksWhenConfigExists(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "already exists") {
 			t.Errorf("expected 'already exists' error for %v, got: %v", flags, err)
 		}
+	}
+
+	// --gitignore alone does not write config.yml, so it should NOT be blocked.
+	cmd.ResetInitFlags()
+	err := cmd.ExecuteArgs([]string{"init", "--gitignore"})
+	requireInitRegistered(t, err)
+	if err != nil && strings.Contains(err.Error(), "already exists") {
+		t.Errorf("--gitignore should not be blocked by existing config.yml, got: %v", err)
 	}
 }

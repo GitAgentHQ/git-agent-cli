@@ -60,14 +60,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	configPath, err := initConfigPath(cmd)
-	if err != nil {
-		return err
-	}
-
-	if !force {
-		if _, err := os.Stat(configPath); err == nil {
-			return fmt.Errorf(".git-agent/config.yml already exists\nhint: use --force to reinitialize")
+	// Only resolve config path and check existence when we need to write config.
+	needsConfig := doScope || fullWizard || hookChanged
+	var configPath string
+	if needsConfig {
+		var err error
+		configPath, err = initConfigPath(cmd)
+		if err != nil {
+			return err
+		}
+		if !force {
+			if _, err := os.Stat(configPath); err == nil {
+				return fmt.Errorf(".git-agent/config.yml already exists\nhint: use --force to reinitialize")
+			}
 		}
 	}
 
