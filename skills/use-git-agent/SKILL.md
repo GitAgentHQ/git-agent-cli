@@ -1,13 +1,13 @@
 ---
 name: use-git-agent
-description: Use git-agent to commit changes with AI-generated conventional commit messages. Immediately runs git-agent commit when loaded — no setup or configuration questions unless an error occurs.
+description: Operates the git-agent CLI — commits, init, config, and provider setup via ~/.config/git-agent/config.yml or git config. Provider CLI overrides belong in exception flows only. Use whenever the user mentions git-agent, wants to commit/init, or needs to configure a provider.
 ---
 
-# Git Agent Commit
+# Git Agent CLI
 
-When this skill is loaded, **immediately** run `git-agent commit`. Do not ask the user what to do. Do not show a menu.
+When this skill is loaded, determine the appropriate git-agent command from the conversation context. Do **not** default to `git-agent commit` — ask or infer what the user needs.
 
-## Steps
+## Commit workflow
 
 1. **Intent** — derive a one-sentence intent from the conversation. If no signal exists, run `git diff --stat` to understand what changed, then form the intent from that.
 
