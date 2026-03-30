@@ -224,6 +224,15 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 		}
 
 		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			// When the model hit the token limit (finish_reason=length) without
+			// producing content — common with reasoning models that spend tokens
+			// on chain-of-thought — double the budget for the next attempt.
+			if len(resp.Choices) > 0 && resp.Choices[0].FinishReason == goopenai.FinishReasonLength {
+				req.MaxCompletionTokens *= 2
+				lastErr = fmt.Errorf("LLM exhausted token limit without producing content (model=%s, max_tokens=%d, attempt=%d/%d)",
+					c.model, req.MaxCompletionTokens/2, attempt+1, maxAttempts)
+				continue
+			}
 			lastErr = fmt.Errorf("LLM returned empty response (model=%s, attempt=%d/%d)", c.model, attempt+1, maxAttempts)
 			continue
 		}
