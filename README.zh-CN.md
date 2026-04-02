@@ -67,6 +67,7 @@ git-agent init --local --scope         # 将作用域写入 .git-agent/config.lo
 | `--force` | 覆盖已有配置/.gitignore |
 | `--max-commits` | 用于作用域生成的最大提交分析数量（默认：200） |
 | `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
+| `--user` | 将配置写入 `~/.config/git-agent/config.yml`（需要至少一个操作参数） |
 
 ### `git-agent commit`
 
@@ -91,9 +92,20 @@ git-agent commit --no-attribution             # 省略默认的 Git Agent traile
 git-agent config show              # 显示解析后的提供商配置（API 密钥已脱敏）
 git-agent config get <key>         # 显示某配置项的解析值及来源作用域
 git-agent config set <key> <value> # 将配置值写入对应作用域
+git-agent config set --user api-key sk-xxx   # 写入用户作用域
+git-agent config set --project hook empty     # 写入项目作用域
+git-agent config set --local max-diff-lines 1000  # 写入本地作用域
 ```
 
 `config set` 和 `config get` 同时支持 snake_case 和 kebab-case 键名（如 `api-key` 和 `api_key` 等价）。
+
+| 作用域参数 | 配置文件 | 用途 |
+|------------|----------|------|
+| `--user` | `~/.config/git-agent/config.yml` | 提供商密钥（api_key、base_url、model） |
+| `--project` | `.git-agent/config.yml` | 共享配置，提交到 git |
+| `--local` | `.git-agent/config.local.yml` | 本地覆盖，gitignore |
+
+未指定作用域参数时，提供商密钥默认写入 `--user`，其他配置项默认写入 `--project`。
 
 ### `git-agent version`
 
@@ -126,9 +138,9 @@ base_url: http://localhost:11434/v1
 model: llama3
 ```
 
-### 项目配置（`.git-agent/project.yml`）
+### 项目配置（`.git-agent/config.yml`）
 
-由 `git-agent init` 生成，定义项目的提交作用域和钩子类型：
+由 `git-agent init` 生成，定义项目的提交作用域和钩子配置。同时为了向后兼容，也读取 `.git-agent/project.yml`：
 
 ```yaml
 scopes:
@@ -136,7 +148,8 @@ scopes:
   - core
   - auth
   - infra
-hook: conventional
+hook:
+  - conventional
 ```
 
 ### 钩子
