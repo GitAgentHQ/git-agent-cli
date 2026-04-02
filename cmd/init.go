@@ -185,15 +185,7 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 
 func writeScopes(path string, scopes []project.Scope) error {
 	existing := infraConfig.ReadYAMLMap(path)
-	scopeData := make([]any, len(scopes))
-	for i, s := range scopes {
-		if s.Description == "" {
-			scopeData[i] = s.Name
-		} else {
-			scopeData[i] = map[string]any{"name": s.Name, "description": s.Description}
-		}
-	}
-	existing["scopes"] = scopeData
+	existing["scopes"] = scopes
 	out, err := yaml.Marshal(existing)
 	if err != nil {
 		return fmt.Errorf("marshalling config: %w", err)
