@@ -234,7 +234,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 	if req.Config == nil || len(req.Config.Scopes) == 0 {
 		if s.scopeSvc != nil {
 			s.vlog(req, "auto-generating scopes...")
-			scopes, err := s.scopeSvc.Generate(ctx, 200)
+			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
 			if err != nil {
 				s.vlog(req, "scope generation failed (continuing without scopes): %v", err)
 			} else {
@@ -290,7 +290,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
 			s.vlog(req, "unscoped groups detected — refreshing project scopes...")
-			newScopes, err := s.scopeSvc.Generate(ctx, 200)
+			newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
 			if err != nil {
 				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
 			} else {

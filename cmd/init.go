@@ -160,7 +160,8 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 		gitClient,
 	)
 
-	scopes, err := scopeSvc.Generate(cmd.Context(), maxCommits)
+	existingScopes := application.ReadScopes(configPath)
+	scopes, err := scopeSvc.Generate(cmd.Context(), maxCommits, existingScopes)
 	if err != nil {
 		return err
 	}

@@ -188,7 +188,8 @@ Rules (STRICTLY enforce):
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scope names lowercase
-- Each scope MUST have a "description" field: a concise phrase (under 15 words) explaining what the scope covers, so AI can choose the right scope when generating commit messages`
+- Each scope MUST have a "description" field: start with the source directory path followed by " — ", then a concise phrase (under 15 words) explaining what the scope covers (e.g. "infrastructure/ — adapters for git, OpenAI, and config resolution"). This helps AI map file paths to the correct scope when generating commit messages
+- When "Existing scopes" are provided, treat them as historical context: maintain naming conventions, avoid duplicating them, and regenerate descriptions in the directory-prefixed format for all scopes including existing ones`
 
 // callLLM sends a chat completion request with retry logic for transient failures and empty responses.
 func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int) (string, error) {
@@ -473,12 +474,17 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 	return result.Technologies, nil
 }
 
-func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error) {
+func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error) {
 	userPrompt := fmt.Sprintf("Commit log (subject + changed files):\n%s\n\nTop-level directories:\n%s\n\nTracked files:\n%s",
 		strings.Join(commits, "\n---\n"),
 		strings.Join(dirs, "\n"),
 		strings.Join(files, "\n"),
 	)
+
+	if len(existingScopes) > 0 {
+		cfg := &project.Config{Scopes: existingScopes}
+		userPrompt += "\n\nExisting scopes:\n- " + cfg.FormatScopesForLLM()
+	}
 
 	raw, err := c.callLLM(ctx, generateScopesSystemPrompt, userPrompt, 8192)
 	if err != nil {

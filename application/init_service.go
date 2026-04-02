@@ -8,7 +8,7 @@ import (
 )
 
 type LLMClient interface {
-	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error)
+	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error)
 }
 
 type GitReader interface {
@@ -42,7 +42,8 @@ func (s *InitService) Init(ctx context.Context, req InitRequest) error {
 
 	scopeSvc := NewScopeService(s.llm, s.git)
 
-	scopes, err := scopeSvc.Generate(ctx, req.MaxCommits)
+	existingScopes := ReadScopes(req.ProjectYMLPath)
+	scopes, err := scopeSvc.Generate(ctx, req.MaxCommits, existingScopes)
 	if err != nil {
 		return err
 	}

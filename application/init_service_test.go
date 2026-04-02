@@ -18,7 +18,7 @@ type mockLLMClient struct {
 	err       error
 }
 
-func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string) ([]project.Scope, string, error) {
+func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error) {
 	return m.scopes, m.reasoning, m.err
 }
 

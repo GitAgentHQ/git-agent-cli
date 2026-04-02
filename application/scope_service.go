@@ -21,7 +21,7 @@ func NewScopeService(llm LLMClient, git GitReader) *ScopeService {
 	return &ScopeService{llm: llm, git: git}
 }
 
-func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]project.Scope, error) {
+func (s *ScopeService) Generate(ctx context.Context, maxCommits int, existingScopes []project.Scope) ([]project.Scope, error) {
 	commits, err := s.git.CommitLog(ctx, maxCommits)
 	if err != nil {
 		return nil, fmt.Errorf("reading commit log: %w", err)
@@ -37,12 +37,21 @@ func (s *ScopeService) Generate(ctx context.Context, maxCommits int) ([]project.
 		return nil, fmt.Errorf("reading project files: %w", err)
 	}
 
-	scopes, _, err := s.llm.GenerateScopes(ctx, commits, dirs, files)
+	scopes, _, err := s.llm.GenerateScopes(ctx, commits, dirs, files, existingScopes)
 	if err != nil {
 		return nil, fmt.Errorf("generating scopes: %w", err)
 	}
 
 	return filterConventionalTypes(scopes), nil
+}
+
+// ReadScopes reads existing scopes from a YAML config file.
+func ReadScopes(path string) []project.Scope {
+	rawMap := readExistingYAMLMap(path)
+	if v, ok := rawMap["scopes"]; ok {
+		return parseScopesFromYAML(v)
+	}
+	return nil
 }
 
 // conventionalTypes is the standard set of conventional commit types.

@@ -21,7 +21,7 @@ func TestScopeService_Generate(t *testing.T) {
 	}
 	svc := application.NewScopeService(llm, git)
 
-	scopes, err := svc.Generate(context.Background(), 20)
+	scopes, err := svc.Generate(context.Background(), 20, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestScopeService_Generate_LLMError(t *testing.T) {
 	git := &mockGitReader{isGitRepo: true}
 	svc := application.NewScopeService(llm, git)
 
-	_, err := svc.Generate(context.Background(), 20)
+	_, err := svc.Generate(context.Background(), 20, nil)
 	if err == nil {
 		t.Fatal("expected error from LLM failure, got nil")
 	}
