@@ -84,18 +84,22 @@ func migrateHooks(raw rawProjectConfig) []string {
 	return nil
 }
 
-// LoadProjectConfig loads and merges local > project config into a domain Config.
+// LoadProjectConfig loads and merges local > project > user config into a domain Config.
 // Returns nil when no config files exist.
-func LoadProjectConfig(repoRoot string) *project.Config {
+func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	proj := loadRawProjectConfig(ProjectConfigPath(repoRoot))
 	local := loadRawProjectConfig(LocalConfigPath(repoRoot))
+	user := loadRawProjectConfig(userConfigPath)
 
 	merged := proj
 	merged.Hooks = migrateHooks(proj)
 	merged.HookTypeLegacy = ""
 
+	// scopes: local > project > user
 	if len(local.Scopes) > 0 {
 		merged.Scopes = local.Scopes
+	} else if len(merged.Scopes) == 0 && len(user.Scopes) > 0 {
+		merged.Scopes = user.Scopes
 	}
 	localHooks := migrateHooks(local)
 	if len(localHooks) > 0 {

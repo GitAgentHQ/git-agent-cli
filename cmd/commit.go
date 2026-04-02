@@ -60,7 +60,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	projCfgPath := infraConfig.ProjectConfigPath(root)
-	projCfg := infraConfig.LoadProjectConfig(root)
+	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
 
 	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
 	var trailers []commit.Trailer
