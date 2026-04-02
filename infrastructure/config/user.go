@@ -14,7 +14,7 @@ func WriteUserField(configPath, key, value string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return err
 	}
-	rawMap := readYAMLMap(configPath)
+	rawMap := ReadYAMLMap(configPath)
 	def := KeyRegistry[key]
 	switch def.Type {
 	case "bool":

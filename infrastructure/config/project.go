@@ -143,7 +143,7 @@ func WriteProjectField(path, key, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	rawMap := readYAMLMap(path)
+	rawMap := ReadYAMLMap(path)
 	def := KeyRegistry[key]
 	switch def.Type {
 	case "bool":
@@ -175,7 +175,7 @@ func WriteProjectField(path, key, value string) error {
 // ReadProjectField reads a single key from a specific config file.
 // Returns ("", false, nil) when the key is not present.
 func ReadProjectField(path, key string) (string, bool, error) {
-	rawMap := readYAMLMap(path)
+	rawMap := ReadYAMLMap(path)
 	v, ok := rawMap[key]
 	if !ok {
 		return "", false, nil
@@ -183,7 +183,7 @@ func ReadProjectField(path, key string) (string, bool, error) {
 	return yamlValueToString(v), true, nil
 }
 
-func readYAMLMap(path string) map[string]any {
+func ReadYAMLMap(path string) map[string]any {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return make(map[string]any)
