@@ -80,7 +80,7 @@ The graph lives locally (`.git-agent/graph.db`), is incrementally maintained, an
 |-----------|------------|
 | Existing tests still pass | `make test` green after graph feature merge |
 | Graph feature has unit + e2e tests | Coverage for all P0 requirements |
-| Binary size increase is bounded | Delta under 15MB from KuzuDB + Tree-sitter combined |
+| Binary size increase is bounded | Total under 50MB for graph-enabled build (go-kuzu ~20-30MB + gotreesitter ~5-10MB) |
 | No regression in commit/init commands | Existing e2e tests pass unchanged |
 
 ---
