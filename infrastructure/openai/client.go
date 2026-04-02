@@ -177,7 +177,8 @@ const generateScopesSystemPrompt = `You are an expert software engineer. Derive 
 Respond ONLY with valid JSON: {"scopes": [{"name": "...", "description": "..."}], "reasoning": "..."}
 
 Rules (STRICTLY enforce):
-- Generate one scope per meaningful source directory listed in "Top-level directories"
+- Generate exactly one scope per meaningful top-level directory listed in "Top-level directories"
+- NEVER create scopes for subdirectories — each top-level directory is a single scope that covers all its contents (e.g. "infrastructure/" is one scope "infra", NOT separate scopes for infrastructure/openai/, infrastructure/git/, etc.)
 - Skip dependency/build/generated directories (node_modules, vendor, dist, build, target, __pycache__, .next, out, coverage)
 - Skip documentation and asset directories (docs, doc, documentation, assets, static, public, resources)
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
@@ -188,8 +189,9 @@ Rules (STRICTLY enforce):
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scope names lowercase
-- Each scope MUST have a "description" field: start with the source directory path followed by " — ", then a concise phrase (under 15 words) explaining what the scope covers (e.g. "infrastructure/ — adapters for git, OpenAI, and config resolution"). This helps AI map file paths to the correct scope when generating commit messages
-- When "Existing scopes" are provided, treat them as historical context: maintain naming conventions, avoid duplicating them, and regenerate descriptions in the directory-prefixed format for all scopes including existing ones`
+- Aim for 5–10 scopes total — merge or skip marginal directories to avoid scope bloat
+- Each scope MUST have a "description" field: a concise phrase (under 15 words) that includes the source directory path naturally within the description (e.g. scope "infra" description: "git, OpenAI, and config adapters in infrastructure/"). Do NOT use "dir/ — text" prefix format. This helps AI map file paths to the correct scope when generating commit messages
+- When "Existing scopes" are provided, treat them as historical context for naming conventions only — do NOT blindly preserve them. Drop any existing scope that violates the rules above`
 
 // callLLM sends a chat completion request with retry logic for transient failures and empty responses.
 func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int) (string, error) {
