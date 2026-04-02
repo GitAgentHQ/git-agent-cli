@@ -101,9 +101,15 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	} else if len(merged.Scopes) == 0 && len(user.Scopes) > 0 {
 		merged.Scopes = user.Scopes
 	}
+	// hooks: local > project > user
 	localHooks := migrateHooks(local)
 	if len(localHooks) > 0 {
 		merged.Hooks = localHooks
+	} else if len(merged.Hooks) == 0 {
+		userHooks := migrateHooks(user)
+		if len(userHooks) > 0 {
+			merged.Hooks = userHooks
+		}
 	}
 	if local.MaxDiffLines != nil {
 		merged.MaxDiffLines = local.MaxDiffLines

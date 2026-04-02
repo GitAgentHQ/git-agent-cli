@@ -38,6 +38,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	hookChanged := cmd.Flags().Changed("hook")
 	localChanged := cmd.Flags().Changed("local")
+	userChanged := cmd.Flags().Changed("user")
 
 	doScope, _ := cmd.Flags().GetBool("scope")
 	force, _ := cmd.Flags().GetBool("force")
@@ -45,10 +46,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
 	hookValues, _ := cmd.Flags().GetStringArray("hook")
 
+	if userChanged && scopeChanged {
+		return fmt.Errorf("--scope cannot be used with --user")
+	}
+	if userChanged && gitignoreChanged {
+		return fmt.Errorf("--gitignore cannot be used with --user")
+	}
+
 	// Default: no flags → full wizard.
 	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged
 	if fullWizard && localChanged {
 		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, or --hook")
+	}
+	if fullWizard && userChanged {
+		return fmt.Errorf("--user requires --hook")
 	}
 	if fullWizard {
 		doScope = true
@@ -69,7 +80,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if !force {
+		useUser, _ := cmd.Flags().GetBool("user")
+		if !force && !useUser {
 			if _, err := os.Stat(configPath); err == nil {
 				return fmt.Errorf(".git-agent/config.yml already exists\nhint: use --force to reinitialize")
 			}
@@ -114,8 +126,12 @@ func ensureGitRepo(cmd *cobra.Command) error {
 	return err
 }
 
-// initConfigPath returns the config file path based on --local/--project flags.
+// initConfigPath returns the config file path based on --user/--local flags.
 func initConfigPath(cmd *cobra.Command) (string, error) {
+	useUser, _ := cmd.Flags().GetBool("user")
+	if useUser {
+		return userConfigPath(), nil
+	}
 	gitClient := infraGit.NewClient()
 	root, err := gitClient.RepoRoot(cmd.Context())
 	if err != nil {
@@ -199,6 +215,7 @@ func ResetInitFlags() {
 	initCmd.Flags().Set("force", "false")
 	initCmd.Flags().Set("max-commits", "200")
 	initCmd.Flags().Set("local", "false")
+	initCmd.Flags().Set("user", "false")
 	initCmd.ResetFlags()
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
@@ -206,6 +223,8 @@ func ResetInitFlags() {
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
+	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
+	initCmd.MarkFlagsMutuallyExclusive("user", "local")
 }
 
 func init() {
@@ -215,5 +234,7 @@ func init() {
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
+	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
+	initCmd.MarkFlagsMutuallyExclusive("user", "local")
 	rootCmd.AddCommand(initCmd)
 }

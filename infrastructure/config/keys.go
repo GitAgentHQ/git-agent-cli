@@ -27,7 +27,7 @@ var KeyRegistry = map[string]KeyDef{
 	"base_url":               {Name: "base_url", Type: "string", AllowUser: true},
 	"model":                  {Name: "model", Type: "string", AllowUser: true},
 	"scopes":                 {Name: "scopes", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"hook":                   {Name: "hook", Type: "stringslice", AllowProject: true, AllowLocal: true},
+	"hook":                   {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"max_diff_lines":         {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
 	"no_git_agent_co_author": {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"no_model_co_author":     {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
