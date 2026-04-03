@@ -87,6 +87,7 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 |---|---|
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
 | `git-agent init --scope` | Regenerate scopes only |
+| `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |
 | `git-agent config set <key> <value>` | Set a config value (auto-selects scope) |
 | `git-agent config get <key>` | Show a config value and its source scope |

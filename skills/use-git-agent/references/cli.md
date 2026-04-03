@@ -100,8 +100,11 @@ With no flags, runs the full setup wizard:
 | `--force` | bool | false | Overwrite existing config/`.gitignore` |
 | `--max-commits` | int | 200 | Max commits to analyze for scope generation |
 | `--local` | bool | false | Write config to `.git-agent/config.local.yml` (requires an action flag) |
+| `--user` | bool | false | Write config to `~/.config/git-agent/config.yml` (requires `--hook`; mutually exclusive with `--local`) |
 
 `--local` without an action flag (`--scope`, `--gitignore`, or `--hook`) returns an error.
+
+`--user` requires `--hook` and cannot be combined with `--scope` or `--gitignore`. Use it to configure a user-level hook preference independent of any project config.
 
 ### Hook types
 
