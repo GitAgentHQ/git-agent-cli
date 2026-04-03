@@ -225,6 +225,57 @@ Feature: Conventional commit message validation
     Then HasErrors returns true
     And Errors contains "Co-Authored-By"
 
+  # --- error: scope not in whitelist (Rule 1b) ---
+
+  Scenario: Scope not in configured whitelist is rejected
+    Given the commit message is:
+      """
+      docs(code-graph-design): restructure docs
+
+      - restructure design docs
+
+      Reorganises the docs.
+      """
+    And allowed scopes are "app, cli, infra"
+    Then HasErrors returns true
+    And Errors contains "not in the allowed list"
+
+  Scenario: Scope in configured whitelist passes
+    Given the commit message is:
+      """
+      feat(app): add login endpoint
+
+      - add login endpoint
+
+      This adds the login route.
+      """
+    And allowed scopes are "app, cli, infra"
+    Then HasErrors returns false
+
+  Scenario: Scopeless commit passes when scopes are configured
+    Given the commit message is:
+      """
+      chore: update dependencies
+
+      - bump go-openai from 1.40 to 1.41
+
+      Routine dependency update.
+      """
+    And allowed scopes are "app, cli, infra"
+    Then HasErrors returns false
+
+  Scenario: Any scope passes when no scopes are configured
+    Given the commit message is:
+      """
+      feat(anything): add login
+
+      - add route handler
+
+      This adds the login route.
+      """
+    And allowed scopes are ""
+    Then HasErrors returns false
+
   # --- warning: past-tense verb in description (W1) ---
 
   Scenario: Description starts with past-tense verb
