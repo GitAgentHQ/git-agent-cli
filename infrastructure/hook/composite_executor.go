@@ -58,7 +58,7 @@ func (e *compositeHookExecutor) Execute(ctx context.Context, hooks []string, inp
 }
 
 func (e *compositeHookExecutor) runValidation(input domainHook.HookInput) *domainHook.HookResult {
-	validation := domainCommit.ValidateConventional(input.CommitMessage)
+	validation := domainCommit.ValidateConventional(input.CommitMessage, input.Config.ScopeNames())
 
 	if validation.HasErrors() {
 		var sb strings.Builder

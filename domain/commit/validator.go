@@ -59,6 +59,7 @@ func (r *ValidationResult) Warnings() []string {
 
 var (
 	headerRe   = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
+	scopeRe    = regexp.MustCompile(`^\w+\(([a-z0-9_-]+)\)`)
 	coAuthorRe = regexp.MustCompile(`^Co-Authored-By: .+ <[^>]+@[^>]+>$`)
 	footerRe   = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): `)
 	pastVerbs  = []string{
@@ -69,8 +70,9 @@ var (
 )
 
 // ValidateConventional validates a raw commit message against Conventional
-// Commits 1.0.0 and project-specific rules. It never returns nil.
-func ValidateConventional(raw string) *ValidationResult {
+// Commits 1.0.0 and project-specific rules. When allowedScopes is non-empty,
+// any scope used in the header must be in the list. It never returns nil.
+func ValidateConventional(raw string, allowedScopes []string) *ValidationResult {
 	result := &ValidationResult{}
 
 	if strings.TrimSpace(raw) == "" {
@@ -79,12 +81,12 @@ func ValidateConventional(raw string) *ValidationResult {
 	}
 
 	lines := strings.Split(raw, "\n")
-	checkHeader(result, lines[0])
+	checkHeader(result, lines[0], allowedScopes)
 	checkBody(result, lines)
 	return result
 }
 
-func checkHeader(result *ValidationResult, header string) {
+func checkHeader(result *ValidationResult, header string, allowedScopes []string) {
 	// Rule 1: format
 	if !headerRe.MatchString(header) {
 		result.Issues = append(result.Issues, ValidationIssue{
@@ -93,6 +95,26 @@ func checkHeader(result *ValidationResult, header string) {
 				"(valid types: feat fix docs style refactor perf test chore build ci revert)",
 		})
 		// Rules 3 and 4 can still run on the raw header string.
+	}
+
+	// Rule 1b: scope must be in allowed list (when configured)
+	if len(allowedScopes) > 0 {
+		if m := scopeRe.FindStringSubmatch(header); m != nil {
+			scope := m[1]
+			found := false
+			for _, s := range allowedScopes {
+				if s == scope {
+					found = true
+					break
+				}
+			}
+			if !found {
+				result.Issues = append(result.Issues, ValidationIssue{
+					SeverityError,
+					fmt.Sprintf("scope %q is not in the allowed list: %s", scope, strings.Join(allowedScopes, ", ")),
+				})
+			}
+		}
 	}
 
 	// Rule 3: title <=50 chars

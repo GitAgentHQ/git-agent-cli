@@ -208,7 +208,7 @@ func TestValidateConventional(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := commit.ValidateConventional(tc.msg)
+			result := commit.ValidateConventional(tc.msg, nil)
 
 			if tc.wantErrors && !result.HasErrors() {
 				t.Errorf("expected errors but got none")
@@ -238,6 +238,76 @@ func TestValidateConventional(t *testing.T) {
 				}
 				if !found {
 					t.Errorf("warnings %v do not contain %q", result.Warnings(), tc.warnContains)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateConventional_ScopeWhitelist(t *testing.T) {
+	allowed := []string{"app", "cli", "infra"}
+	base := "\n\n- add route handler\n\nThis adds the route."
+
+	cases := []struct {
+		name        string
+		msg         string
+		scopes      []string
+		wantErrors  bool
+		errContains string
+	}{
+		{
+			name:       "allowed scope passes",
+			msg:        "feat(app): add login" + base,
+			scopes:     allowed,
+			wantErrors: false,
+		},
+		{
+			name:        "disallowed scope blocked",
+			msg:         "docs(code-graph-design): restructure" + base,
+			scopes:      allowed,
+			wantErrors:  true,
+			errContains: "not in the allowed list",
+		},
+		{
+			name:       "no scope passes when scopes configured",
+			msg:        "feat: add login" + base,
+			scopes:     allowed,
+			wantErrors: false,
+		},
+		{
+			name:       "any scope passes when no scopes configured",
+			msg:        "feat(anything): add login" + base,
+			scopes:     nil,
+			wantErrors: false,
+		},
+		{
+			name:       "any scope passes with empty scopes slice",
+			msg:        "feat(anything): add login" + base,
+			scopes:     []string{},
+			wantErrors: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := commit.ValidateConventional(tc.msg, tc.scopes)
+
+			if tc.wantErrors && !result.HasErrors() {
+				t.Errorf("expected errors but got none")
+			}
+			if !tc.wantErrors && result.HasErrors() {
+				t.Errorf("expected no errors but got: %v", result.Errors())
+			}
+			if tc.errContains != "" {
+				found := false
+				for _, e := range result.Errors() {
+					if strings.Contains(e, tc.errContains) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("errors %v do not contain %q", result.Errors(), tc.errContains)
 				}
 			}
 		})

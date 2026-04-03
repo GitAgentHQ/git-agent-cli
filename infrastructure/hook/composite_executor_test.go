@@ -169,3 +169,52 @@ func TestCompositeExecutor_MultipleHooks_FirstFails(t *testing.T) {
 		t.Error("expected non-zero exit code when first hook fails")
 	}
 }
+
+func TestCompositeExecutor_ScopeWhitelist_Blocked(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+	input := domainHook.HookInput{
+		CommitMessage: validCommitMessage(), // uses no scope
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			Scopes: []domainProject.Scope{
+				{Name: "app"},
+				{Name: "cli"},
+			},
+		},
+	}
+	// Replace message with one that has a disallowed scope
+	input.CommitMessage = "docs(code-graph-design): restructure\n\n- restructure docs\n\nReorganises docs.\n\nCo-Authored-By: Bot <bot@example.com>"
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode == 0 {
+		t.Error("expected disallowed scope to be blocked")
+	}
+	if !strings.Contains(result.Stderr, "not in the allowed list") {
+		t.Errorf("expected scope error in stderr, got: %s", result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_ScopeWhitelist_Allowed(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+	input := domainHook.HookInput{
+		CommitMessage: "feat(app): add login\n\n- add login endpoint\n\nThis adds login support.\n\nCo-Authored-By: Bot <bot@example.com>",
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			Scopes: []domainProject.Scope{
+				{Name: "app"},
+				{Name: "cli"},
+			},
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected allowed scope to pass, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
+	}
+}
