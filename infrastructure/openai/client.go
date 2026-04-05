@@ -125,7 +125,7 @@ func AllSystemPrompts() []string {
 
 const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
 
-const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message (choose the most appropriate); bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
+const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
 
 const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Bullets: array of strings each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry. Explanation: closing paragraph, sentence case. All text targets ≤72 characters per line.`
 
@@ -155,7 +155,7 @@ Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
 
 Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
-REQUIRED scope — every title MUST use one of the scopes listed in the user message (choose the most appropriate per group). Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group.
+REQUIRED scope — every title MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name. Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group.
 Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
 Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
 
@@ -190,7 +190,7 @@ Rules (STRICTLY enforce):
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
 - All scope names lowercase
 - Aim for 5–10 scopes total — merge or skip marginal directories to avoid scope bloat
-- Each scope MUST have a "description" field: a concise phrase (under 15 words) that includes the source directory path naturally within the description (e.g. scope "infra" description: "git, OpenAI, and config adapters in infrastructure/"). Do NOT use "dir/ — text" prefix format. This helps AI map file paths to the correct scope when generating commit messages
+- Each scope MUST have a "description" field: a concise phrase (under 20 words) that (1) names the key features/responsibilities the scope covers, (2) includes the source directory path naturally, and (3) explicitly states what the scope does NOT cover when its name could be confused with another scope. Example: scope "infra" description: "git, OpenAI, and config adapters in infrastructure/; does not cover CLI commands". Do NOT use "dir/ — text" prefix format. Descriptions are the primary signal AI uses to pick the correct scope when generating commit messages — vague or overlapping descriptions cause scope misassignment
 - When "Existing scopes" are provided, treat them as historical context for naming conventions only — do NOT blindly preserve them. Drop any existing scope that violates the rules above`
 
 // callLLM sends a chat completion request with retry logic for transient failures and empty responses.
@@ -345,7 +345,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			promptParts = append(promptParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 		}
 		if hasScopes {
-			promptParts = append(promptParts, "REQUIRED scopes (use the most appropriate one):\n- "+req.Config.FormatScopesForLLM())
+			promptParts = append(promptParts, "REQUIRED scopes (match by description, not name):\n- "+req.Config.FormatScopesForLLM())
 		}
 		promptParts = append(promptParts, fmt.Sprintf("Git diff:\n<diff>\n%s\n</diff>\n\nStaged files: %s",
 			req.Diff.Content,
@@ -403,7 +403,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
 	}
 	if hasScopes {
-		planParts = append(planParts, "REQUIRED scopes (use the most appropriate one per group):\n- "+req.Config.FormatScopesForLLM())
+		planParts = append(planParts, "REQUIRED scopes (match by description, not name):\n- "+req.Config.FormatScopesForLLM())
 	}
 	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
 		planParts = append(planParts, fmt.Sprintf("Staged files (already staged by user — keep as group 0):\n%s",
