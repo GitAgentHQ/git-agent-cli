@@ -2,8 +2,9 @@
 
 ## Overview
 
-39 scenarios across 5 feature areas covering graph indexing, blast radius,
-code ownership, change patterns, and graph lifecycle management.
+56 scenarios across 8 feature areas covering graph indexing, blast radius,
+code ownership, change patterns, action capture, timeline, diagnose, and
+graph lifecycle management.
 
 P2 scenarios are explicitly tagged and out of scope for v1.
 
@@ -15,17 +16,23 @@ P2 scenarios are explicitly tagged and out of scope for v1.
 - `infrastructure/graph/kuzu_repository.go` -- test against real KuzuDB (embedded, fast)
 - `infrastructure/treesitter/` -- test with small code samples per language
 - `application/graph_service.go` -- mock GraphRepository and ASTParser
+- `application/graph_capture_service.go` -- mock GraphRepository and GitClient
+- `application/graph_diagnose_service.go` -- mock GraphRepository, GraphService, CaptureService, LLMClient
 
 ### Integration Tests
 
 - Full index -> query cycle on a small real repository
 - Incremental index correctness: index, add commits, re-index, verify
+- Capture -> timeline cycle: capture actions, query timeline, verify order
+- Capture -> commit -> action-to-commit linking
 
 ### E2E Tests
 
 Following the existing pattern in `e2e/`:
 - `e2e/graph_test.go` -- build binary, invoke as subprocess
 - Test `graph index`, `graph blast-radius`, `graph status`, `graph reset`
+- Test `graph capture`, `graph timeline` (P1)
+- Test `graph diagnose` (P2, requires LLM mock or skip)
 - All behind `//go:build graph` tag
 
 ### Test Data
@@ -404,6 +411,184 @@ Feature: Change Pattern Query
         Then files matching "*_test.go" and "*.test.ts" and "test_*.py" should be excluded
         And files matching "*.generated.go" and "*.pb.go" should be excluded
         And only production source files should appear in results
+```
+
+### Feature: Action Capture
+
+```gherkin
+Feature: Action Capture
+    As a coding agent hook
+    I want to record each tool call's diff into the graph
+    So that fine-grained action history is available for timeline and diagnosis
+
+    Background:
+        Given a git repository with an indexed graph database
+        And the working directory has uncommitted changes
+
+    Scenario: Capture an agent edit action
+        Given I modified "src/main.go" with an Edit tool
+        And the modification adds 3 lines and removes 1 line
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then a Session node should exist with source "claude-code"
+        And an Action node should be created with tool "Edit"
+        And the Action should contain the unified diff
+        And an ACTION_MODIFIES edge should link the Action to "src/main.go"
+        And the edge should have additions=3 and deletions=1
+        And the command should exit with code 0
+
+    Scenario: Capture appends to existing active session
+        Given a Session "s1" exists with source "claude-code" started 5 minutes ago
+        And "s1" already has 2 actions
+        When I run "git-agent graph capture --source claude-code --tool Write"
+        Then the Action should be added to Session "s1" (not a new session)
+        And the Action id should be "s1:3"
+
+    Scenario: Capture creates new session after timeout
+        Given a Session "s1" exists with source "claude-code" started 45 minutes ago
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then a new Session "s2" should be created
+        And "s1" should have ended_at set automatically
+
+    Scenario: Capture with no diff is a no-op
+        Given the working directory has no uncommitted changes
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then no Action node should be created
+        And the output should indicate skipped with reason "no changes detected"
+        And the command should exit with code 0
+
+    Scenario: Capture truncates large diffs
+        Given I modified a file producing a diff larger than 100KB
+        When I run "git-agent graph capture --source claude-code --tool Bash"
+        Then the stored diff should be truncated at 100KB
+        And the diff should end with "[truncated]"
+
+    Scenario: Capture with custom message
+        When I run "git-agent graph capture --source human --message 'fixed auth bug'"
+        Then the Action node should have message "fixed auth bug"
+
+    Scenario: End session explicitly
+        Given a Session "s1" exists with source "claude-code"
+        When I run "git-agent graph capture --source claude-code --end-session"
+        Then Session "s1" should have ended_at set to now
+        And no new Action should be created
+
+    Scenario: Capture skips silently when DB is locked
+        Given another process holds ".git-agent/graph.lock"
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then the command should exit with code 0
+        And stderr should contain a warning about lock contention
+        And no Action should be recorded
+
+    Scenario: Capture without prior index creates graph DB
+        Given the repository has no existing graph database
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then a graph database should be created at ".git-agent/graph.db"
+        And the Session and Action nodes should be stored
+```
+
+### Feature: Timeline
+
+```gherkin
+Feature: Timeline
+    As a developer or coding agent
+    I want to view a timeline of agent and human actions
+    So that I can understand what changes were made and when
+
+    Background:
+        Given a git repository with an indexed graph database
+        And the following sessions and actions exist:
+            | session | source      | started_at           | actions |
+            | s1      | claude-code | 2026-04-06T14:00:00Z | 3       |
+            | s2      | human       | 2026-04-06T14:20:00Z | 1       |
+            | s3      | claude-code | 2026-04-06T15:00:00Z | 5       |
+
+    Scenario: Timeline shows raw actions (offline)
+        When I run "git-agent graph timeline --since 2h"
+        Then the output should list all 3 sessions
+        And each session should include its actions with diffs
+        And no summary field should be populated
+        And the command should not make any LLM calls
+
+    Scenario: Timeline filtered by source
+        When I run "git-agent graph timeline --source claude-code"
+        Then only sessions s1 and s3 should appear
+        And session s2 (human) should not appear
+
+    Scenario: Timeline filtered by file
+        Given action s1:2 modified "src/main.go"
+        And action s3:1 modified "src/main.go"
+        When I run "git-agent graph timeline --file src/main.go"
+        Then only sessions containing actions that touched "src/main.go" should appear
+        And within each session, only matching actions should be shown
+
+    Scenario: Timeline with compression (requires LLM)
+        When I run "git-agent graph timeline --since 2h --compress"
+        Then each session should have a summary field with a human-readable description
+        And individual actions should not be listed (only action_count)
+        And the LLM should be called with grouped diffs for each session
+
+    @P2
+    Scenario: Timeline compression fails gracefully without LLM
+        Given no LLM endpoint is configured
+        When I run "git-agent graph timeline --compress"
+        Then the command should exit with code 1
+        And the error should indicate LLM is required for compression
+        And the hint should suggest using timeline without --compress
+
+    Scenario: Timeline with time range
+        When I run "git-agent graph timeline --since 2026-04-06T14:30:00Z"
+        Then only session s3 should appear (started after the cutoff)
+
+    Scenario: Empty timeline
+        Given no sessions exist in the graph
+        When I run "git-agent graph timeline"
+        Then the output should show empty sessions array
+        And total_sessions and total_actions should be 0
+```
+
+### Feature: Diagnose
+
+```gherkin
+@P2
+Feature: Diagnose
+    As a developer
+    I want to trace a bug back to the agent action that introduced it
+    So that I can understand what went wrong and fix it efficiently
+
+    Background:
+        Given a git repository with an indexed graph database
+        And the graph has action history from the last 7 days
+        And an LLM endpoint is configured
+
+    Scenario: Diagnose by bug description
+        Given the following recent actions exist:
+            | action | source      | tool  | file                     | timestamp            |
+            | s1:1   | claude-code | Edit  | src/domain/validation.go | 2026-04-06T14:02:00Z |
+            | s1:2   | claude-code | Edit  | src/cmd/commit.go        | 2026-04-06T14:03:00Z |
+            | s2:1   | human       | save  | src/domain/validation.go | 2026-04-06T15:00:00Z |
+        When I run 'git-agent graph diagnose "hook validation rejects valid messages"'
+        Then the output should list suspect actions ranked by confidence
+        And each suspect should include the action ID, diff excerpt, and explanation
+        And a suggested fix should be provided
+        And the blast_radius field should list affected files
+
+    Scenario: Diagnose by file path
+        When I run "git-agent graph diagnose src/domain/validation.go --since 3d"
+        Then the command should find all actions that modified validation.go
+        And also find actions on files in its blast radius
+        And rank them by likelihood of introducing a regression
+
+    Scenario: Diagnose with no matching actions
+        Given no actions exist for the target file in the time range
+        When I run "git-agent graph diagnose src/new_file.go"
+        Then the output should indicate no suspect actions found
+        And suggest expanding the time range with --since
+
+    Scenario: Diagnose without LLM fails with clear error
+        Given no LLM endpoint is configured
+        When I run 'git-agent graph diagnose "test failures"'
+        Then the command should exit with code 1
+        And the error should indicate LLM is required for diagnose
 ```
 
 ### Feature: Graph Lifecycle

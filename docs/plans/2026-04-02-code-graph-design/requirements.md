@@ -48,17 +48,25 @@ The graph lives locally (`.git-agent/graph.db`), is incrementally maintained, an
 | R16 | **`git-agent graph ownership <path>` subcommand** -- return authors ranked by contribution to a file/directory | Helps agents know who to tag for review |
 | R17 | **Incremental AST re-parsing** -- only re-parse files that changed since last index | Performance: avoid re-parsing entire codebase |
 | R18 | **Multi-language AST support** -- Go, TypeScript, Python, Rust, Java at minimum | Cover the most common languages agents work with |
+| R19 | **`git-agent graph capture` subcommand** -- record an agent or human action (diff + metadata) into the graph as a Session/Action node | Foundation for timeline and diagnose; called by agent hooks |
+| R20 | **Session tracking** -- group sequential actions from the same source into sessions, with automatic timeout-based lifecycle | Provides context grouping for timeline display |
+| R21 | **Agent hook integration** -- Claude Code `PostToolUse` hook calls `graph capture` after each `Edit`/`Write`/`Bash` tool call | Primary mechanism for capturing agent actions at tool-call granularity |
+| R22 | **`git-agent graph timeline` subcommand** -- display session/action history, filterable by time, source, and file | Human-readable history of what agents and humans did |
+| R23 | **Action-to-file attribution** -- ACTION_MODIFIES edges link each action to the files it changed, with addition/deletion counts | Enables per-action impact analysis |
+| R24 | **Action-to-commit linking** -- when `git-agent commit` runs, link preceding uncommitted actions to the resulting Commit node via ACTION_PRODUCES | Bridges action-level and commit-level history |
 
 ### P2 -- Future / nice-to-have
 
 | # | Requirement | Rationale |
 |---|-------------|-----------|
-| R19 | **`git-agent graph coupling <pathA> <pathB>`** -- return coupling score between two files/directories | Quantifies hidden dependencies |
-| R20 | **`git-agent graph stability <path>`** -- return change velocity metrics for a file/directory over time | Identifies volatile vs stable code |
-| R21 | **Time-windowed queries** -- `--since` and `--until` flags on all query commands | Focus analysis on recent history |
-| R22 | **Graph export** -- dump graph as DOT or Mermaid for visualization | Debugging and documentation |
-| R23 | **Watch mode** -- auto-reindex on new commits (via filesystem watcher or post-commit hook) | Zero-friction for long-running agent sessions |
-| R24 | **MCP server mode** -- expose graph queries as MCP tools | Native integration for MCP-aware agents |
+| R25 | **LLM timeline compression** -- `graph timeline --compress` sends grouped actions to LLM and returns human-readable session summaries | Raw diffs are noisy; compressed timeline is what humans want to read |
+| R26 | **`git-agent graph diagnose` subcommand** -- given a bug description or file path, combine blast-radius + action timeline + LLM reasoning to identify the most likely introducing action and suggest a fix | AI-enhanced `git bisect` at action granularity |
+| R27 | **`git-agent graph coupling <pathA> <pathB>`** -- return coupling score between two files/directories | Quantifies hidden dependencies |
+| R28 | **`git-agent graph stability <path>`** -- return change velocity metrics for a file/directory over time | Identifies volatile vs stable code |
+| R29 | **Time-windowed queries** -- `--since` and `--until` flags on all query commands | Focus analysis on recent history |
+| R30 | **Graph export** -- dump graph as DOT or Mermaid for visualization | Debugging and documentation |
+| R31 | **Watch mode** -- auto-reindex on new commits (via filesystem watcher or post-commit hook) | Zero-friction for long-running agent sessions |
+| R32 | **MCP server mode** -- expose graph queries as MCP tools | Native integration for MCP-aware agents |
 
 ---
 
@@ -140,14 +148,17 @@ Graph indexing and querying must work entirely offline. No LLM calls. No API cal
 
 ```
 git-agent graph
-  index       Build or update the code graph from git history
+  index         Build or update the code graph from git history
   blast-radius  Show files/symbols affected by changing a target
-  hotspots    Show frequently changed files                     (P1)
-  ownership   Show who owns a file or directory                 (P1)
-  coupling    Show coupling score between two paths             (P2)
-  stability   Show change velocity for a path                   (P2)
-  status      Show graph DB metadata (last indexed commit, node/edge counts)
-  reset       Delete the graph DB and start fresh
+  capture       Record an agent/human action into the graph       (P1)
+  timeline      Show session/action history                       (P1)
+  hotspots      Show frequently changed files                     (P1)
+  ownership     Show who owns a file or directory                 (P1)
+  diagnose      Trace a bug to its introducing action             (P2)
+  coupling      Show coupling score between two paths             (P2)
+  stability     Show change velocity for a path                   (P2)
+  status        Show graph DB metadata (last indexed commit, node/edge counts)
+  reset         Delete the graph DB and start fresh
 ```
 
 ### Command examples and agent usage patterns
@@ -264,6 +275,133 @@ $ git-agent graph ownership src/domain/
 
 **Agent pattern**: Before suggesting changes to unfamiliar code, check who owns it to inform review recommendations.
 
+#### `git-agent graph capture` (P1)
+
+```bash
+# Called by Claude Code PostToolUse hook after an Edit tool call
+$ git-agent graph capture --source claude-code --tool Edit
+{"action_id":"s1:3","session_id":"s1","files_changed":["src/application/commit_service.go"],"capture_ms":45}
+
+# Called by hook after a Bash tool call (e.g., running a test that modified files)
+$ git-agent graph capture --source claude-code --tool Bash
+{"action_id":"s1:4","session_id":"s1","files_changed":[],"capture_ms":12}
+
+# No diff detected -- no-op
+$ git-agent graph capture --source claude-code --tool Edit
+{"action_id":null,"skipped":true,"reason":"no changes detected"}
+
+# End a session explicitly
+$ git-agent graph capture --source claude-code --end-session
+{"session_id":"s1","ended":true,"total_actions":4}
+
+# With a human-readable message
+$ git-agent graph capture --source human --message "fixed auth middleware"
+{"action_id":"s2:1","session_id":"s2","files_changed":["src/middleware/auth.go"]}
+```
+
+**Agent pattern**: Configured as a `PostToolUse` hook. Runs automatically after every `Edit`/`Write`/`Bash` call. The agent does not invoke this directly.
+
+#### `git-agent graph timeline` (P1)
+
+```bash
+# Raw timeline (offline, no LLM)
+$ git-agent graph timeline --since 2h
+{
+  "sessions": [
+    {
+      "id": "s1",
+      "source": "claude-code",
+      "started_at": "2026-04-06T14:02:00Z",
+      "ended_at": "2026-04-06T14:15:00Z",
+      "actions": [
+        {"id": "s1:1", "tool": "Edit", "timestamp": "2026-04-06T14:02:12Z", "files": ["src/application/commit_service.go"], "summary": null},
+        {"id": "s1:2", "tool": "Write", "timestamp": "2026-04-06T14:03:45Z", "files": ["src/application/commit_service_test.go"], "summary": null},
+        {"id": "s1:3", "tool": "Bash", "timestamp": "2026-04-06T14:05:00Z", "files": [], "summary": null}
+      ],
+      "summary": null
+    },
+    {
+      "id": "s2",
+      "source": "human",
+      "started_at": "2026-04-06T14:20:00Z",
+      "actions": [
+        {"id": "s2:1", "tool": "manual-save", "timestamp": "2026-04-06T14:20:30Z", "files": ["src/cmd/commit.go"], "summary": null}
+      ],
+      "summary": null
+    }
+  ],
+  "total_sessions": 2,
+  "total_actions": 4,
+  "query_ms": 28
+}
+
+# Compressed timeline (requires LLM)
+$ git-agent graph timeline --since 2h --compress
+{
+  "sessions": [
+    {
+      "id": "s1",
+      "source": "claude-code",
+      "started_at": "2026-04-06T14:02:00Z",
+      "ended_at": "2026-04-06T14:15:00Z",
+      "summary": "Refactored CommitService to extract hook retry logic into a separate method, added 3 unit tests",
+      "action_count": 3
+    },
+    {
+      "id": "s2",
+      "source": "human",
+      "started_at": "2026-04-06T14:20:00Z",
+      "summary": "Fixed typo in commit command error message",
+      "action_count": 1
+    }
+  ],
+  "total_sessions": 2,
+  "total_actions": 4,
+  "query_ms": 3200
+}
+
+# Filter by file
+$ git-agent graph timeline --file src/application/commit_service.go
+
+# Filter by source
+$ git-agent graph timeline --source claude-code --since 1d
+```
+
+**Agent pattern**: Before starting work, review `graph timeline --since 1d --compress` to understand recent changes and avoid conflicts.
+
+#### `git-agent graph diagnose` (P2)
+
+```bash
+# Diagnose by bug description
+$ git-agent graph diagnose "hook validation fails on messages with colons"
+{
+  "suspects": [
+    {
+      "action_id": "s1:2",
+      "session_id": "s1",
+      "source": "claude-code",
+      "tool": "Edit",
+      "timestamp": "2026-04-06T14:03:45Z",
+      "file": "src/domain/validation.go",
+      "diff_excerpt": "- if !strings.Contains(title, \":\") {\n+ if !strings.Contains(title, \": \") {",
+      "confidence": 0.85,
+      "explanation": "This action changed the colon check from ':' to ': ' (with trailing space), which would cause messages with colons but no space to fail validation"
+    }
+  ],
+  "blast_radius": ["src/cmd/commit.go", "src/application/commit_service.go"],
+  "suggested_fix": "Revert the space requirement in the colon check, or update the validation to accept both ':' and ': '",
+  "query_ms": 8500
+}
+
+# Diagnose by file path (finds recent regressions in that file)
+$ git-agent graph diagnose src/domain/validation.go --since 3d
+
+# Deeper trace
+$ git-agent graph diagnose "tests fail after refactoring" --depth 5
+```
+
+**Agent pattern**: When a test fails or behavior regresses, run `graph diagnose` before manually reading diffs. The agent gets a ranked list of suspect actions with explanations.
+
 #### `git-agent graph status`
 
 ```bash
@@ -273,8 +411,8 @@ $ git-agent graph status
   "last_indexed_commit": "a958f19",
   "last_indexed_at": "2026-04-02T10:30:00Z",
   "commits_behind": 3,
-  "node_counts": {"commit": 4835, "file": 349, "author": 12, "symbol": 0},
-  "edge_counts": {"modifies": 18420, "authored": 4835, "co_changed": 2847, "contains": 0, "calls": 0, "imports": 0},
+  "node_counts": {"commit": 4835, "file": 349, "author": 12, "symbol": 0, "session": 23, "action": 187},
+  "edge_counts": {"modifies": 18420, "authored": 4835, "co_changed": 2847, "contains": 0, "calls": 0, "imports": 0, "session_contains": 187, "action_modifies": 312, "action_produces": 45},
   "db_size_bytes": 12582912,
   "ast_indexed": false
 }
@@ -401,6 +539,73 @@ Fields `importers` and `callers` are empty arrays (not absent) when AST is not i
 }
 ```
 
+#### Capture result (P1)
+
+```json
+{
+  "action_id": "s1:3",
+  "session_id": "s1",
+  "files_changed": ["src/application/commit_service.go"],
+  "capture_ms": 45
+}
+```
+
+When no diff is detected: `{"action_id": null, "skipped": true, "reason": "no changes detected"}`.
+
+#### Timeline result (P1)
+
+```json
+{
+  "sessions": [
+    {
+      "id": "s1",
+      "source": "claude-code",
+      "started_at": "2026-04-06T14:02:00Z",
+      "ended_at": "2026-04-06T14:15:00Z",
+      "action_count": 3,
+      "summary": null,
+      "actions": [
+        {
+          "id": "s1:1",
+          "tool": "Edit",
+          "timestamp": "2026-04-06T14:02:12Z",
+          "files": ["src/application/commit_service.go"],
+          "summary": null
+        }
+      ]
+    }
+  ],
+  "total_sessions": 1,
+  "total_actions": 3,
+  "query_ms": 28
+}
+```
+
+When `--compress` is used, `actions` array is omitted and `summary` is filled with an LLM-generated description.
+
+#### Diagnose result (P2)
+
+```json
+{
+  "suspects": [
+    {
+      "action_id": "s1:2",
+      "session_id": "s1",
+      "source": "claude-code",
+      "tool": "Edit",
+      "timestamp": "2026-04-06T14:03:45Z",
+      "file": "src/domain/validation.go",
+      "diff_excerpt": "- if !strings.Contains(title, \":\")\n+ if !strings.Contains(title, \": \")",
+      "confidence": 0.85,
+      "explanation": "Changed colon check from ':' to ': ', causing messages without trailing space to fail"
+    }
+  ],
+  "blast_radius": ["src/cmd/commit.go", "src/application/commit_service.go"],
+  "suggested_fix": "Revert the space requirement or accept both formats",
+  "query_ms": 8500
+}
+```
+
 #### Status result
 
 ```json
@@ -413,7 +618,9 @@ Fields `importers` and `callers` are empty arrays (not absent) when AST is not i
     "commit": 4835,
     "file": 349,
     "author": 12,
-    "symbol": 0
+    "symbol": 0,
+    "session": 23,
+    "action": 187
   },
   "edge_counts": {
     "modifies": 18420,
@@ -421,7 +628,10 @@ Fields `importers` and `callers` are empty arrays (not absent) when AST is not i
     "co_changed": 2847,
     "contains": 0,
     "calls": 0,
-    "imports": 0
+    "imports": 0,
+    "session_contains": 187,
+    "action_modifies": 312,
+    "action_produces": 45
   },
   "db_size_bytes": 12582912,
   "ast_indexed": false
@@ -452,8 +662,13 @@ Fields `importers` and `callers` are empty arrays (not absent) when AST is not i
 | T6 | **Tree-sitter grammar coverage gaps** -- some languages or language features may not parse correctly | Low | Low | P1 scope. Start with Go + TypeScript. Each grammar is independently toggleable. Fallback: file-level analysis always works even without AST. |
 | T7 | **Graph DB corruption** -- crash during indexing leaves DB in inconsistent state | Low | Medium | Use KuzuDB transactions. Wrap each commit batch in a transaction. `graph reset` provides manual recovery. Store last-indexed commit only after transaction commits. |
 | T8 | **Concurrent access** -- multiple agent sessions or terminal tabs run graph commands simultaneously | Low | Medium | KuzuDB supports concurrent reads. Use file locking for write operations (indexing). Return clear error if lock cannot be acquired. |
-| T9 | **Scope creep into MCP/HTTP** -- temptation to add server mode before CLI is solid | Medium | Medium | Hard boundary: v1 is CLI-only (R24 is P2). MCP is a separate feature after CLI UX is validated with real agent workflows. |
+| T9 | **Scope creep into MCP/HTTP** -- temptation to add server mode before CLI is solid | Medium | Medium | Hard boundary: v1 is CLI-only (R32 is P2). MCP is a separate feature after CLI UX is validated with real agent workflows. |
 | T10 | **Breaking existing builds for non-graph users** -- CGo requirement leaks into default build | Medium | High | Build tag isolation is critical. `go test ./...` must pass without CGo by default. Graph tests live behind build tags or in a separate module. CI runs both builds. |
+| T11 | **`graph capture` latency blocks agent** -- if capture takes >200ms, it degrades agent UX as a PostToolUse hook | Medium | High | Capture must be fast: read `git diff`, write 2-3 nodes/edges, exit. No LLM calls. No schema recomputation. Use write-ahead or fire-and-forget if needed. |
+| T12 | **Diff storage bloat** -- storing full diffs for every action can grow the DB rapidly in long sessions | Medium | Medium | Truncate diffs over 100KB. Purge action data older than 30 days via `graph reset --actions-before DATE`. Track `action` node count in `status`. |
+| T13 | **Claude Code hook API changes** -- hook configuration format may evolve across Claude Code versions | Low | Medium | Keep hook setup in documentation, not hardcoded. Provide a `git-agent graph setup-hooks --agent claude-code` command that generates the correct config. |
+| T14 | **LLM dependency for compress/diagnose** -- these commands fail without LLM access, breaking offline expectation | Medium | Low | Clearly document that `--compress` and `diagnose` require LLM. All other graph commands remain fully offline. Use the existing git-agent OpenAI-compatible endpoint config. |
+| T15 | **Session boundary heuristics** -- 30-minute timeout may not match real agent session boundaries | Low | Low | Make timeout configurable in `.git-agent/config.yml`. Allow explicit `--end-session` and `--session ID` flags for manual control. |
 
 ---
 

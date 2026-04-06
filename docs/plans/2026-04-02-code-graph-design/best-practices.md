@@ -169,6 +169,82 @@ test-graph:
 | Total graph-enabled | ~35-45 MB |
 | Target ceiling | 50 MB |
 
+## Action Capture and Timeline
+
+### Capture Performance
+
+The `capture` command is called by agent hooks after every tool call. It must
+complete in under 200ms to avoid degrading agent UX.
+
+- **Minimal work**: read `git diff`, write 2-3 nodes + edges, exit
+- **No schema recomputation**: do not recompute CO_CHANGED during capture
+- **No LLM calls**: action summaries are filled later by `timeline --compress`
+- **Lock timeout**: if the write lock cannot be acquired in 100ms, skip silently
+- **Batch optimization**: if multiple files changed, create all ACTION_MODIFIES
+  edges in a single transaction
+
+### Session Lifecycle
+
+| Event | Behavior |
+|-------|----------|
+| First capture for a source | Create new Session node |
+| Subsequent capture within 30 min | Append to existing session |
+| No capture for 30 min | Next capture starts new session, auto-closes old one |
+| `--end-session` flag | Explicitly close the session |
+| `graph reset` | Deletes all sessions and actions |
+
+The 30-minute timeout is configurable in `.git-agent/config.yml`:
+```yaml
+graph:
+  session_timeout_minutes: 30
+```
+
+### Diff Storage
+
+- Store diffs as STRING in KuzuDB (not external files)
+- Truncate at 100KB with `[truncated]` marker
+- Expected median: 1-5KB per action (typical agent edits are small)
+- For a 200-action session, expect ~200KB-1MB of diff data
+- Purge old action data: `graph reset --actions-before 2026-03-01`
+
+### Timeline Compression
+
+When `--compress` is used, the LLM receives grouped diffs per session:
+
+```
+Session s1 (claude-code, 2026-04-06 14:00-14:15, 3 actions):
+- Edit src/main.go: [diff]
+- Write src/main_test.go: [diff]
+- Bash: go test ./... (exit 0)
+
+Summarize this session in one sentence.
+```
+
+Guidelines:
+- Group actions by session before sending to LLM
+- Truncate total context to fit model limits (keep most recent actions if overflow)
+- Cache summaries: once computed, write to Session.summary / Action.summary
+- Subsequent `timeline --compress` calls return cached summaries without re-calling LLM
+
+### Hook Configuration
+
+**Claude Code** is the primary integration target. The hook:
+- Must exit 0 in all cases (never block the agent)
+- Should complete in <200ms
+- Should not produce stdout output (agents may parse it)
+- Can write warnings to stderr (agent ignores stderr)
+
+Recommended setup command (future):
+```bash
+git-agent graph setup-hooks --agent claude-code
+# Writes PostToolUse hook to ~/.claude/settings.json
+```
+
+**Universal fallback** for agents without hooks:
+- Git `post-commit` hook: `git-agent graph capture --source git-hook`
+- Captures at commit granularity instead of action granularity
+- Better than nothing; loses per-tool-call attribution
+
 ## Security
 
 - **Parameterized Cypher**: All queries use `$param` placeholders. Never
@@ -176,7 +252,8 @@ test-graph:
 - **File permissions**: `.git-agent/graph.db/` uses 0755 (directory) and
   0644 (files). Query commands open read-only.
 - **No secrets in graph**: Graph contains only structural data (paths, hashes,
-  author names/emails from git log). No file contents stored.
+  author names/emails from git log). Action diffs may contain code snippets but
+  never credentials (diffs come from `git diff`, which respects `.gitignore`).
 - **Gitignore**: `graph.db/` is auto-added to `.gitignore` during `graph index`.
 
 ## Error Handling Patterns
@@ -190,3 +267,6 @@ test-graph:
 | Unsupported language | Skip file, warn in verbose mode |
 | Tree-sitter parse error | Skip file, warn in verbose mode |
 | KuzuDB query timeout | Exit 1, `{"error": "query timed out"}` |
+| Capture lock contention | Skip silently, exit 0, warn on stderr |
+| LLM not configured (`--compress`/`diagnose`) | Exit 1, `{"error": "LLM endpoint not configured"}` |
+| LLM call fails | Exit 1, `{"error": "LLM request failed", "detail": "..."}` |

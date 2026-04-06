@@ -7,15 +7,24 @@ When an agent asks "what will break if I change this function?", today's options
 inadequate: flat `git log` (no relationships), grep (misses semantics), or reading the
 whole codebase (context window limits).
 
-A pre-computed graph database over git history + AST structure enables O(1) relationship
-lookups that agents can query via CLI subcommands returning machine-parseable JSON.
+Beyond structural awareness, agents also lack **behavioral traceability**. When a bug
+surfaces, there is no way to answer "which agent action introduced this regression?"
+because agent edits (each `Edit`, `Write`, `Bash` tool call) are invisible -- they
+collapse into a single git commit, losing the fine-grained action history.
+
+A pre-computed graph database over git history + AST structure + agent/human action
+timeline enables O(1) relationship lookups and behavioral tracing that agents can query
+via CLI subcommands returning machine-parseable JSON.
 
 ### Q&A History
 
 - **Technology choice**: KuzuDB embedded (`go-kuzu` v0.11.3) -- Cypher-native property graph
 - **AST parser**: `gotreesitter` v0.6.4 (pure Go, zero CGo)
 - **Priority**: Blast radius analysis first (primary agent need)
-- **Scope**: P0 = git history + co-change; P1 = AST + symbols; P2 = advanced metrics
+- **Scope**: P0 = git history + co-change; P1 = AST + symbols + action capture; P1.5 = timeline + hook integration; P2 = diagnose + advanced metrics
+- **Action capture**: Agent hooks (Claude Code `PostToolUse`) feed diffs into graph via `graph capture`
+- **Timeline**: LLM-compressed session summaries; raw mode available offline
+- **Diagnose**: Combines blast-radius + action timeline to trace bug introduction
 
 ## Discovery Results
 
@@ -43,11 +52,13 @@ See [Research](./research.md) for full KuzuDB and Tree-sitter evaluation finding
 co-change detection, blast-radius query (file-level), JSON output, CLI subcommands,
 storage, gitignore integration, error handling.
 
-**P1 (post-v1)**: 8 requirements covering AST parsing (Tree-sitter), CALLS/IMPORTS
-edges, symbol-level blast radius, hotspots, ownership queries.
+**P1 (post-v1)**: 14 requirements covering AST parsing (Tree-sitter), CALLS/IMPORTS
+edges, symbol-level blast radius, hotspots, ownership queries, action capture via
+agent hooks, session tracking, and timeline display.
 
-**P2 (future)**: 6 requirements covering coupling scores, stability metrics, time
-windows, graph export, watch mode, MCP server mode.
+**P2 (future)**: 9 requirements covering LLM timeline compression, diagnose (bug
+trace-back), coupling scores, stability metrics, time windows, graph export, watch
+mode, MCP server mode.
 
 See [Requirements](./requirements.md) for the full requirements document with success
 criteria, constraints, CLI UX design, output format specification, and risk register.
@@ -74,12 +85,20 @@ criteria, constraints, CLI UX design, output format specification, and risk regi
 | R16 | Ownership subcommand | CLI Command Tree | Ownership by commit count |
 | R17 | Incremental AST re-parsing | Key Decision #3 (DELETE+CREATE) | Symbol rebuild on content change |
 | R18 | Multi-language AST | Architecture (queries/*.scm) | Multi-language detection |
-| R19 | Coupling score (P2) | CO_CHANGED schema | -- |
-| R20 | Stability metrics (P2) | -- | Stability module/file (P2) |
-| R21 | Time-windowed queries (P2) | Subcommand Flags (--since) | Hotspots with time window |
-| R22 | Graph export (P2) | -- | -- |
-| R23 | Watch mode (P2) | -- | -- |
-| R24 | MCP server mode (P2) | -- | -- |
+| R19 | Action capture via `graph capture` | Session/Action schema, Hook Integration | Capture agent edit action |
+| R20 | Session tracking (group actions) | Session schema, Data Flow | Session lifecycle |
+| R21 | Agent hook integration (Claude Code) | Hook Integration | Claude Code PostToolUse hook |
+| R22 | `graph timeline` subcommand | CLI Command Tree, Data Flow | Timeline raw, Timeline filtered |
+| R23 | Action-to-file attribution | ACTION_MODIFIES schema | Action modifies tracked files |
+| R24 | Action-to-commit linking | ACTION_PRODUCES schema | Actions linked to resulting commit |
+| R25 | LLM timeline compression (P2) | Key Decision #8, Data Flow | Timeline compressed |
+| R26 | `graph diagnose` subcommand (P2) | CLI Command Tree, Data Flow | Diagnose traces bug to action |
+| R27 | Coupling score (P2) | CO_CHANGED schema | -- |
+| R28 | Stability metrics (P2) | -- | Stability module/file (P2) |
+| R29 | Time-windowed queries (P2) | Subcommand Flags (--since) | Hotspots with time window |
+| R30 | Graph export (P2) | -- | -- |
+| R31 | Watch mode (P2) | -- | -- |
+| R32 | MCP server mode (P2) | -- | -- |
 
 ## Rationale
 
@@ -90,7 +109,10 @@ criteria, constraints, CLI UX design, output format specification, and risk regi
 | Schema | Hybrid (Commit/File/Symbol/Author + 6 edge types) | Balances git history granularity with AST precision |
 | Indexing | Incremental (track last indexed commit hash) | Scales to large repos without full rebuild |
 | Interface | CLI subcommands (`git-agent graph ...`) | Agents call via shell, parse JSON stdout |
-| Priority | Blast radius analysis first | Primary agent need: "what's affected if I change X?" |
+| Priority | Blast radius first, then action capture + timeline, then diagnose | Primary agent need, then behavioral traceability |
+| Action capture | Agent hooks (PostToolUse) feed `graph capture` | Precise attribution at tool-call granularity; hooks are the natural integration point |
+| Timeline | LLM compression optional, raw mode offline | Keeps offline default; LLM enrichment is opt-in |
+| Diagnose | Combines blast-radius + action timeline | AI-enhanced `git bisect` at action granularity |
 
 ### Alternatives Considered
 
@@ -138,6 +160,24 @@ CREATE NODE TABLE IF NOT EXISTS Author(
     name STRING
 );
 
+CREATE NODE TABLE IF NOT EXISTS Session(
+    id STRING PRIMARY KEY,          -- UUID
+    source STRING,                  -- "claude-code", "cursor", "windsurf", "human"
+    started_at INT64,
+    ended_at INT64,
+    summary STRING                  -- LLM-compressed description (nullable, filled by timeline --compress)
+);
+
+CREATE NODE TABLE IF NOT EXISTS Action(
+    id STRING PRIMARY KEY,          -- "{session_id}:{sequence_number}"
+    tool STRING,                    -- "Edit", "Write", "Bash", "manual-save", null
+    diff STRING,                    -- unified diff content
+    files_changed STRING[],         -- repo-relative paths
+    timestamp INT64,
+    message STRING,                 -- optional description from caller
+    summary STRING                  -- LLM-compressed one-liner (nullable)
+);
+
 CREATE NODE TABLE IF NOT EXISTS IndexState(
     key STRING PRIMARY KEY,
     value STRING
@@ -171,6 +211,19 @@ CREATE REL TABLE IF NOT EXISTS CO_CHANGED(
     coupling_strength DOUBLE,  -- coupling_count / max(commits_a, commits_b)
     last_coupled_hash STRING
 );
+
+-- Session/Action tracking edges
+CREATE REL TABLE IF NOT EXISTS SESSION_CONTAINS(FROM Session TO Action);
+
+CREATE REL TABLE IF NOT EXISTS ACTION_MODIFIES(
+    FROM Action TO File,
+    additions INT64,
+    deletions INT64
+);
+
+CREATE REL TABLE IF NOT EXISTS ACTION_PRODUCES(
+    FROM Action TO Commit            -- links the action that led to a git commit
+);
 ```
 
 ### CLI Command Tree
@@ -179,8 +232,11 @@ CREATE REL TABLE IF NOT EXISTS CO_CHANGED(
 git-agent graph
   index         Build or update the code graph from git history
   blast-radius  Show files/symbols affected by changing a target
+  capture       Record an agent/human action into the graph       (P1)
+  timeline      Show session/action history with optional compression (P1)
   hotspots      Show frequently changed files                    (P1)
   ownership     Show who owns a file or directory                (P1)
+  diagnose      Trace a bug back to the introducing action       (P2)
   stability     Show change velocity for a path                  (P2)
   clusters      Show co-change clusters                          (P2)
   status        Show graph DB metadata
@@ -193,8 +249,11 @@ git-agent graph
 |---------|-------|---------|
 | `index` | `--max-commits N`, `--force`, `--ast`, `--max-files-per-commit N` | unlimited, false, false, 50 |
 | `blast-radius` | `--symbol NAME`, `--depth N`, `--top N`, `--min-count N` | file-level, 2, 20, 3 |
+| `capture` | `--source NAME`, `--tool NAME`, `--session ID`, `--message TEXT` | required, null, auto-create, null |
+| `timeline` | `--since DATE\|DURATION`, `--until DATE`, `--source NAME`, `--file PATH`, `--compress`, `--top N` | all, now, all, all, false, 50 |
 | `hotspots` | `--path DIR`, `--top N`, `--since DATE\|DURATION` | repo root, 10, all time |
 | `ownership` | `PATH` (positional), `--since DATE\|DURATION` | required, all time |
+| `diagnose` | `DESCRIPTION\|PATH` (positional), `--since DATE\|DURATION`, `--depth N` | required, 7d, 3 |
 | All | `--format json\|text`, `--verbose` | json, false |
 
 ### Exit Codes
@@ -240,6 +299,38 @@ graph TD
         R --> S
         S --> T[JSON output to stdout]
     end
+
+    subgraph "git-agent graph capture (called by agent hook)"
+        CA[Hook trigger + git diff] --> CB[GraphService.Capture]
+        CB --> CC{Session exists?}
+        CC -->|No| CD[Create Session node]
+        CC -->|Yes| CE[Reuse Session]
+        CD --> CF[Create Action node]
+        CE --> CF
+        CF --> CG[Parse diff: extract changed files]
+        CG --> CH[Create ACTION_MODIFIES edges]
+        CH --> CI[Return action ID]
+    end
+
+    subgraph "git-agent graph timeline"
+        TA[CLI args: filters] --> TB[GraphService.Timeline]
+        TB --> TC[Cypher: Sessions + Actions in range]
+        TC --> TD{--compress flag?}
+        TD -->|No| TE[Return raw action list]
+        TD -->|Yes| TF[Group actions by session]
+        TF --> TG[LLM: compress each session into summary]
+        TG --> TH[Return compressed timeline]
+    end
+
+    subgraph "git-agent graph diagnose"
+        DA[Bug description / file path] --> DB[GraphService.Diagnose]
+        DB --> DC[BlastRadius: find affected files]
+        DB --> DD[Timeline: find actions touching those files]
+        DC --> DE[Intersect: actions on affected files]
+        DD --> DE
+        DE --> DF[LLM: rank actions by likelihood of introducing bug]
+        DF --> DG[Return suspects with diffs + suggested fix]
+    end
 ```
 
 ### Key Design Decisions
@@ -269,6 +360,29 @@ graph TD
 6. **Bulk COPY FROM for initial index**: 53x faster than row-by-row INSERT.
    Incremental updates use MERGE.
 
+7. **Action capture is hook-driven, not polling**: Agent hooks (Claude Code
+   `PostToolUse`) call `git-agent graph capture` with the current `git diff`.
+   This gives precise per-tool-call attribution. Human edits fall back to
+   commit-level granularity (captured when `graph index` runs). Polling or
+   filesystem watchers were rejected as too noisy and complex.
+
+8. **Timeline has two modes: raw (offline) and compressed (LLM)**:
+   `graph timeline` without `--compress` returns raw actions with diffs -- fully
+   offline. `--compress` calls the configured LLM endpoint to produce
+   human-readable summaries. This preserves the offline-first principle while
+   enabling richer output when an LLM is available.
+
+9. **Diagnose combines graph queries + LLM reasoning**: `graph diagnose` first
+   uses blast-radius and timeline queries (offline, fast) to narrow candidates,
+   then passes the candidate actions + diffs to an LLM for causal analysis.
+   Always requires LLM access.
+
+10. **Session lifecycle is implicit**: A session starts on the first `capture`
+    call with no active session (or a new `--session` ID). A session ends when
+    no capture arrives for 30 minutes, or when explicitly closed via
+    `capture --end-session`. This avoids requiring agents to manage session
+    state.
+
 ### Constraints
 
 - **C1**: `go-kuzu` requires CGo. Mitigated by build tags.
@@ -276,7 +390,9 @@ graph TD
 - **C3**: Must follow existing Clean Architecture (domain has zero external imports).
 - **C4**: Binary size target: total under 50MB for graph-enabled build (go-kuzu ~20-30MB + gotreesitter ~5-10MB).
 - **C5**: Storage target: <50MB for 10k-commit repos.
-- **C6**: Fully offline. No LLM calls, no network.
+- **C6**: Offline by default. `index`, `blast-radius`, `capture`, `timeline` (raw mode), `status`, `reset` require no network. `timeline --compress` and `diagnose` require LLM access via the existing git-agent OpenAI-compatible endpoint.
+- **C7**: Action capture must be fast (<200ms) to avoid slowing agent tool calls. The `capture` command does minimal work: read `git diff`, write nodes/edges, exit.
+- **C8**: Diff storage budget: action diffs are stored in KuzuDB as STRING. Diffs exceeding 100KB are truncated with a `[truncated]` marker. Expected median: 1-5KB per action.
 
 ### Performance Targets
 
@@ -285,12 +401,50 @@ graph TD
 | First index, 5k commits | <30 seconds |
 | Incremental index, 1 new commit | <2 seconds |
 | Blast radius query | <500ms |
+| `graph capture` (single action) | <200ms |
+| `graph timeline` (raw, 100 actions) | <300ms |
+| `graph timeline --compress` (100 actions) | <10 seconds (LLM-bound) |
+| `graph diagnose` | <30 seconds (LLM-bound) |
 
 ### Success Criteria
 
 - Agent can call `git-agent graph blast-radius src/main.go`, parse JSON, and use it
+- Claude Code `PostToolUse` hook calls `graph capture`, actions appear in `graph timeline`
+- `graph diagnose "bug description"` identifies the likely introducing action with supporting diff
 - `make test` passes after merge (existing tests unaffected)
 - All P0 requirements covered by unit + e2e tests
+
+### Hook Integration
+
+Agent hooks are the primary mechanism for feeding action data into the graph.
+
+**Claude Code** (`~/.claude/settings.json`):
+```jsonc
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": { "tool_name": "Edit|Write|Bash" },
+        "command": "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME"
+      }
+    ]
+  }
+}
+```
+
+The `capture` command:
+1. Reads `git diff` (unstaged) + `git diff --cached` (staged)
+2. If no diff, exits 0 immediately (no-op for read-only tool calls)
+3. Creates or reuses a Session node (keyed by source + timeout window)
+4. Creates an Action node with the diff, tool name, and timestamp
+5. Creates ACTION_MODIFIES edges for each changed file
+6. Exits 0 (must never block the agent)
+
+**Other agents**: Cursor and Windsurf lack native hook systems. Integration
+options (P2):
+- VS Code extension `onDidSaveTextDocument` callback
+- Custom file watcher wrapping `graph capture --source cursor`
+- Git `post-commit` hook for commit-level capture (coarser but universal)
 
 ## Design Documents
 
