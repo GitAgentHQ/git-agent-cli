@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement graph lifecycle operations: Status (node/edge counts), Reset (delete DB), gitignore integration (auto-add graph.db/), force re-index (drop + rebuild), error handling (not git repo, corrupted DB), and file-based locking for concurrent access.
+Implement graph lifecycle operations: Status (node/edge counts), Reset (delete DB), gitignore integration (auto-add graph.db), force re-index (drop + rebuild), error handling (not git repo, corrupted DB), and file-based locking for concurrent access.
 
 ## Execution Context
 
@@ -48,11 +48,11 @@ Call `repo.GetStats(ctx)` to get node/edge counts. If database does not exist, r
 
 ### Step 2: Implement Reset
 
-Call `repo.Drop(ctx)` to remove the database directory. Return delete confirmation with freed bytes.
+Call `repo.Drop(ctx)` to remove the database file. Return delete confirmation with freed bytes.
 
 ### Step 3: Implement gitignore integration
 
-After successful Index, check if `.git-agent/.gitignore` exists. If not, create it with `graph.db/`. If it exists but lacks the entry, append it.
+After successful Index, check if `.git-agent/.gitignore` exists. If not, create it with `graph.db`. If it exists but lacks the entry, append it.
 
 ### Step 4: Implement file-based lock
 
@@ -64,24 +64,24 @@ When `IndexRequest.Force` is true, call Reset before proceeding with full index.
 
 ### Step 6: Implement error handling
 
-Check if current directory is a git repository before any graph operation. On KuzuDB corruption errors, wrap with a suggestion to run `graph reset`.
+Check if current directory is a git repository before any graph operation. On SQLite corruption errors, wrap with a suggestion to run `graph reset`.
 
 ### Step 7: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_(Status|Reset)" -v` -- all tests PASS
+- **Verification**: `go test ./application/... -run "TestGraphService_(Status|Reset)" -v` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run "TestGraphService_(Status|Reset)" -v
-go test -tags graph ./infrastructure/graph/... -run TestGraphLock -v
+go test ./application/... -run "TestGraphService_(Status|Reset)" -v
+go test ./infrastructure/graph/... -run TestGraphLock -v
 ```
 
 ## Success Criteria
 
 - Status reports correct counts or missing graph hint
-- Reset deletes database directory
+- Reset deletes database file
 - Gitignore auto-updated during indexing
 - File lock prevents concurrent indexing
 - Force flag triggers full rebuild

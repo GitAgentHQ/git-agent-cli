@@ -77,16 +77,16 @@ Scenario: Index with AST extracts symbols (E2E)
 
 Run all E2E tests. Fix any integration issues discovered (data flow, serialization, path handling).
 
-- **Verification**: `go test -tags graph ./e2e/... -run TestE2E_Graph` -- all tests PASS
+- **Verification**: `go test ./e2e/... -run TestE2E_Graph` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # All graph E2E tests pass
-go test -tags graph ./e2e/... -run TestE2E_Graph -v
+go test ./e2e/... -run TestE2E_Graph -v
 
 # All unit tests pass
-go test -tags graph ./application/... ./infrastructure/graph/... ./infrastructure/treesitter/... -v
+go test ./application/... ./infrastructure/graph/... ./infrastructure/treesitter/... -v
 
 # Existing tests unaffected
 make test

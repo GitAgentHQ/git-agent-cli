@@ -31,7 +31,7 @@ Scenario: Full pipeline works end-to-end
 ## Files to Modify/Create
 
 - May modify any files to fix integration issues discovered by E2E tests
-- Focus areas: `cmd/graph_*.go`, `application/graph_*.go`, `infrastructure/graph/kuzu_repository.go`
+- Focus areas: `cmd/graph_*.go`, `application/graph_*.go`, `infrastructure/graph/sqlite_repository.go`
 
 ## Steps
 
@@ -41,20 +41,20 @@ Run all graph E2E tests, read error output, and identify integration issues.
 
 ### Step 2: Fix integration issues
 
-Address each failing E2E test. Common issues: Cypher query syntax, session ID generation, diff parsing, flag propagation, LLM client wiring.
+Address each failing E2E test. Common issues: SQL query syntax, session ID generation, diff parsing, flag propagation, LLM client wiring.
 
 ### Step 3: Verify all tests pass (Green)
 
-- **Verification**: `go test -tags graph ./e2e/... -run TestE2E_Graph` -- all tests PASS
-- **Verification**: `go test -tags graph ./...` -- all graph tests pass
+- **Verification**: `go test ./e2e/... -run TestE2E_Graph` -- all tests PASS
+- **Verification**: `go test ./...` -- all graph tests pass
 - **Verification**: `make test` -- existing tests unaffected
 
 ## Verification Commands
 
 ```bash
 # All graph tests pass
-go test -tags graph ./e2e/... -run TestE2E_Graph -v
-go test -tags graph ./... -v
+go test ./e2e/... -run TestE2E_Graph -v
+go test ./... -v
 
 # Existing tests unaffected
 make test

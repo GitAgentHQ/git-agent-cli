@@ -40,7 +40,7 @@ Scenario: Domain types have zero external imports
 
 ### Step 1: Define node types in nodes.go
 
-Create value objects for all graph node types: CommitNode, FileNode, SymbolNode, AuthorNode, SessionNode, ActionNode. Each struct has exported fields matching the KuzuDB schema properties.
+Create value objects for all graph node types: CommitNode, FileNode, SymbolNode, AuthorNode, SessionNode, ActionNode. Each struct has exported fields matching the SQLite schema columns.
 
 ### Step 2: Define edge types in edges.go
 

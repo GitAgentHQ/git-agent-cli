@@ -66,13 +66,13 @@ Scenario: Query ownership for file with single author
 
 ### Step 2: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Ownership` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestGraphService_Ownership` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestGraphService_Ownership -v
+go test ./application/... -run TestGraphService_Ownership -v
 ```
 
 ## Success Criteria

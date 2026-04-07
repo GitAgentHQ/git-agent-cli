@@ -29,7 +29,7 @@ Scenario: First-time full index of a git repository
 ## Files to Modify/Create
 
 - May modify any P0 files to fix integration issues discovered by E2E tests
-- Focus areas: `cmd/graph_*.go`, `application/graph_service.go`, `infrastructure/graph/kuzu_repository.go`
+- Focus areas: `cmd/graph_*.go`, `application/graph_service.go`, `infrastructure/graph/sqlite_repository.go`
 
 ## Steps
 
@@ -39,22 +39,22 @@ Run the E2E tests, read error output, and identify integration issues (data flow
 
 ### Step 2: Fix integration issues
 
-Address each failing E2E test. Common issues: JSON marshaling, path resolution, KuzuDB connection lifecycle in subprocess, exit code propagation.
+Address each failing E2E test. Common issues: JSON marshaling, path resolution, SQLite connection lifecycle in subprocess, exit code propagation.
 
 ### Step 3: Verify all P0 tests pass (Green)
 
-- **Verification**: `go test -tags graph ./e2e/... -run TestE2E_Graph` -- all tests PASS
-- **Verification**: `go test -tags graph ./application/... ./infrastructure/graph/...` -- unit tests still pass
+- **Verification**: `go test ./e2e/... -run TestE2E_Graph` -- all tests PASS
+- **Verification**: `go test ./application/... ./infrastructure/graph/...` -- unit tests still pass
 - **Verification**: `make test` -- existing tests unaffected
 
 ## Verification Commands
 
 ```bash
 # E2E tests pass
-go test -tags graph ./e2e/... -run TestE2E_Graph -v
+go test ./e2e/... -run TestE2E_Graph -v
 
 # Unit tests still pass
-go test -tags graph ./application/... ./infrastructure/graph/... -v
+go test ./application/... ./infrastructure/graph/... -v
 
 # Existing tests unaffected
 make test

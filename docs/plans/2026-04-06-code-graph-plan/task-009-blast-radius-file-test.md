@@ -63,7 +63,7 @@ Scenario: Blast radius query on non-existent file
 ## Files to Modify/Create
 
 - Modify: `application/graph_service_test.go` (add blast radius test cases)
-- Create: `infrastructure/graph/kuzu_repository_test.go` (blast radius query integration tests)
+- Create: `infrastructure/graph/sqlite_repository_test.go` (blast radius query integration tests)
 
 ## Steps
 
@@ -75,26 +75,26 @@ Scenario: Blast radius query on non-existent file
 - `TestGraphService_BlastRadius_Transitive`: Verify depth-2 transitive co-changes
 - `TestGraphService_BlastRadius_DepthLimit`: Verify depth limit is respected
 
-### Step 2: Write integration tests for Cypher queries
+### Step 2: Write integration tests for SQL queries
 
-- `TestKuzuRepository_BlastRadius`: Seed a real KuzuDB with known data, query blast radius, verify Cypher results match expected output
-- `TestKuzuRepository_BlastRadius_JSONFormat`: Verify result structure matches JSON schema (target, target_type, co_changed, importers, callers, query_ms)
+- `TestSQLiteRepository_BlastRadius`: Seed a real SQLite with known data, query blast radius, verify SQL results match expected output
+- `TestSQLiteRepository_BlastRadius_JSONFormat`: Verify result structure matches JSON schema (target, target_type, co_changed, importers, callers, query_ms)
 
 ### Step 3: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_BlastRadius` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestGraphService_BlastRadius` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestGraphService_BlastRadius -v
-go test -tags graph ./infrastructure/graph/... -run TestKuzuRepository_BlastRadius -v
+go test ./application/... -run TestGraphService_BlastRadius -v
+go test ./infrastructure/graph/... -run TestSQLiteRepository_BlastRadius -v
 ```
 
 ## Success Criteria
 
 - Tests cover all 6 non-symbol blast radius BDD scenarios
-- Integration tests verify Cypher query correctness
+- Integration tests verify SQL query correctness
 - JSON output format validated
 - All tests FAIL (Red phase)

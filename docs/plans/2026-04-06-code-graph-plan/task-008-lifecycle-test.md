@@ -10,7 +10,7 @@ Write tests for graph lifecycle management: status reporting, reset/deletion, gi
 
 **Task Number**: 008 of 020 (test)
 **Phase**: Core Features (P0)
-**Prerequisites**: KuzuDB client from task-003
+**Prerequisites**: SQLite client from task-003
 
 ## BDD Scenario
 
@@ -39,7 +39,7 @@ Scenario: Graph index auto-adds graph.db to gitignore
   Given a git repository with no ".git-agent/.gitignore"
   When I run "git-agent graph index"
   Then ".git-agent/.gitignore" should exist
-  And ".git-agent/.gitignore" should contain "graph.db/"
+  And ".git-agent/.gitignore" should contain "graph.db"
 
 Scenario: Graph commands outside a git repository return error
   Given the current directory is not a git repository
@@ -73,9 +73,7 @@ Scenario: Concurrent indexing is rejected via file lock
 
 ## Files to Modify/Create
 
-- Create: `application/graph_lifecycle_test.go` (with `//go:build graph` tag)
-- Create: `infrastructure/graph/lock_test.go` (with `//go:build graph` tag)
-
+- Create: `application/graph_lifecycle_test.go` - Create: `infrastructure/graph/lock_test.go` 
 ## Steps
 
 ### Step 1: Write Status tests
@@ -90,7 +88,7 @@ Scenario: Concurrent indexing is rejected via file lock
 
 ### Step 3: Write gitignore tests
 
-- `TestGraphService_Index_CreatesGitignore`: After indexing, `.git-agent/.gitignore` contains `graph.db/`
+- `TestGraphService_Index_CreatesGitignore`: After indexing, `.git-agent/.gitignore` contains `graph.db`
 - `TestGraphService_Index_ExistingGitignore`: Appends to existing gitignore without duplicating
 
 ### Step 4: Write error handling tests
@@ -109,14 +107,14 @@ Scenario: Concurrent indexing is rejected via file lock
 
 ### Step 7: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_(Status|Reset|Index_Creates|NotGitRepo|CorruptedDB|Index_Force)"` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run "TestGraphService_(Status|Reset|Index_Creates|NotGitRepo|CorruptedDB|Index_Force)"` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run "TestGraphService_(Status|Reset)" -v
-go test -tags graph ./infrastructure/graph/... -run TestGraphLock -v
+go test ./application/... -run "TestGraphService_(Status|Reset)" -v
+go test ./infrastructure/graph/... -run TestGraphLock -v
 ```
 
 ## Success Criteria

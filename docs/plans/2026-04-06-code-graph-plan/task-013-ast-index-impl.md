@@ -28,7 +28,7 @@ Scenario: Index rebuilds symbols when file content changes
 ## Files to Modify/Create
 
 - Modify: `application/graph_service.go` -- extend Index to include AST parsing
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement ReplaceFileSymbols
+- Modify: `infrastructure/graph/sqlite_repository.go` -- implement ReplaceFileSymbols
 
 ## Steps
 
@@ -49,13 +49,13 @@ For each import in ParseResult.Imports, resolve the import path to a file path a
 
 ### Step 4: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)"` -- all tests PASS
+- **Verification**: `go test ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)"` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)" -v
+go test ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)" -v
 ```
 
 ## Success Criteria

@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement CO_CHANGED edge computation in the KuzuDB repository layer. After all commits are indexed, recompute co-change relationships by querying commit-file pairings, calculating coupling count and strength, and storing edges that meet the minimum threshold.
+Implement CO_CHANGED edge computation in the SQLite repository layer. After all commits are indexed, recompute co-change relationships by querying commit-file pairings, calculating coupling count and strength, and storing edges that meet the minimum threshold.
 
 ## Execution Context
 
@@ -30,8 +30,7 @@ Scenario: Index computes CO_CHANGED edges
 
 ## Files to Modify/Create
 
-- Create: `infrastructure/graph/co_change.go` (with `//go:build graph` tag)
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement RecomputeCoChanged
+- Create: `infrastructure/graph/co_change.go` - Modify: `infrastructure/graph/sqlite_repository.go` -- implement RecomputeCoChanged
 
 ## Steps
 
@@ -53,13 +52,13 @@ Call `repo.RecomputeCoChanged(ctx, minCount)` after all commits are indexed.
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./infrastructure/graph/... -run TestCoChange` -- all tests PASS
+- **Verification**: `go test ./infrastructure/graph/... -run TestCoChange` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./infrastructure/graph/... -run TestCoChange -v
+go test ./infrastructure/graph/... -run TestCoChange -v
 ```
 
 ## Success Criteria

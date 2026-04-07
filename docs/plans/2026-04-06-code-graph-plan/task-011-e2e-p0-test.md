@@ -4,7 +4,7 @@
 
 ## Description
 
-Write end-to-end tests for P0 graph features following the existing e2e pattern: TestMain builds the binary once (with graph tag), then each test invokes it as a subprocess against a real temporary git repository.
+Write end-to-end tests for P0 graph features following the existing e2e pattern: TestMain builds the binary once, then each test invokes it as a subprocess against a real temporary git repository.
 
 ## Execution Context
 
@@ -42,13 +42,12 @@ Scenario: Graph reset deletes the database
 
 ## Files to Modify/Create
 
-- Create: `e2e/graph_test.go` (with `//go:build graph` tag)
-
+- Create: `e2e/graph_test.go` 
 ## Steps
 
 ### Step 1: Set up test infrastructure
 
-In `TestMain`, build the binary with `-tags graph`. Create a temporary git repository with multiple commits, authors, and file modifications (same pattern as existing e2e tests).
+In `TestMain`, build the binary with ``. Create a temporary git repository with multiple commits, authors, and file modifications (same pattern as existing e2e tests).
 
 ### Step 2: Write graph index E2E test
 
@@ -67,22 +66,22 @@ In `TestMain`, build the binary with `-tags graph`. Create a temporary git repos
 
 ### Step 5: Write reset E2E test
 
-- `TestE2E_GraphReset`: Index, reset, verify graph.db directory is removed
+- `TestE2E_GraphReset`: Index, reset, verify graph.db file is removed
 
 ### Step 6: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./e2e/... -run TestE2E_Graph` -- tests MUST FAIL (need binary + test data)
+- **Verification**: `go test  ./e2e/... -run TestE2E_Graph` -- tests MUST FAIL (need binary + test data)
 
 ## Verification Commands
 
 ```bash
 # Tests should fail initially, then pass after impl
-go test -tags graph ./e2e/... -run TestE2E_Graph -v
+go test  ./e2e/... -run TestE2E_Graph -v
 ```
 
 ## Success Criteria
 
 - E2E tests follow existing pattern (subprocess invocation)
-- Tests use `//go:build graph` tag
+- Tests compile in the default build (no build tags needed)
 - All P0 scenarios covered end-to-end
 - All tests FAIL (Red phase)

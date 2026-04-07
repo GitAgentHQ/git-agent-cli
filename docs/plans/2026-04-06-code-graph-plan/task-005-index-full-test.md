@@ -10,7 +10,7 @@ Write tests for the full graph indexing flow in `GraphService.Index`: parsing gi
 
 **Task Number**: 005 of 020 (test)
 **Phase**: Core Features (P0)
-**Prerequisites**: KuzuDB client (task-003) and git graph client (task-004)
+**Prerequisites**: SQLite client (task-003) and git graph client (task-004)
 
 ## BDD Scenario
 
@@ -53,8 +53,7 @@ Scenario: Index handles large repositories gracefully
 
 ## Files to Modify/Create
 
-- Create: `application/graph_service_test.go` (with `//go:build graph` tag)
-
+- Create: `application/graph_service_test.go` 
 ## Steps
 
 ### Step 1: Create test file with mocks
@@ -70,13 +69,13 @@ Create `application/graph_service_test.go` with mock implementations of GraphRep
 
 ### Step 3: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Index` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestGraphService_Index` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestGraphService_Index -v
+go test ./application/... -run TestGraphService_Index -v
 ```
 
 ## Success Criteria

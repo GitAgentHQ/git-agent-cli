@@ -26,8 +26,7 @@ Scenario: Capture an agent edit action
 
 ## Files to Modify/Create
 
-- Create: `application/graph_capture_service.go` (with `//go:build graph` tag)
-
+- Create: `application/graph_capture_service.go` 
 ## Steps
 
 ### Step 1: Create CaptureService struct
@@ -59,13 +58,13 @@ Follow the capture algorithm from the design:
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestCaptureService` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestCaptureService` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestCaptureService -v
+go test ./application/... -run TestCaptureService -v
 ```
 
 ## Success Criteria

@@ -1,10 +1,10 @@
-# Task 001: Project Setup and Build Tags
+# Task 001: Project Setup and Dependencies
 
 **depends-on**: (none)
 
 ## Description
 
-Set up the directory structure, build tags, and Makefile targets for the graph feature. This creates the skeleton that all subsequent tasks build upon.
+Set up the directory structure and dependencies for the graph feature. This creates the skeleton that all subsequent tasks build upon. No build tags needed -- SQLite via `modernc.org/sqlite` is pure Go, so graph code compiles in the default binary.
 
 ## Execution Context
 
@@ -15,17 +15,14 @@ Set up the directory structure, build tags, and Makefile targets for the graph f
 ## BDD Scenario
 
 ```gherkin
-Scenario: Build tag isolation preserves default build
+Scenario: Graph dependencies compile in default build
   Given the git-agent-cli project exists
   When I run "make build"
-  Then the binary should compile without CGo
-  And the binary should not include graph commands
-  When I run "make build-graph"
-  Then the binary should compile with CGo and the "graph" build tag
+  Then the binary should compile as pure Go
   And the binary should include graph commands
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (Build Tag Isolation section)
+**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (Architecture section)
 
 ## Files to Modify/Create
 
@@ -33,8 +30,7 @@ Scenario: Build tag isolation preserves default build
 - Create: `infrastructure/graph/` directory
 - Create: `infrastructure/treesitter/` directory
 - Create: `pkg/graph/` directory
-- Modify: `Makefile` (add `build-graph`, `test-graph` targets)
-- Modify: `go.mod` (add `go-kuzu` and `gotreesitter` dependencies)
+- Modify: `go.mod` (add `modernc.org/sqlite` and `gotreesitter` dependencies)
 
 ## Steps
 
@@ -46,23 +42,16 @@ Create the following empty directories with placeholder files:
 - `infrastructure/treesitter/`
 - `pkg/graph/`
 
-### Step 2: Add Makefile targets
-
-Add these targets to the existing `Makefile`:
-- `build-graph`: `go build -tags graph -o git-agent .`
-- `test-graph`: `go test -tags graph -count=1 ./...`
-- `install-graph`: `go install -tags graph .`
-
-### Step 3: Add dependencies
+### Step 2: Add dependencies
 
 ```bash
-go get github.com/kuzudb/go-kuzu@v0.11.3
+go get modernc.org/sqlite@latest
 go get github.com/nicois/gotreesitter@v0.6.4
 ```
 
-### Step 4: Verify default build is unaffected
+### Step 3: Verify default build is unaffected
 
-- **Verification**: `make build` succeeds without CGo
+- **Verification**: `make build` succeeds as pure Go
 - **Verification**: `make test` passes (all existing tests)
 
 ## Verification Commands
@@ -71,9 +60,6 @@ go get github.com/nicois/gotreesitter@v0.6.4
 # Default build still works
 make build
 
-# Graph build compiles
-make build-graph
-
 # Existing tests pass
 make test
 ```
@@ -81,7 +67,5 @@ make test
 ## Success Criteria
 
 - Directory structure created
-- Makefile has graph-specific targets
-- `make build` succeeds without CGo (no regression)
-- `make build-graph` compiles with CGo
+- `make build` succeeds as pure Go (no regression)
 - `make test` passes

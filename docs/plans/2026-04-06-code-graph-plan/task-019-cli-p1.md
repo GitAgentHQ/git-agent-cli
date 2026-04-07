@@ -40,8 +40,7 @@ Scenario: Index with AST flag via CLI
 
 ## Files to Modify/Create
 
-- Create: `cmd/graph_capture.go` -- `graph capture` subcommand (with `//go:build graph` tag)
-- Create: `cmd/graph_timeline.go` -- `graph timeline` subcommand
+- Create: `cmd/graph_capture.go` -- `graph capture` subcommand - Create: `cmd/graph_timeline.go` -- `graph timeline` subcommand
 - Create: `cmd/graph_hotspots.go` -- `graph hotspots` subcommand
 - Create: `cmd/graph_ownership.go` -- `graph ownership` subcommand
 - Modify: `cmd/graph.go` -- register new subcommands
@@ -71,14 +70,14 @@ Add `--ast` boolean flag to `graph index`. Pass through to IndexRequest.AST. Whe
 
 ### Step 6: Verify commands compile and show help
 
-- **Verification**: `make build-graph` succeeds
+- **Verification**: `make build` succeeds
 - **Verification**: All new commands show proper help text
 
 ## Verification Commands
 
 ```bash
 # Build with graph support
-make build-graph
+make build
 
 # Verify CLI help for all P1 commands
 ./git-agent graph capture --help
@@ -93,4 +92,4 @@ make build-graph
 - All P1 subcommands registered and accessible
 - Flags match the design specification
 - `--ast` flag added to `graph index`
-- `make build-graph` compiles successfully
+- `make build` compiles successfully

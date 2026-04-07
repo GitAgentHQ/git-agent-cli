@@ -32,8 +32,7 @@ Scenario: First-time full index of a git repository
 
 ## Files to Modify/Create
 
-- Create: `application/graph_service.go` (with `//go:build graph` tag)
-- Create: `pkg/graph/filter.go` -- file filtering logic (vendor, binary, lock files)
+- Create: `application/graph_service.go` - Create: `pkg/graph/filter.go` -- file filtering logic (vendor, binary, lock files)
 
 ## Steps
 
@@ -58,13 +57,13 @@ Create `pkg/graph/filter.go` with `ShouldIndex(path string) bool` that excludes 
 
 ### Step 4: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Index` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestGraphService_Index` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestGraphService_Index -v
+go test ./application/... -run TestGraphService_Index -v
 
 # Existing tests unaffected
 make test

@@ -30,8 +30,7 @@ Scenario: Index computes CO_CHANGED edges
 
 ## Files to Modify/Create
 
-- Create: `infrastructure/graph/co_change_test.go` (with `//go:build graph` tag)
-
+- Create: `infrastructure/graph/co_change_test.go` 
 ## Steps
 
 ### Step 1: Write co-change computation tests
@@ -43,22 +42,22 @@ Scenario: Index computes CO_CHANGED edges
 
 ### Step 2: Write integration test
 
-- `TestCoChange_Integration`: Using a real KuzuDB instance with seeded data, verify RecomputeCoChanged produces correct edges
+- `TestCoChange_Integration`: Using a real SQLite instance with seeded data, verify RecomputeCoChanged produces correct edges
 
 ### Step 3: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./infrastructure/graph/... -run TestCoChange` -- tests MUST FAIL
+- **Verification**: `go test ./infrastructure/graph/... -run TestCoChange` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./infrastructure/graph/... -run TestCoChange -v
+go test ./infrastructure/graph/... -run TestCoChange -v
 ```
 
 ## Success Criteria
 
 - Tests cover co-change edge creation, strength calculation, and threshold filtering
 - Tests verify large commit exclusion
-- Integration test uses real KuzuDB
+- Integration test uses real SQLite
 - All tests FAIL (Red phase)
