@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement file-level blast radius queries in GraphService and KuzuDB repository: CO_CHANGED neighbor lookup, IMPORTS reverse lookup, depth-limited traversal, transitive co-changes, and structured JSON output.
+Implement file-level blast radius queries in GraphService and SQLite repository: CO_CHANGED neighbor lookup, IMPORTS reverse lookup, depth-limited traversal, transitive co-changes, and structured JSON output.
 
 ## Execution Context
 
@@ -30,20 +30,20 @@ Scenario: Agent queries via CLI and gets JSON output
 ## Files to Modify/Create
 
 - Modify: `application/graph_service.go` -- add BlastRadius method
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement BlastRadius Cypher queries
+- Modify: `infrastructure/graph/sqlite_repository.go` -- implement BlastRadius SQL queries
 
 ## Steps
 
-### Step 1: Implement BlastRadius in KuzuDB repository
+### Step 1: Implement BlastRadius in SQLite repository
 
-Implement the two-phase Cypher query from the design:
+Implement the two-phase parameterized SQL query from the design:
 - Phase 1: CO_CHANGED neighbors with `WHERE cc.coupling_count >= $minCount`
 - Phase 2: IMPORTS reverse lookup `(importer:File)-[:IMPORTS]->(target:File)`
 - Merge and deduplicate results, preserving reason and coupling data
 
 ### Step 2: Implement depth-limited traversal
 
-For transitive co-changes (depth > 1), use recursive Cypher or iterative expansion up to `BlastRadiusRequest.Depth`.
+For transitive co-changes (depth > 1), use recursive SQL or iterative expansion up to `BlastRadiusRequest.Depth`.
 
 ### Step 3: Implement GraphService.BlastRadius
 
@@ -55,14 +55,14 @@ Non-existent file returns error with exit code 1. Isolated file returns empty co
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_BlastRadius` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestGraphService_BlastRadius` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestGraphService_BlastRadius -v
-go test -tags graph ./infrastructure/graph/... -run TestKuzuRepository_BlastRadius -v
+go test ./application/... -run TestGraphService_BlastRadius -v
+go test ./infrastructure/graph/... -run TestSQLiteRepository_BlastRadius -v
 ```
 
 ## Success Criteria

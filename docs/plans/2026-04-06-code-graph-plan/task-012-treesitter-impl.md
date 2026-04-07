@@ -26,9 +26,7 @@ Scenario: Index detects and parses multiple languages
 
 ## Files to Modify/Create
 
-- Create: `infrastructure/treesitter/parser.go` (with `//go:build graph` tag)
-- Create: `infrastructure/treesitter/extractor.go` (with `//go:build graph` tag)
-- Create: `infrastructure/treesitter/queries/go.scm`
+- Create: `infrastructure/treesitter/parser.go` - Create: `infrastructure/treesitter/extractor.go` - Create: `infrastructure/treesitter/queries/go.scm`
 - Create: `infrastructure/treesitter/queries/typescript.scm`
 - Create: `infrastructure/treesitter/queries/python.scm`
 - Create: `infrastructure/treesitter/queries/rust.scm`
@@ -57,13 +55,13 @@ Convert Tree-sitter query matches into domain types: SymbolNode (with id, name, 
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./infrastructure/treesitter/... -v` -- all tests PASS
+- **Verification**: `go test ./infrastructure/treesitter/... -v` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./infrastructure/treesitter/... -v
+go test ./infrastructure/treesitter/... -v
 ```
 
 ## Success Criteria

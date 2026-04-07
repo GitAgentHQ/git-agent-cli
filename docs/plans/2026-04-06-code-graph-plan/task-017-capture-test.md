@@ -10,7 +10,7 @@ Write tests for the action capture service: recording agent/human actions with d
 
 **Task Number**: 017 of 020 (test)
 **Phase**: P1 - Action Tracking
-**Prerequisites**: KuzuDB client (task-003) and git client (task-004)
+**Prerequisites**: SQLite client (task-003) and git client (task-004)
 
 ## BDD Scenario
 
@@ -76,8 +76,7 @@ Scenario: Capture without prior index creates graph DB
 
 ## Files to Modify/Create
 
-- Create: `application/graph_capture_service_test.go` (with `//go:build graph` tag)
-
+- Create: `application/graph_capture_service_test.go` 
 ## Steps
 
 ### Step 1: Write basic capture tests
@@ -101,13 +100,13 @@ Scenario: Capture without prior index creates graph DB
 
 ### Step 4: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestCaptureService` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestCaptureService` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestCaptureService -v
+go test ./application/... -run TestCaptureService -v
 ```
 
 ## Success Criteria

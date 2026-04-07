@@ -63,13 +63,13 @@ Scenario: Index rebuilds symbols when file content changes
 
 ### Step 3: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)"` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)"` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)" -v
+go test ./application/... -run "TestGraphService_Index_(WithAST|CallsEdges|ImportsEdges|SymbolRebuild)" -v
 ```
 
 ## Success Criteria

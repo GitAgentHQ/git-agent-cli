@@ -52,13 +52,13 @@ Forward `IndexRequest.MaxCommits` to the git client's max parameter.
 
 ### Step 4: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)"` -- all tests PASS
+- **Verification**: `go test ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)"` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)" -v
+go test ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)" -v
 ```
 
 ## Success Criteria

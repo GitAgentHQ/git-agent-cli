@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement the hotspots query in GraphService and KuzuDB repository: count MODIFIES edges per file, rank by frequency, support time-window filtering and Top-N limiting, exclude test/generated files.
+Implement the hotspots query in GraphService and SQLite repository: count MODIFIES edges per file, rank by frequency, support time-window filtering and Top-N limiting, exclude test/generated files.
 
 ## Execution Context
 
@@ -26,11 +26,11 @@ Scenario: Query change frequency hotspots
 ## Files to Modify/Create
 
 - Modify: `application/graph_service.go` -- add Hotspots method
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement Hotspots Cypher query
+- Modify: `infrastructure/graph/sqlite_repository.go` -- implement Hotspots SQL query
 
 ## Steps
 
-### Step 1: Implement Hotspots Cypher query
+### Step 1: Implement Hotspots SQL query
 
 Count MODIFIES edges per file, optionally filtering by commit timestamp when `Since` is set. Order by count descending. Apply Top-N limit.
 
@@ -44,13 +44,13 @@ Delegate to repository query. Assemble HotspotsResult with hotspot entries (path
 
 ### Step 4: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Hotspots` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestGraphService_Hotspots` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestGraphService_Hotspots -v
+go test ./application/... -run TestGraphService_Hotspots -v
 ```
 
 ## Success Criteria

@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement symbol-level blast radius queries using CALLS edge traversal in KuzuDB: find downstream callees, upstream callers, and respect depth limits using Cypher path queries.
+Implement symbol-level blast radius queries using CALLS edge traversal in SQLite: find downstream callees, upstream callers, and respect depth limits using recursive SQL CTEs.
 
 ## Execution Context
 
@@ -26,7 +26,7 @@ Scenario: Query blast radius of a specific function
 ## Files to Modify/Create
 
 - Modify: `application/graph_service.go` -- extend BlastRadius for symbol mode
-- Modify: `infrastructure/graph/kuzu_repository.go` -- add symbol-level Cypher queries
+- Modify: `infrastructure/graph/sqlite_repository.go` -- add symbol-level SQL queries
 
 ## Steps
 
@@ -34,22 +34,42 @@ Scenario: Query blast radius of a specific function
 
 When `BlastRadiusRequest.Symbol` is set, find the target symbol by name and file_path. Return error if symbol not found.
 
-### Step 2: Implement downstream callee query (Phase 3 Cypher)
+### Step 2: Implement downstream callee query (Phase 3 SQL)
 
-```cypher
-MATCH (target:Symbol)
-WHERE target.name = $symbolName AND target.file_path = $filePath
-MATCH (target)-[:CALLS*1..$depth]->(callee:Symbol)
-RETURN DISTINCT callee.file_path, callee.name, callee.kind
+```sql
+WITH RECURSIVE callees AS (
+  SELECT s.id, s.file_path, s.name, s.kind, 1 AS depth
+  FROM symbols s
+  JOIN calls c ON c.from_symbol_id = (
+    SELECT id FROM symbols WHERE name = ? AND file_path = ?
+  ) AND c.to_symbol_id = s.id
+  UNION ALL
+  SELECT s.id, s.file_path, s.name, s.kind, cc.depth + 1
+  FROM callees cc
+  JOIN calls c ON c.from_symbol_id = cc.id
+  JOIN symbols s ON c.to_symbol_id = s.id
+  WHERE cc.depth < ?
+)
+SELECT DISTINCT file_path, name, kind FROM callees;
 ```
 
 ### Step 3: Implement upstream caller query
 
-```cypher
-MATCH (target:Symbol)
-WHERE target.name = $symbolName AND target.file_path = $filePath
-MATCH (caller:Symbol)-[:CALLS*1..$depth]->(target)
-RETURN DISTINCT caller.file_path, caller.name, caller.kind
+```sql
+WITH RECURSIVE callers AS (
+  SELECT s.id, s.file_path, s.name, s.kind, 1 AS depth
+  FROM symbols s
+  JOIN calls c ON c.to_symbol_id = (
+    SELECT id FROM symbols WHERE name = ? AND file_path = ?
+  ) AND c.from_symbol_id = s.id
+  UNION ALL
+  SELECT s.id, s.file_path, s.name, s.kind, cr.depth + 1
+  FROM callers cr
+  JOIN calls c ON c.to_symbol_id = cr.id
+  JOIN symbols s ON c.from_symbol_id = s.id
+  WHERE cr.depth < ?
+)
+SELECT DISTINCT file_path, name, kind FROM callers;
 ```
 
 ### Step 4: Merge results
@@ -58,13 +78,13 @@ Combine downstream and upstream results into BlastRadiusResult with `callers` fi
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_BlastRadius_Symbol` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestGraphService_BlastRadius_Symbol` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestGraphService_BlastRadius_Symbol -v
+go test ./application/... -run TestGraphService_BlastRadius_Symbol -v
 ```
 
 ## Success Criteria

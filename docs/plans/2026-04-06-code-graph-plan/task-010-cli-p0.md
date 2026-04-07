@@ -41,8 +41,7 @@ Scenario: Reset via CLI
 
 ## Files to Modify/Create
 
-- Create: `cmd/graph.go` -- parent `graph` command (with `//go:build graph` tag)
-- Create: `cmd/graph_index.go` -- `graph index` subcommand
+- Create: `cmd/graph.go` -- parent `graph` command - Create: `cmd/graph_index.go` -- `graph index` subcommand
 - Create: `cmd/graph_blast_radius.go` -- `graph blast-radius` subcommand
 - Create: `cmd/graph_status.go` -- `graph status` subcommand
 - Create: `cmd/graph_reset.go` -- `graph reset` subcommand
@@ -52,11 +51,11 @@ Scenario: Reset via CLI
 
 ### Step 1: Create parent graph command
 
-Create `cmd/graph.go` with `//go:build graph` tag. Register subcommands and add to rootCmd in `init()`. Add shared `--format` and `--verbose` flags.
+Create `cmd/graph.go`. Register subcommands and add to rootCmd in `init()`. Add shared `--format` and `--verbose` flags.
 
 ### Step 2: Wire graph index command
 
-Parse `--max-commits`, `--force`, `--ast`, `--max-files-per-commit` flags. Construct KuzuRepository, GraphGitClient, and GraphService. Call `svc.Index(ctx, req)`. Output IndexResult as JSON. Handle gitignore integration.
+Parse `--max-commits`, `--force`, `--ast`, `--max-files-per-commit` flags. Construct SQLiteRepository, GraphGitClient, and GraphService. Call `svc.Index(ctx, req)`. Output IndexResult as JSON. Handle gitignore integration.
 
 ### Step 3: Wire blast-radius command
 
@@ -76,13 +75,13 @@ Create `pkg/graph/format.go` with helpers to marshal graph results to JSON, cons
 
 ### Step 7: Verify commands compile
 
-- **Verification**: `make build-graph` succeeds and `./git-agent graph --help` shows subcommands
+- **Verification**: `make build` succeeds and `./git-agent graph --help` shows subcommands
 
 ## Verification Commands
 
 ```bash
 # Build with graph support
-make build-graph
+make build
 
 # Verify CLI help
 ./git-agent graph --help
@@ -100,5 +99,4 @@ make build
 - All P0 graph subcommands registered and accessible
 - Flags match the design specification
 - JSON output follows the format specification
-- Build tag isolation works (default build has no graph commands)
-- `make build-graph` compiles successfully
+- `make build` compiles successfully with graph commands included

@@ -32,11 +32,11 @@ Scenario: Timeline with compression (requires LLM)
 ## Files to Modify/Create
 
 - Modify: `application/graph_capture_service.go` -- add Timeline method
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement Timeline Cypher query
+- Modify: `infrastructure/graph/sqlite_repository.go` -- implement Timeline SQL query
 
 ## Steps
 
-### Step 1: Implement Timeline Cypher query
+### Step 1: Implement Timeline SQL query
 
 Query sessions with their actions, filtered by:
 - `Since`: session.started_at >= timestamp
@@ -63,13 +63,13 @@ When no sessions match, return `TimelineResult{Sessions: [], TotalSessions: 0, T
 
 ### Step 5: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestCaptureService_Timeline` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestCaptureService_Timeline` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestCaptureService_Timeline -v
+go test ./application/... -run TestCaptureService_Timeline -v
 ```
 
 ## Success Criteria

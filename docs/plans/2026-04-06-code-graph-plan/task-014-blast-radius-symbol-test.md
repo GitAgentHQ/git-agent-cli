@@ -40,7 +40,7 @@ Scenario: Query blast radius with depth limit
 ## Files to Modify/Create
 
 - Modify: `application/graph_service_test.go` (add symbol blast radius tests)
-- Modify: `infrastructure/graph/kuzu_repository_test.go` (add symbol query integration tests)
+- Modify: `infrastructure/graph/sqlite_repository_test.go` (add symbol query integration tests)
 
 ## Steps
 
@@ -50,19 +50,19 @@ Scenario: Query blast radius with depth limit
 - `TestGraphService_BlastRadius_Symbol_DepthLimit`: Verify depth limit clips the call chain
 - `TestGraphService_BlastRadius_Symbol_UpstreamCallers`: Verify reverse call chain traversal
 
-### Step 2: Write Cypher query integration tests
+### Step 2: Write SQL query integration tests
 
-- `TestKuzuRepository_BlastRadius_Symbol`: Seed graph with known call relationships, verify Cypher query returns correct results at each depth
+- `TestSQLiteRepository_BlastRadius_Symbol`: Seed graph with known call relationships, verify SQL query returns correct results at each depth
 
 ### Step 3: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_BlastRadius_Symbol` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestGraphService_BlastRadius_Symbol` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestGraphService_BlastRadius_Symbol -v
+go test ./application/... -run TestGraphService_BlastRadius_Symbol -v
 ```
 
 ## Success Criteria

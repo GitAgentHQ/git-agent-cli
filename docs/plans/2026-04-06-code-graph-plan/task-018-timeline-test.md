@@ -76,13 +76,13 @@ Scenario: Empty timeline
 
 ### Step 4: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestCaptureService_Timeline` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestCaptureService_Timeline` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestCaptureService_Timeline -v
+go test ./application/... -run TestCaptureService_Timeline -v
 ```
 
 ## Success Criteria

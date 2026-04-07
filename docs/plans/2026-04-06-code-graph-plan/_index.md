@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Load `superpowers:executing-plans` skill using the Skill tool to implement this plan task-by-task.
 
-**Goal:** Build a graph-based code intelligence engine (`git-agent graph`) that indexes git history, AST structures, and agent/human actions into KuzuDB, enabling blast-radius analysis, hotspot detection, ownership queries, action capture, and timeline display.
+**Goal:** Build a graph-based code intelligence engine (`git-agent graph`) that indexes git history, AST structures, and agent/human actions into SQLite, enabling blast-radius analysis, hotspot detection, ownership queries, action capture, and timeline display.
 
-**Architecture:** Clean Architecture with strict inward dependency flow (`cmd -> application -> domain <- infrastructure`). KuzuDB and Tree-sitter live exclusively in `infrastructure/`. Build tags (`//go:build graph`) isolate CGo dependencies so default builds remain pure Go.
+**Architecture:** Clean Architecture with strict inward dependency flow (`cmd -> application -> domain <- infrastructure`). SQLite and Tree-sitter live exclusively in `infrastructure/`. Always-on in a single binary -- no build tags, no CGo.
 
-**Tech Stack:** Go 1.26, KuzuDB (`go-kuzu` v0.11.3), `gotreesitter` v0.6.4 (pure Go), Cobra CLI, existing OpenAI-compatible client for LLM features.
+**Tech Stack:** Go 1.26, SQLite via `modernc.org/sqlite` (pure Go, zero CGo), `gotreesitter` v0.6.4 (pure Go), Cobra CLI, existing OpenAI-compatible client for LLM features.
 
 **Design Support:**
 - [BDD Specs](../2026-04-02-code-graph-design/bdd-specs.md)
@@ -30,7 +30,7 @@ This is greenfield work -- no existing graph code exists in the codebase.
 ```yaml
 tasks:
   - id: "001"
-    subject: "Project setup and build tags"
+    subject: "Project setup and dependencies"
     slug: "setup"
     type: "setup"
     depends-on: []
@@ -40,13 +40,13 @@ tasks:
     type: "setup"
     depends-on: ["001"]
   - id: "003"
-    subject: "KuzuDB client lifecycle test"
-    slug: "kuzu-lifecycle-test"
+    subject: "SQLite client lifecycle test"
+    slug: "sqlite-lifecycle-test"
     type: "test"
     depends-on: ["002"]
   - id: "003"
-    subject: "KuzuDB client lifecycle impl"
-    slug: "kuzu-lifecycle-impl"
+    subject: "SQLite client lifecycle impl"
+    slug: "sqlite-lifecycle-impl"
     type: "impl"
     depends-on: ["003-test"]
   - id: "004"
@@ -212,10 +212,10 @@ tasks:
 ```
 
 **Task File References (for detailed BDD scenarios):**
-- [Task 001: Project setup and build tags](./task-001-setup.md)
+- [Task 001: Project setup and dependencies](./task-001-setup.md)
 - [Task 002: Domain types and interfaces](./task-002-domain-types.md)
-- [Task 003: KuzuDB client lifecycle test](./task-003-kuzu-lifecycle-test.md)
-- [Task 003: KuzuDB client lifecycle impl](./task-003-kuzu-lifecycle-impl.md)
+- [Task 003: SQLite client lifecycle test](./task-003-sqlite-lifecycle-test.md)
+- [Task 003: SQLite client lifecycle impl](./task-003-sqlite-lifecycle-impl.md)
 - [Task 004: Git graph client extensions test](./task-004-git-graph-client-test.md)
 - [Task 004: Git graph client extensions impl](./task-004-git-graph-client-impl.md)
 - [Task 005: Full graph index test](./task-005-index-full-test.md)
@@ -277,7 +277,7 @@ P2 scenarios excluded: Stability module, Stability file, Co-change clusters, Tim
  |          |           |           |
  v          v           v           v
 003        004         012         (independent foundation)
-(kuzu)     (git)       (treesitter)
+(sqlite)   (git)       (treesitter)
  |          |           |
  +----+-----+           |
       |                  |

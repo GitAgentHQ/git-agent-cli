@@ -64,9 +64,7 @@ Scenario: Index extracts IMPORTS relationships
 
 ## Files to Modify/Create
 
-- Create: `infrastructure/treesitter/parser_test.go` (with `//go:build graph` tag)
-- Create: `infrastructure/treesitter/extractor_test.go` (with `//go:build graph` tag)
-
+- Create: `infrastructure/treesitter/parser_test.go` - Create: `infrastructure/treesitter/extractor_test.go` 
 ## Steps
 
 ### Step 1: Write language detection tests
@@ -97,13 +95,13 @@ For each supported language, provide small code samples and verify extracted sym
 
 ### Step 5: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./infrastructure/treesitter/... -run "Test(Parser|Extractor)"` -- tests MUST FAIL
+- **Verification**: `go test ./infrastructure/treesitter/... -run "Test(Parser|Extractor)"` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./infrastructure/treesitter/... -v
+go test ./infrastructure/treesitter/... -v
 ```
 
 ## Success Criteria

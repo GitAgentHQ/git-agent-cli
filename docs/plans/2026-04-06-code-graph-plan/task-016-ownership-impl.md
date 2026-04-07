@@ -4,7 +4,7 @@
 
 ## Description
 
-Implement the ownership query in GraphService and KuzuDB repository: count commits per author for a file or directory, rank by count, calculate percentages, support time-window filtering.
+Implement the ownership query in GraphService and SQLite repository: count commits per author for a file or directory, rank by count, calculate percentages, support time-window filtering.
 
 ## Execution Context
 
@@ -26,11 +26,11 @@ Scenario: Query who owns a file by commit count
 ## Files to Modify/Create
 
 - Modify: `application/graph_service.go` -- add Ownership method
-- Modify: `infrastructure/graph/kuzu_repository.go` -- implement Ownership Cypher query
+- Modify: `infrastructure/graph/sqlite_repository.go` -- implement Ownership SQL query
 
 ## Steps
 
-### Step 1: Implement Ownership Cypher query
+### Step 1: Implement Ownership SQL query
 
 Join Author -> AUTHORED -> Commit -> MODIFIES -> File. Group by author, count commits, calculate percentage. Optionally filter by commit timestamp for `Since`.
 
@@ -44,13 +44,13 @@ Delegate to repository query. Assemble OwnershipResult with author entries (emai
 
 ### Step 4: Verify tests pass (Green)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Ownership` -- all tests PASS
+- **Verification**: `go test ./application/... -run TestGraphService_Ownership` -- all tests PASS
 
 ## Verification Commands
 
 ```bash
 # Tests should pass (Green)
-go test -tags graph ./application/... -run TestGraphService_Ownership -v
+go test ./application/... -run TestGraphService_Ownership -v
 ```
 
 ## Success Criteria

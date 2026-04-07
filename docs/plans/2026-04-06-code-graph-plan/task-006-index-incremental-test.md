@@ -59,13 +59,13 @@ Scenario: Index limits history depth with --max-commits
 
 ### Step 2: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)"` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)"` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)" -v
+go test ./application/... -run "TestGraphService_Index_(Incremental|Idempotent|MaxCommits)" -v
 ```
 
 ## Success Criteria

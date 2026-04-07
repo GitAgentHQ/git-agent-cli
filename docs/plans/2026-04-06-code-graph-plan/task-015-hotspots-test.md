@@ -65,13 +65,13 @@ Scenario: Hotspot query excludes generated and test files
 
 ### Step 2: Verify tests fail (Red)
 
-- **Verification**: `go test -tags graph ./application/... -run TestGraphService_Hotspots` -- tests MUST FAIL
+- **Verification**: `go test ./application/... -run TestGraphService_Hotspots` -- tests MUST FAIL
 
 ## Verification Commands
 
 ```bash
 # Tests should fail (Red)
-go test -tags graph ./application/... -run TestGraphService_Hotspots -v
+go test ./application/... -run TestGraphService_Hotspots -v
 ```
 
 ## Success Criteria
