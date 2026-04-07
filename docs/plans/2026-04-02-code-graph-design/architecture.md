@@ -124,7 +124,7 @@ type GraphRepository interface {
 
     // Rename tracking
     CreateRename(ctx context.Context, oldPath, newPath, commitHash string) error
-    ResolveRenames(ctx context.Context, filePath string) ([]string, error)  // returns all historical paths
+    ResolveRenames(ctx context.Context, filePath string) ([]string, error)  // returns all historical paths (follows rename chains via recursive query)
 
     // Schema migration
     GetSchemaVersion(ctx context.Context) (int, error)
@@ -307,7 +307,9 @@ Key schema decisions:
    a. Verify reachability: git merge-base --is-ancestor lastHash HEAD
    b. If NOT reachable (force-push/rebase): log warning, set --force flag
 7. If --force: DELETE FROM all tables except index_state, sessions, actions,
-   action_modifies, action_produces, capture_baseline (preserve action history)
+   action_modifies, capture_baseline (preserve action history).
+   Also DELETE FROM action_produces (commit hashes change after rebase,
+   so action-to-commit links are invalidated; log warning about this)
 8. git log lastHash..HEAD --format=... --name-status -M  (with -M for rename detection)
 9. Begin transaction
 10. For each commit (in chronological order):
@@ -432,7 +434,9 @@ only new changes to each action, preventing diff accumulation across tool calls.
    b. Return CaptureResult and exit 0
 3. List changed files: git diff --name-only (unstaged) + git diff --cached --name-only (staged)
 4. If no changed files, return {"skipped": true, "reason": "no changes detected"} and exit 0
-5. For each changed file, compute hash: git hash-object <file>
+5. For each changed file, compute hash:
+   - If file exists on disk: git hash-object <file>
+   - If file was deleted (in diff but not on disk): use sentinel hash "deleted"
 6. Load capture_baseline hashes for those files
 7. Compute delta files: files whose hash differs from baseline (or absent from baseline)
 8. If no delta files, return {"skipped": true, "reason": "no changes detected"} and exit 0
@@ -454,8 +458,12 @@ only new changes to each action, preventing diff accumulation across tool calls.
     b. INSERT INTO action_modifies (action_id, file_path, additions, deletions)
 16. Update capture_baseline: INSERT OR REPLACE for ALL changed files (not just delta)
     -- This ensures the baseline stays current even for files unchanged since last capture
-17. Commit transaction
-18. Return CaptureResult
+    -- For deleted files, store the "deleted" sentinel so re-creation is detected
+17. Cleanup stale baseline: DELETE FROM capture_baseline WHERE file_path NOT IN
+    (current changed files list) AND captured_at < (now - 24h)
+    -- Prevents unbounded growth; only runs if transaction is fast enough
+18. Commit transaction
+19. Return CaptureResult
 ```
 
 Performance target: <200ms total. The `git hash-object` calls add ~1ms per

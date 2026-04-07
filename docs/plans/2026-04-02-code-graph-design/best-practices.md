@@ -248,6 +248,10 @@ complete in under 200ms to avoid degrading agent UX.
   rows and capture_baseline updates in a single transaction
 - **Hash cost**: `git hash-object` adds ~1ms per file; negligible for typical
   agent edits (1-5 files per tool call)
+- **Deleted files**: if a file appears in `git diff` but not on disk, use
+  sentinel hash `"deleted"` instead of `git hash-object` (which would fail)
+- **Baseline cleanup**: purge entries older than 24h that are not in the current
+  `git diff` to prevent unbounded growth
 
 ### Session Lifecycle
 
