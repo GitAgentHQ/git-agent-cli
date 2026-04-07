@@ -13,10 +13,19 @@ type CommitPlanner interface {
 	Plan(ctx context.Context, req PlanRequest) (*CommitPlan, error)
 }
 
+// CoChangeHint describes a co-change relationship between two files,
+// used to inform commit grouping decisions.
+type CoChangeHint struct {
+	FileA    string
+	FileB    string
+	Strength float64 // 0.0-1.0
+}
+
 // PlanRequest carries all context needed to produce a CommitPlan.
 type PlanRequest struct {
-	StagedDiff   *diff.StagedDiff
-	UnstagedDiff *diff.StagedDiff
-	Intent       string
-	Config       *project.Config
+	StagedDiff    *diff.StagedDiff
+	UnstagedDiff  *diff.StagedDiff
+	Intent        string
+	Config        *project.Config
+	CoChangeHints []CoChangeHint
 }

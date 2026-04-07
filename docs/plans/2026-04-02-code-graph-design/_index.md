@@ -348,7 +348,7 @@ git-agent graph
 
 | Command | Flags | Default |
 |---------|-------|---------|
-| `index` | `--max-commits N`, `--force`, `--ast`, `--max-files-per-commit N` | unlimited, false, false, 50 |
+| `index` | `--max-commits N`, `--force`, `--ast`, `--max-files-per-commit N`, `--co-change-full-threshold N` | unlimited, false, false, 50, 500 |
 | `blast-radius` | `--symbol NAME`, `--depth N`, `--top N`, `--min-count N` | file-level, 2, 20, 3 |
 | `capture` | `--source NAME`, `--tool NAME`, `--session ID`, `--instance-id ID`, `--message TEXT` | required, null, auto-create, $PPID, null |
 | `timeline` | `--since DATE\|DURATION`, `--until DATE`, `--source NAME`, `--file PATH`, `--compress`, `--top N` | all, now, all, all, false, 50 |
@@ -523,9 +523,11 @@ graph TD
 
 13. **File rename tracking**: Git rename status (`R`) is parsed into a
     `renames` table mapping `old_path -> new_path -> commit_hash`.
-    Blast-radius queries union results from both old and new paths via
+    Blast-radius queries union results from all historical paths via
     the renames table, preserving co-change history across renames. Renames
     are populated during indexing when `modifies.status` starts with `R`.
+    Multi-hop chains (A->B->C) are resolved via recursive SQL query on the
+    renames table (`ResolveRenames` follows the chain to collect all paths).
 
 14. **Schema versioning**: The `index_state` table stores a `schema_version`
     key. On `Open`, the client checks the stored version against the current
@@ -594,7 +596,9 @@ Agent hooks are the primary mechanism for feeding action data into the graph.
 The `capture` command uses **delta-based tracking** to attribute only new
 changes to each action, avoiding diff accumulation across tool calls:
 1. Lists changed files via `git diff --name-only` (unstaged + staged)
-2. For each changed file, computes `git hash-object <file>`
+2. For each changed file, computes content hash:
+   - File exists on disk: `git hash-object <file>`
+   - File deleted (in diff but missing from disk): sentinel hash `"deleted"`
 3. Loads previous hashes from `capture_baseline` table
 4. Computes delta: files whose hash differs from baseline (or absent from baseline)
 5. If no delta files exist, exits 0 immediately (no-op)
