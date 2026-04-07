@@ -2,7 +2,7 @@
 
 ## Overview
 
-56 scenarios across 8 feature areas covering graph indexing, blast radius,
+62 scenarios across 8 feature areas covering graph indexing, blast radius,
 code ownership, change patterns, action capture, timeline, diagnose, and
 graph lifecycle management.
 
@@ -160,6 +160,25 @@ Feature: Graph Indexing
         And the graph should not contain File nodes for binary files
         And the graph should not contain File nodes for lock files
 
+    Scenario: Index detects and records file renames
+        Given the repository has a commit that renames "old/path.go" to "new/path.go"
+        When I run "git-agent graph index"
+        Then the graph should contain a renames row linking "old/path.go" to "new/path.go"
+        And the graph should contain File nodes for both "old/path.go" and "new/path.go"
+        And CO_CHANGED edges should reflect the combined history of both paths
+
+    Scenario: Incremental index recovers from force-push
+        Given the repository has an existing graph database
+        And the IndexState records commit "abc1234" as last indexed
+        And the repository history was rewritten (force-push)
+        And commit "abc1234" is no longer reachable from HEAD
+        When I run "git-agent graph index"
+        Then the graph should detect the unreachable last-indexed commit
+        And the graph should fall back to a full re-index
+        And the command should log a warning about history rewrite
+        And the IndexState should record the latest commit hash
+        And the command should exit with code 0
+
     Scenario: Index computes CO_CHANGED edges
         Given the repository has commits where "a.go" and "b.go" are modified together 5 times
         And "a.go" has been modified 8 times total
@@ -271,6 +290,13 @@ Feature: Blast Radius Query
         Then "b.go" should appear at depth 1
         And "c.go" should appear at depth 2
         And deeper transitive co-changes should not appear
+
+    Scenario: Blast radius resolves file renames
+        Given "old/service.go" was renamed to "pkg/service.go" in a previous commit
+        And "old/service.go" had CO_CHANGED relationships with "db/store.go"
+        When I run "git-agent graph blast-radius pkg/service.go"
+        Then the results should include co-change history from both "old/service.go" and "pkg/service.go"
+        And "db/store.go" should appear in the co-changed results
 
     Scenario: Blast radius query on non-existent file
         When I run "git-agent graph blast-radius nonexistent.go"
@@ -432,16 +458,28 @@ Feature: Action Capture
         Given a git repository with an indexed graph database
         And the working directory has uncommitted changes
 
-    Scenario: Capture an agent edit action
+    Scenario: Capture an agent edit action with delta tracking
         Given I modified "src/main.go" with an Edit tool
         And the modification adds 3 lines and removes 1 line
+        And no prior capture baseline exists for "src/main.go"
         When I run "git-agent graph capture --source claude-code --tool Edit"
         Then a Session node should exist with source "claude-code"
         And an Action node should be created with tool "Edit"
-        And the Action should contain the unified diff
+        And the Action should contain the unified diff for "src/main.go" only
         And an ACTION_MODIFIES edge should link the Action to "src/main.go"
         And the edge should have additions=3 and deletions=1
+        And the capture_baseline should store the current hash for "src/main.go"
         And the command should exit with code 0
+
+    Scenario: Delta capture attributes only newly changed files
+        Given I previously captured changes to "src/main.go" (baseline exists)
+        And "src/main.go" has not changed since the last capture
+        And I modified "src/utils.go" with an Edit tool
+        When I run "git-agent graph capture --source claude-code --tool Edit"
+        Then the Action should only list "src/utils.go" in files_changed
+        And the diff should not contain changes from "src/main.go"
+        And the ACTION_MODIFIES edge should only link to "src/utils.go"
+        And the capture_baseline should be updated for "src/utils.go"
 
     Scenario: Capture appends to existing active session
         Given a Session "s1" exists with source "claude-code" started 5 minutes ago
@@ -486,6 +524,12 @@ Feature: Action Capture
         And stderr should contain a warning about lock contention
         And no Action should be recorded
 
+    Scenario: Concurrent agents use separate sessions via instance_id
+        Given a Session "s1" exists with source "claude-code" and instance_id "1234"
+        When I run "git-agent graph capture --source claude-code --tool Edit --instance-id 5678"
+        Then a new Session "s2" should be created with instance_id "5678"
+        And "s1" should remain active (different instance)
+
     Scenario: Capture without prior index creates graph DB
         Given the repository has no existing graph database
         When I run "git-agent graph capture --source claude-code --tool Edit"
@@ -494,7 +538,7 @@ Feature: Action Capture
 
     Scenario: Claude Code PostToolUse hook triggers capture
         Given a Claude Code PostToolUse hook is configured for "Edit|Write|Bash"
-        And the hook command is "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME"
+        And the hook command is "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME --instance-id $PPID"
         And the agent modifies "src/main.go" via the Edit tool
         When the PostToolUse hook fires
         Then "git-agent graph capture --source claude-code --tool Edit" should be invoked
@@ -678,6 +722,14 @@ Feature: Graph Lifecycle
         And stdout should contain {"deleted": true}
         When I run "git-agent graph index"
         Then a fresh graph database should be created
+
+    Scenario: Schema migration runs automatically on version mismatch
+        Given an indexed repository with schema version 1
+        And the current code expects schema version 2
+        When I run "git-agent graph index"
+        Then the schema should be migrated to version 2
+        And existing data should be preserved
+        And the command should log the migration in verbose mode
 
     Scenario: Concurrent indexing is rejected via SQLite lock
         Given an indexed repository

@@ -34,7 +34,7 @@ can query via CLI subcommands returning machine-parseable JSON.
 - Current binary: 7.2MB, 3 direct dependencies (go-openai, cobra, yaml.v3), zero CGo
 - Clean Architecture: `cmd -> application -> domain <- infrastructure`
 - Domain has zero external imports; SQLite and Tree-sitter must live in `infrastructure/`
-- Git operations abstracted via `infrastructure/git/client.go` (18 functional methods)
+- Git operations abstracted via `infrastructure/git/client.go`
 - Config follows 3-tier hierarchy: CLI flags > user config > project config > defaults
 
 ### Technology Research
@@ -132,9 +132,12 @@ criteria, constraints, CLI UX design, output format specification, and risk regi
 | Interface | CLI subcommands (`git-agent graph ...`) | Agents call via shell, parse JSON stdout |
 | Build | Always-on, single binary, no build tags | SQLite is pure Go; no reason to split builds |
 | Priority | P0 blast radius, P1a AST, P1b actions, P2 diagnose | Ship structural awareness first, behavioral tracing second |
-| Action capture | Agent hooks (PostToolUse) feed `graph capture` | Precise attribution at tool-call granularity |
+| Action capture | Delta-based via agent hooks (PostToolUse) | capture_baseline prevents diff accumulation across tool calls |
 | Timeline | LLM compression optional, raw mode offline | Keeps offline default; LLM enrichment is opt-in |
 | Diagnose | Combines blast-radius + action timeline | AI-enhanced `git bisect` at action granularity |
+| History rewrite | Auto-detect via merge-base, fall back to full re-index | Prevents silent corruption from force-push/rebase |
+| Rename tracking | `renames` table populated during indexing | Preserves co-change continuity across file renames |
+| Schema migration | Version key in index_state, forward migrations | Avoids unnecessary `graph reset` on minor upgrades |
 
 ### Alternatives Considered
 
@@ -247,6 +250,7 @@ CREATE TABLE IF NOT EXISTS co_changed (
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,          -- UUID
     source TEXT NOT NULL,         -- "claude-code", "cursor", "windsurf", "human"
+    instance_id TEXT,             -- distinguishes concurrent agents of same source (e.g., PID)
     started_at INTEGER NOT NULL,
     ended_at INTEGER,
     summary TEXT                  -- LLM-compressed (nullable, filled by timeline --compress)
@@ -283,6 +287,22 @@ CREATE TABLE IF NOT EXISTS action_produces (
     FOREIGN KEY (commit_hash) REFERENCES commits(hash)
 );
 
+-- Capture baseline tracking (delta-based action capture)
+CREATE TABLE IF NOT EXISTS capture_baseline (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,    -- git hash-object of file at last capture
+    captured_at INTEGER NOT NULL
+);
+
+-- File rename tracking
+CREATE TABLE IF NOT EXISTS renames (
+    old_path TEXT NOT NULL,
+    new_path TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    PRIMARY KEY (old_path, new_path, commit_hash),
+    FOREIGN KEY (commit_hash) REFERENCES commits(hash)
+);
+
 -- Index state (metadata)
 CREATE TABLE IF NOT EXISTS index_state (
     key TEXT PRIMARY KEY,
@@ -301,6 +321,9 @@ CREATE INDEX IF NOT EXISTS idx_co_changed_strength ON co_changed(coupling_streng
 CREATE INDEX IF NOT EXISTS idx_actions_session ON actions(session_id);
 CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_action_modifies_file ON action_modifies(file_path);
+CREATE INDEX IF NOT EXISTS idx_sessions_source_instance ON sessions(source, instance_id);
+CREATE INDEX IF NOT EXISTS idx_renames_old ON renames(old_path);
+CREATE INDEX IF NOT EXISTS idx_renames_new ON renames(new_path);
 ```
 
 ### CLI Command Tree
@@ -327,7 +350,7 @@ git-agent graph
 |---------|-------|---------|
 | `index` | `--max-commits N`, `--force`, `--ast`, `--max-files-per-commit N` | unlimited, false, false, 50 |
 | `blast-radius` | `--symbol NAME`, `--depth N`, `--top N`, `--min-count N` | file-level, 2, 20, 3 |
-| `capture` | `--source NAME`, `--tool NAME`, `--session ID`, `--message TEXT` | required, null, auto-create, null |
+| `capture` | `--source NAME`, `--tool NAME`, `--session ID`, `--instance-id ID`, `--message TEXT` | required, null, auto-create, $PPID, null |
 | `timeline` | `--since DATE\|DURATION`, `--until DATE`, `--source NAME`, `--file PATH`, `--compress`, `--top N` | all, now, all, all, false, 50 |
 | `hotspots` | `--path DIR`, `--top N`, `--since DATE\|DURATION` | repo root, 10, all time |
 | `ownership` | `PATH` (positional), `--since DATE\|DURATION` | required, all time |
@@ -355,40 +378,54 @@ git-agent graph
 graph TD
     subgraph "git-agent graph index"
         A[CLI args] --> B[GraphService.Index]
-        B --> C[git log lastHash..HEAD]
+        B --> B2{lastHash reachable from HEAD?}
+        B2 -->|No: force-push/rebase| B3[Fall back to full re-index]
+        B2 -->|Yes| C[git log lastHash..HEAD]
+        B3 --> C
         C --> D{For each commit}
         D --> E[INSERT OR IGNORE Commit + Author]
         D --> F[INSERT modifies edges]
+        D --> F2{Rename detected?}
+        F2 -->|Yes| F3[INSERT renames row]
+        F2 -->|No| G
+        F3 --> G
         D --> G{For each changed file}
         G --> H[git show hash:path]
         H --> I[Tree-sitter / go/ast parse]
         I --> J[Extract Symbols]
         J --> K[DELETE old + INSERT symbols, calls, imports]
-        D --> L[Recompute co_changed table]
-        L --> M[UPDATE index_state]
+        D --> L[Incremental co_changed update for touched files]
+        L --> M[UPDATE index_state + schema_version]
     end
 
     subgraph "git-agent graph blast-radius"
-        N[CLI args: file path] --> O[GraphService.BlastRadius]
+        N[CLI args: file path] --> N2[Resolve renames: union old+new paths]
+        N2 --> O[GraphService.BlastRadius]
         O --> P[SQL: co_changed neighbors]
         O --> Q[SQL: imports reverse lookup]
         O --> R[SQL: recursive CTE call chain]
-        P --> S[Merge + rank results]
+        P --> S[Merge + rank + deduplicate results]
         Q --> S
         R --> S
         S --> T[JSON output to stdout]
     end
 
     subgraph "git-agent graph capture (P1b, called by agent hook)"
-        CA[Hook trigger + git diff] --> CB[CaptureService.Capture]
-        CB --> CC{Session exists?}
+        CA[Hook trigger] --> CB[CaptureService.Capture]
+        CB --> CB2[git diff --name-only: changed files]
+        CB2 --> CB3[Load capture_baseline hashes]
+        CB3 --> CB4[Compute delta: hash-object vs baseline]
+        CB4 --> CB5{Delta files exist?}
+        CB5 -->|No| CI2[Return skipped]
+        CB5 -->|Yes| CC{Session exists for source+instance?}
         CC -->|No| CD[INSERT session]
         CC -->|Yes| CE[Reuse session]
-        CD --> CF[INSERT action]
+        CD --> CF[git diff only delta files]
         CE --> CF
-        CF --> CG[Parse diff: extract changed files]
-        CG --> CH[INSERT action_modifies rows]
-        CH --> CI[Return action ID]
+        CF --> CG[INSERT action with delta diff]
+        CG --> CH[INSERT action_modifies for delta files only]
+        CH --> CJ[UPDATE capture_baseline hashes]
+        CJ --> CI[Return action ID]
     end
 
     subgraph "git-agent graph timeline (P1b)"
@@ -426,7 +463,11 @@ graph TD
 3. **Hybrid incremental strategy**:
    - Commits, Authors, authored, modifies: INSERT OR IGNORE (append-only)
    - Symbols, contains_symbol, calls, imports: DELETE by file_path + INSERT
-   - co_changed: DELETE all + recompute after indexing (simpler, fast at per-repo scale)
+   - co_changed: Incremental update -- recompute only pairs involving files
+     modified in newly indexed commits. Full recompute on `--force` or when
+     newly indexed commits exceed 500 (threshold configurable via
+     `--co-change-full-threshold`). This avoids O(n^2) self-join on the
+     entire modifies table for every incremental index.
 
 4. **Always-on in single binary**: SQLite via `modernc.org/sqlite` is pure Go.
    No CGo, no build tag isolation, no separate build targets. The `graph`
@@ -459,7 +500,41 @@ graph TD
 
 10. **Session lifecycle is implicit**: A session starts on the first `capture`
     call with no active session. Ends after 30 minutes of inactivity, or
-    explicitly via `capture --end-session`.
+    explicitly via `capture --end-session`. Sessions are scoped by
+    `source + instance_id` so concurrent agents of the same type (e.g., two
+    Claude Code terminals) maintain separate sessions. `instance_id` defaults
+    to the parent process PID (`$PPID`) when not explicitly provided.
+
+11. **Delta-based action capture**: Each `capture` call tracks file content
+    hashes in a `capture_baseline` table. Only files whose `git hash-object`
+    hash differs from the baseline are attributed to the new action. This
+    prevents diff accumulation where later captures would incorrectly include
+    changes from prior tool calls that were not yet staged or committed.
+    The baseline is updated after every successful capture. On `graph reset`,
+    the baseline is cleared. On `capture --end-session`, the baseline is
+    preserved (the next session starts with accurate state).
+
+12. **Force-push / history rewrite recovery**: Before incremental indexing,
+    verify `last_indexed_commit` is reachable from HEAD via
+    `git merge-base --is-ancestor`. If not (force-push, rebase, or
+    `filter-branch`), automatically fall back to full re-index. This adds
+    one git command (~10ms) to every incremental index but prevents silent
+    data corruption from orphaned commit references.
+
+13. **File rename tracking**: Git rename status (`R`) is parsed into a
+    `renames` table mapping `old_path -> new_path -> commit_hash`.
+    Blast-radius queries union results from both old and new paths via
+    the renames table, preserving co-change history across renames. Renames
+    are populated during indexing when `modifies.status` starts with `R`.
+
+14. **Schema versioning**: The `index_state` table stores a `schema_version`
+    key. On `Open`, the client checks the stored version against the current
+    code version. If the version is older, the client runs forward migrations
+    (ALTER TABLE ADD COLUMN, CREATE TABLE IF NOT EXISTS). If migration is not
+    possible (major version bump), the client returns an error suggesting
+    `graph reset`. Action/session data loss on reset is acceptable since the
+    graph is a cache that can be rebuilt -- except for action history, which
+    is logged as a warning.
 
 ### Constraints
 
@@ -473,6 +548,9 @@ graph TD
   require LLM access.
 - **C7**: Action capture must be fast (<200ms). Minimal work: read diff, write rows, exit.
 - **C8**: Diff storage: TEXT column in SQLite. Diffs exceeding 100KB are truncated.
+- **C9**: Capture must use delta-based tracking (capture_baseline table) to
+  attribute only new changes per action. Raw `git diff` accumulates across
+  tool calls and would produce incorrect file attribution.
 
 ### Performance Targets
 
@@ -506,20 +584,26 @@ Agent hooks are the primary mechanism for feeding action data into the graph.
     "PostToolUse": [
       {
         "matcher": { "tool_name": "Edit|Write|Bash" },
-        "command": "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME"
+        "command": "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME --instance-id $PPID"
       }
     ]
   }
 }
 ```
 
-The `capture` command:
-1. Reads `git diff` (unstaged) + `git diff --cached` (staged)
-2. If no diff, exits 0 immediately (no-op)
-3. Creates or reuses a Session row (keyed by source + timeout window)
-4. Creates an Action row with the diff, tool name, and timestamp
-5. Creates action_modifies rows for each changed file
-6. Exits 0 (must never block the agent)
+The `capture` command uses **delta-based tracking** to attribute only new
+changes to each action, avoiding diff accumulation across tool calls:
+1. Lists changed files via `git diff --name-only` (unstaged + staged)
+2. For each changed file, computes `git hash-object <file>`
+3. Loads previous hashes from `capture_baseline` table
+4. Computes delta: files whose hash differs from baseline (or absent from baseline)
+5. If no delta files exist, exits 0 immediately (no-op)
+6. Generates diff for delta files only: `git diff -- <delta files>`
+7. Creates or reuses a Session row (keyed by source + instance_id + timeout)
+8. Creates an Action row with the delta diff, tool name, and timestamp
+9. Creates action_modifies rows for delta files only
+10. Updates capture_baseline with current hashes for all changed files
+11. Exits 0 (must never block the agent)
 
 **Other agents**: Cursor and Windsurf lack native hook systems. Integration
 options (P2):

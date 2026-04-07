@@ -49,7 +49,7 @@ All PRAGMAs are set once at connection open, before any queries.
 | Symbols | `DELETE` by file_path + `INSERT` | AST must be fully reparsed; diffing individual symbols is fragile |
 | CONTAINS, CALLS | `DELETE` by file_path + `INSERT` | Follow symbol lifecycle |
 | IMPORTS | `DELETE` by file_path + `INSERT` | Follow file parse lifecycle |
-| CO_CHANGED | `DELETE` all + recompute | Simpler than incremental merge, fast enough for per-repo scale |
+| CO_CHANGED | Incremental: delete pairs involving touched files + recompute those pairs; full recompute on --force or >500 new commits | Avoids O(n^2) self-join on entire modifies table for small incremental updates |
 
 ### Query Patterns for Graph Traversal
 
@@ -67,17 +67,20 @@ All PRAGMAs are set once at connection open, before any queries.
       UNION ALL
 
       SELECT c.to_symbol, s2.file_path, cc.depth + 1,
-             cc.visited || '>' || c.to_symbol
+             cc.visited || '|' || c.to_symbol
       FROM call_chain cc
       JOIN calls c ON c.from_symbol = cc.symbol_id
       JOIN symbols s2 ON s2.id = c.to_symbol
       WHERE cc.depth < ?2
-        AND cc.visited NOT LIKE '%' || c.to_symbol || '%'
+        AND instr('|' || cc.visited || '|', '|' || c.to_symbol || '|') = 0
   )
   SELECT DISTINCT file_path FROM call_chain WHERE depth > 0;
   ```
-  Always include cycle prevention via visited path tracking to avoid infinite
-  recursion on circular dependencies.
+  Always include cycle prevention via delimiter-bounded `instr()` matching
+  on the visited path. Do NOT use `LIKE '%' || symbol || '%'` -- it
+  produces false positives when one symbol ID is a substring of another
+  (e.g., `pkg/foo.go:function:Get:10` matching `pkg/foo.go:function:GetAll:10`).
+  The `|` delimiter with `instr` ensures exact-match semantics.
 - **Import reverse lookup**: Simple `SELECT from_file FROM imports WHERE to_file = ?`.
 - **Hotspots**: `GROUP BY file_path` on `modifies` with `COUNT(*)` ordered
   descending.
@@ -233,22 +236,29 @@ test:
 The `capture` command is called by agent hooks after every tool call. It must
 complete in under 200ms to avoid degrading agent UX.
 
-- **Minimal work**: read `git diff`, write 2-3 rows + edges, exit
+- **Delta-based tracking**: use `capture_baseline` table to track file content
+  hashes (`git hash-object`). Only attribute files whose hash changed since the
+  last capture. This prevents diff accumulation where later captures would
+  incorrectly include changes from prior tool calls.
+- **Minimal work**: compute hashes, diff delta files, write 2-3 rows + edges, update baseline, exit
 - **No schema recomputation**: do not recompute CO_CHANGED during capture
 - **No LLM calls**: action summaries are filled later by `timeline --compress`
 - **Lock timeout**: if the write lock cannot be acquired in 100ms, skip silently
 - **Batch optimization**: if multiple files changed, create all action_modifies
-  rows in a single transaction
+  rows and capture_baseline updates in a single transaction
+- **Hash cost**: `git hash-object` adds ~1ms per file; negligible for typical
+  agent edits (1-5 files per tool call)
 
 ### Session Lifecycle
 
 | Event | Behavior |
 |-------|----------|
-| First capture for a source | Create new session row |
-| Subsequent capture within 30 min | Append to existing session |
+| First capture for a source + instance_id | Create new session row |
+| Subsequent capture within 30 min (same source + instance) | Append to existing session |
 | No capture for 30 min | Next capture starts new session, auto-closes old one |
 | `--end-session` flag | Explicitly close the session |
 | `graph reset` | Deletes all sessions and actions |
+| Two concurrent agents of same source | Separate sessions via different `instance_id` (defaults to `$PPID`) |
 
 The 30-minute timeout is configurable in `.git-agent/config.yml`:
 ```yaml
@@ -323,6 +333,9 @@ git-agent graph setup-hooks --agent claude-code
 | SQLite busy/locked | Retry via busy_timeout (5s); if exhausted, exit 1 |
 | Database disk image is malformed | Exit 1, suggest `git-agent graph reset` |
 | Lock contention (capture) | Skip silently, exit 0, warn on stderr |
+| Force-push / history rewrite | Auto-detect via `merge-base --is-ancestor`, fall back to full re-index |
+| Schema version mismatch (minor) | Auto-migrate forward (ALTER TABLE, CREATE TABLE IF NOT EXISTS) |
+| Schema version mismatch (major) | Exit 1, suggest `graph reset` with warning about action data loss |
 | Unsupported language | Skip file, warn in verbose mode |
 | Tree-sitter parse error | Skip file, warn in verbose mode |
 | LLM not configured (`--compress`/`diagnose`) | Exit 1, `{"error": "LLM endpoint not configured"}` |

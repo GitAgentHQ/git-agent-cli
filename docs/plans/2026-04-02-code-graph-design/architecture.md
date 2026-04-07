@@ -112,10 +112,23 @@ type GraphRepository interface {
     CreateAction(ctx context.Context, a ActionNode) error
     CreateActionModifies(ctx context.Context, actionID, filePath string, additions, deletions int) error
     CreateActionProduces(ctx context.Context, actionID, commitHash string) error
-    GetActiveSession(ctx context.Context, source string, timeoutMinutes int) (*SessionNode, error)
+    GetActiveSession(ctx context.Context, source, instanceID string, timeoutMinutes int) (*SessionNode, error)
     EndSession(ctx context.Context, sessionID string) error
     Timeline(ctx context.Context, req TimelineRequest) (*TimelineResult, error)
     ActionsForFiles(ctx context.Context, filePaths []string, since int64) ([]ActionNode, error)
+
+    // Capture baseline (delta-based action capture)
+    GetCaptureBaseline(ctx context.Context, filePaths []string) (map[string]string, error)  // path -> content hash
+    UpdateCaptureBaseline(ctx context.Context, updates map[string]string) error              // path -> content hash
+    ClearCaptureBaseline(ctx context.Context) error
+
+    // Rename tracking
+    CreateRename(ctx context.Context, oldPath, newPath, commitHash string) error
+    ResolveRenames(ctx context.Context, filePath string) ([]string, error)  // returns all historical paths
+
+    // Schema migration
+    GetSchemaVersion(ctx context.Context) (int, error)
+    SetSchemaVersion(ctx context.Context, version int) error
 
     // Raw SQL (power user)
     Query(ctx context.Context, sql string, params []any) ([]map[string]any, error)
@@ -161,8 +174,11 @@ type GraphGitClient interface {
     CommitLogDetailed(ctx context.Context, since string, max int) ([]graph.CommitInfo, error)
     FileContentAt(ctx context.Context, commitHash, filePath string) ([]byte, error)
     CurrentHead(ctx context.Context) (string, error)
+    IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)  // merge-base --is-ancestor
     Diff(ctx context.Context) (string, error)            // unstaged + staged diff
     DiffFiles(ctx context.Context) ([]string, error)     // list of changed file paths
+    DiffForFiles(ctx context.Context, files []string) (string, error)  // diff restricted to specific files
+    HashObject(ctx context.Context, filePath string) (string, error)   // git hash-object for content hash
 }
 ```
 
@@ -285,26 +301,37 @@ Key schema decisions:
 2. Set PRAGMAs: journal_mode=WAL, busy_timeout=5000, foreign_keys=ON,
    synchronous=NORMAL, cache_size=-64000, mmap_size=268435456
 3. InitSchema (CREATE TABLE IF NOT EXISTS for all tables)
-4. Read index_state WHERE key = 'last_indexed_commit'
-5. git log lastHash..HEAD --format=... --name-status
-6. Begin transaction
-7. For each commit (in chronological order):
-   a. INSERT OR IGNORE INTO commits
-   b. INSERT OR IGNORE INTO authors + INSERT OR IGNORE INTO authored
-   c. For each modified file:
-      - INSERT OR IGNORE INTO files
-      - INSERT OR REPLACE INTO modifies
-      - If --ast and file extension is supported:
-        * git show commitHash:filePath
-        * Parse: go/ast for .go files, gotreesitter for others
-        * ReplaceFileSymbols: DELETE FROM symbols/calls/imports/contains_symbol
-          WHERE file_path = ?, then batch INSERT new rows
-8. Commit transaction
-9. RecomputeCoChanged in a separate transaction:
-   - DELETE FROM co_changed
-   - INSERT INTO co_changed SELECT ... FROM modifies m1 JOIN modifies m2 ...
-10. UPDATE index_state SET value = ? WHERE key = 'last_indexed_commit'
-11. Return IndexResult with stats
+4. Check schema_version in index_state; run forward migrations if needed
+5. Read index_state WHERE key = 'last_indexed_commit'
+6. If lastHash is set:
+   a. Verify reachability: git merge-base --is-ancestor lastHash HEAD
+   b. If NOT reachable (force-push/rebase): log warning, set --force flag
+7. If --force: DELETE FROM all tables except index_state, sessions, actions,
+   action_modifies, action_produces, capture_baseline (preserve action history)
+8. git log lastHash..HEAD --format=... --name-status -M  (with -M for rename detection)
+9. Begin transaction
+10. For each commit (in chronological order):
+    a. INSERT OR IGNORE INTO commits
+    b. INSERT OR IGNORE INTO authors + INSERT OR IGNORE INTO authored
+    c. For each modified file:
+       - INSERT OR IGNORE INTO files
+       - INSERT OR REPLACE INTO modifies
+       - If status starts with R (rename):
+         * Parse old_path and new_path from git status line
+         * INSERT OR IGNORE INTO renames (old_path, new_path, commit_hash)
+       - If --ast and file extension is supported:
+         * git show commitHash:filePath
+         * Parse: go/ast for .go files, gotreesitter for others
+         * ReplaceFileSymbols: DELETE FROM symbols/calls/imports/contains_symbol
+           WHERE file_path = ?, then batch INSERT new rows
+11. Commit transaction
+12. Incremental co_changed update in a separate transaction:
+    a. Collect set of files modified in newly indexed commits
+    b. DELETE FROM co_changed WHERE file_a IN (...) OR file_b IN (...)
+    c. Recompute co_changed only for pairs involving those files
+    d. On --force or when new commits > 500: full DELETE + recompute instead
+13. UPDATE index_state: last_indexed_commit, schema_version
+14. Return IndexResult with stats
 ```
 
 Batch inserts use prepared statements with multiple value tuples per
@@ -348,12 +375,12 @@ WITH RECURSIVE call_chain(symbol_id, file_path, depth, visited) AS (
 
     -- Recursive step: follow CALLS edges outward
     SELECT c.to_symbol, s2.file_path, cc.depth + 1,
-           cc.visited || '>' || c.to_symbol
+           cc.visited || '|' || c.to_symbol
     FROM call_chain cc
     JOIN calls c ON c.from_symbol = cc.symbol_id
     JOIN symbols s2 ON s2.id = c.to_symbol
-    WHERE cc.depth < ?2                                    -- depth limit
-      AND cc.visited NOT LIKE '%' || c.to_symbol || '%'   -- cycle prevention
+    WHERE cc.depth < ?2                                                       -- depth limit
+      AND instr('|' || cc.visited || '|', '|' || c.to_symbol || '|') = 0     -- cycle prevention (delimiter-bounded)
 )
 SELECT DISTINCT file_path, 'call-dependency' AS reason
 FROM call_chain
@@ -373,12 +400,12 @@ WITH RECURSIVE callers(symbol_id, file_path, depth, visited) AS (
     UNION ALL
 
     SELECT c.from_symbol, s2.file_path, cl.depth + 1,
-           cl.visited || '>' || c.from_symbol
+           cl.visited || '|' || c.from_symbol
     FROM callers cl
     JOIN calls c ON c.to_symbol = cl.symbol_id
     JOIN symbols s2 ON s2.id = c.from_symbol
     WHERE cl.depth < ?3
-      AND cl.visited NOT LIKE '%' || c.from_symbol || '%'
+      AND instr('|' || cl.visited || '|', '|' || c.from_symbol || '|') = 0
 )
 SELECT DISTINCT
     s.file_path AS file,
@@ -395,30 +422,44 @@ by coupling strength (co-change) then by reason type.
 
 ## Capture Algorithm (P1b)
 
+Uses **delta-based tracking** via the `capture_baseline` table to attribute
+only new changes to each action, preventing diff accumulation across tool calls.
+
 ```
-1. Read git diff (unstaged + staged)
-2. If diff is empty, return {"skipped": true} and exit 0
-3. Open SQLite at .git-agent/graph.db (create if missing, init schema)
-4. Begin transaction
-5. Find active session for this source:
-   SELECT id FROM sessions
-   WHERE source = ? AND ended_at IS NULL
-     AND started_at > ?  -- (now - timeout)
-   ORDER BY started_at DESC LIMIT 1
-6. If no active session:
-   a. INSERT INTO sessions (id, source, started_at)
-7. Compute next sequence:
-   SELECT COALESCE(MAX(sequence), 0) + 1 FROM actions WHERE session_id = ?
-8. INSERT INTO actions (id, session_id, tool, diff, files_changed, timestamp, message)
-9. For each changed file:
-   a. INSERT OR IGNORE INTO files (path)
-   b. INSERT INTO action_modifies (action_id, file_path, additions, deletions)
-10. Commit transaction
-11. If --end-session: UPDATE sessions SET ended_at = ? WHERE id = ?
-12. Return CaptureResult
+1. Open SQLite at .git-agent/graph.db (create if missing, init schema)
+2. If --end-session:
+   a. UPDATE sessions SET ended_at = ? WHERE id = ?
+   b. Return CaptureResult and exit 0
+3. List changed files: git diff --name-only (unstaged) + git diff --cached --name-only (staged)
+4. If no changed files, return {"skipped": true, "reason": "no changes detected"} and exit 0
+5. For each changed file, compute hash: git hash-object <file>
+6. Load capture_baseline hashes for those files
+7. Compute delta files: files whose hash differs from baseline (or absent from baseline)
+8. If no delta files, return {"skipped": true, "reason": "no changes detected"} and exit 0
+9. Generate diff for delta files only: git diff -- <delta files>
+10. Begin transaction
+11. Find active session for this source + instance_id:
+    SELECT id FROM sessions
+    WHERE source = ? AND (instance_id = ? OR instance_id IS NULL)
+      AND ended_at IS NULL AND started_at > ?  -- (now - timeout)
+    ORDER BY started_at DESC LIMIT 1
+12. If no active session:
+    a. INSERT INTO sessions (id, source, instance_id, started_at)
+13. Compute next sequence:
+    SELECT COALESCE(MAX(sequence), 0) + 1 FROM actions WHERE session_id = ?
+14. INSERT INTO actions (id, session_id, tool, diff, files_changed, timestamp, message)
+    -- diff contains only the delta, files_changed lists only delta files
+15. For each delta file:
+    a. INSERT OR IGNORE INTO files (path)
+    b. INSERT INTO action_modifies (action_id, file_path, additions, deletions)
+16. Update capture_baseline: INSERT OR REPLACE for ALL changed files (not just delta)
+    -- This ensures the baseline stays current even for files unchanged since last capture
+17. Commit transaction
+18. Return CaptureResult
 ```
 
-Performance target: <200ms total. No LLM calls. No co-change recomputation.
+Performance target: <200ms total. The `git hash-object` calls add ~1ms per
+file. No LLM calls. No co-change recomputation.
 
 ## Action-to-Commit Linking
 
@@ -520,6 +561,9 @@ Go `database/sql` pool handles connection management. No additional
 | `SQLITE_BUSY` during capture | Skip silently, exit 0 (never block agent hooks) |
 | Unsupported language (AST) | Skip file, log warning in verbose mode |
 | LLM unavailable (`--compress` / `diagnose`) | Exit 1 with `{"error": "LLM endpoint not configured"}` |
+| Force-push / history rewrite | Auto-detected via `merge-base --is-ancestor`; falls back to full re-index with warning |
+| Schema version mismatch (minor) | Run forward migrations automatically |
+| Schema version mismatch (major) | Exit 1, suggest `graph reset` (warns about action history loss) |
 
 ## Mermaid: Component Diagram
 
