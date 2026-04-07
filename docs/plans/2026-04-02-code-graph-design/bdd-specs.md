@@ -13,7 +13,7 @@ P2 scenarios are explicitly tagged and out of scope for v1.
 ### Unit Tests
 
 - `domain/graph/` -- DTOs are pure value objects, no behavior to test
-- `infrastructure/graph/kuzu_repository.go` -- test against real KuzuDB (embedded, fast)
+- `infrastructure/graph/sqlite_repository.go` -- test against real SQLite (embedded, fast)
 - `infrastructure/treesitter/` -- test with small code samples per language
 - `application/graph_service.go` -- mock GraphRepository and ASTParser
 - `application/graph_capture_service.go` -- mock GraphRepository and GitClient
@@ -33,7 +33,7 @@ Following the existing pattern in `e2e/`:
 - Test `graph index`, `graph blast-radius`, `graph status`, `graph reset`
 - Test `graph capture`, `graph timeline` (P1)
 - Test `graph diagnose` (P2, requires LLM mock or skip)
-- All behind `//go:build graph` tag
+- No build tags needed -- all graph tests run unconditionally with pure Go SQLite
 
 ### Test Data
 
@@ -88,6 +88,7 @@ Feature: Graph Indexing
         And the command should report "already up to date"
         And the command should exit with code 0
 
+    @P1a
     Scenario: Index detects and parses multiple languages
         Given the repository contains files:
             | path              | language   |
@@ -105,6 +106,7 @@ Feature: Graph Indexing
         And Rust function items should be extracted from "core/engine.rs"
         And Java method declarations should be extracted from "api/Handler.java"
 
+    @P1a
     Scenario: Index extracts CALLS relationships from AST
         Given the repository contains a Go file "pkg/service.go" with content:
             """
@@ -123,6 +125,7 @@ Feature: Graph Indexing
         And the graph should contain a CALLS edge from "Process" to "Format"
         And each CALLS edge should have a confidence score of 1.0
 
+    @P1a
     Scenario: Index extracts IMPORTS relationships
         Given the repository contains a TypeScript file "src/app.ts" with content:
             """
@@ -138,7 +141,7 @@ Feature: Graph Indexing
         Given the repository has 10000 commits modifying 5000 files
         When I run "git-agent graph index"
         Then the indexing should complete without running out of memory
-        And the buffer pool should be configured to 256 MB
+        And the SQLite page cache should be configured for bulk operations
         And bulk import should be used for the initial load
         And the command should report progress during indexing
         And the total indexing time should be under 120 seconds
@@ -174,6 +177,7 @@ Feature: Graph Indexing
         And the graph should contain at most 100 Commit nodes
         And the command should exit with code 0
 
+    @P1a
     Scenario: Index rebuilds symbols when file content changes
         Given the repository has an existing graph database
         And "src/main.go" was previously indexed with function "OldFunc"
@@ -225,6 +229,7 @@ Feature: Blast Radius Query
         And each result should include the reason for impact
         And co-change results should include coupling strength
 
+    @P1a
     Scenario: Query blast radius of a specific function
         When I run "git-agent graph blast-radius --symbol Transform pkg/service.go"
         Then the output should list affected symbols by call chain depth:
@@ -236,6 +241,7 @@ Feature: Blast Radius Query
             | Process       | pkg/service.go | 1     |
             | HandleRequest | api/handler.go | 2     |
 
+    @P1a
     Scenario: Query blast radius with depth limit
         When I run "git-agent graph blast-radius --symbol HandleRequest api/handler.go --depth 1"
         Then the output should only include symbols at depth 1:
@@ -416,6 +422,7 @@ Feature: Change Pattern Query
 ### Feature: Action Capture
 
 ```gherkin
+@P1b
 Feature: Action Capture
     As a coding agent hook
     I want to record each tool call's diff into the graph
@@ -473,7 +480,7 @@ Feature: Action Capture
         And no new Action should be created
 
     Scenario: Capture skips silently when DB is locked
-        Given another process holds ".git-agent/graph.lock"
+        Given another process holds a write lock on ".git-agent/graph.db"
         When I run "git-agent graph capture --source claude-code --tool Edit"
         Then the command should exit with code 0
         And stderr should contain a warning about lock contention
@@ -484,11 +491,33 @@ Feature: Action Capture
         When I run "git-agent graph capture --source claude-code --tool Edit"
         Then a graph database should be created at ".git-agent/graph.db"
         And the Session and Action nodes should be stored
+
+    Scenario: Claude Code PostToolUse hook triggers capture
+        Given a Claude Code PostToolUse hook is configured for "Edit|Write|Bash"
+        And the hook command is "git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME"
+        And the agent modifies "src/main.go" via the Edit tool
+        When the PostToolUse hook fires
+        Then "git-agent graph capture --source claude-code --tool Edit" should be invoked
+        And the command should exit with code 0
+        And an Action node should exist with tool "Edit" and source "claude-code"
+
+    Scenario: Actions linked to resulting commit
+        Given a Session "s1" exists with source "claude-code"
+        And the following actions exist in session "s1":
+            | action | tool  | files_changed   |
+            | s1:1   | Edit  | src/main.go     |
+            | s1:2   | Write | src/main_test.go|
+            | s1:3   | Bash  |                 |
+        And no action_produces edges exist for these actions
+        When I run "git-agent commit" and a commit is created with hash "abc123"
+        Then action_produces edges should link "s1:1" and "s1:2" to commit "abc123"
+        And action "s1:3" should not be linked (no file overlap with committed files)
 ```
 
 ### Feature: Timeline
 
 ```gherkin
+@P1b
 Feature: Timeline
     As a developer or coding agent
     I want to view a timeline of agent and human actions
@@ -623,7 +652,7 @@ Feature: Graph Lifecycle
         Given a git repository with no ".git-agent/.gitignore"
         When I run "git-agent graph index"
         Then ".git-agent/.gitignore" should exist
-        And ".git-agent/.gitignore" should contain "graph.db/"
+        And ".git-agent/.gitignore" should contain "graph.db"
 
     Scenario: Graph commands outside a git repository return error
         Given the current directory is not a git repository
@@ -650,9 +679,9 @@ Feature: Graph Lifecycle
         When I run "git-agent graph index"
         Then a fresh graph database should be created
 
-    Scenario: Concurrent indexing is rejected via file lock
+    Scenario: Concurrent indexing is rejected via SQLite lock
         Given an indexed repository
-        And another process holds ".git-agent/graph.lock"
+        And another process holds a write lock on ".git-agent/graph.db"
         When I run "git-agent graph index"
         Then the exit code should be 1
         And stdout should contain {"error": "graph is being indexed by another process"}
