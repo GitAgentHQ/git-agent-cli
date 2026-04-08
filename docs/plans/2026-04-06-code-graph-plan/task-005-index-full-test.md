@@ -1,86 +1,86 @@
-# Task 005: Full Graph Index Test
+# Task 005: Full graph indexing service test (RED)
 
 **depends-on**: task-003, task-004
 
 ## Description
-
-Write tests for the full graph indexing flow in `GraphService.Index`: parsing git history, creating nodes and edges, filtering binary/vendor files, and handling large repositories. Tests mock GraphRepository and GraphGitClient.
+Write failing tests for the full graph indexing service. This service walks `git log`, batch-inserts commit/file/author data into SQLite, handles renames (R status -> renames table), and stores the last indexed commit in index_state.
 
 ## Execution Context
-
-**Task Number**: 005 of 020 (test)
-**Phase**: Core Features (P0)
-**Prerequisites**: SQLite client (task-003) and git graph client (task-004)
+**Task Number**: 005 of 018 (test phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-003 (SQLite client working), task-004 (git graph client working)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: First-time full index of a git repository
-  Given the repository has no existing graph database
-  And the repository has 3 commits modifying 5 files
-  When I run "git-agent graph index"
-  Then a graph database should be created at ".git-agent/graph.db"
-  And the graph should contain 3 Commit nodes
-  And the graph should contain 5 File nodes
-  And the graph should contain Author nodes for each unique committer
-  And the graph should contain MODIFIES edges linking commits to files
-  And the graph should contain AUTHORED edges linking authors to commits
-  And the IndexState should record the latest commit hash
-  And the command should exit with code 0
+Feature: Full graph indexing
 
-Scenario: Index skips binary and vendor files
-  Given the repository contains files:
-      | path                   | type     |
-      | src/main.go            | source   |
-      | vendor/lib/dep.go      | vendor   |
-      | assets/logo.png        | binary   |
-      | node_modules/pkg/x.js  | vendor   |
-      | go.sum                 | lockfile |
-  When I run "git-agent graph index"
-  Then the graph should contain a File node for "src/main.go"
-  And the graph should not contain File nodes for vendor directories
-  And the graph should not contain File nodes for binary files
-  And the graph should not contain File nodes for lock files
+  Scenario: Index empty repository
+    Given a git repository with no commits
+    When I run full index
+    Then IndexResult.CommitsIndexed is 0
+    And no error occurs
 
-Scenario: Index handles large repositories gracefully
-  Given the repository has 10000 commits modifying 5000 files
-  When I run "git-agent graph index"
-  Then the indexing should complete without running out of memory
-  And bulk import should be used for the initial load
+  Scenario: Index repository with commits
+    Given a git repository with 5 commits modifying 3 files
+    When I run full index
+    Then IndexResult.CommitsIndexed is 5
+    And the commits table has 5 rows
+    And the modifies table reflects all file changes
+    And the authors table has entries for each unique author
+    And the authored table links commits to authors
+
+  Scenario: Index handles renames
+    Given a git repository where "old.go" was renamed to "new.go"
+    When I run full index
+    Then the renames table has an entry with old_path="old.go", new_path="new.go"
+    And the modifies entry has status "R"
+
+  Scenario: Index stores last indexed commit
+    Given a git repository with commits
+    When I run full index
+    Then index_state contains key "last_indexed_commit" with value equal to HEAD
+
+  Scenario: Index updates file commit counts
+    Given a git repository where "main.go" appears in 3 commits
+    When I run full index
+    Then files table has total_commits=3 for path "main.go"
+
+  Scenario: Batch insert performance
+    Given a git repository with 100 commits
+    When I run full index
+    Then all commits are inserted within a single transaction
+    And IndexResult.CommitsIndexed is 100
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
+- `application/graph_index_test.go` -- all test functions
 
-- Create: `application/graph_service_test.go` 
 ## Steps
+### Step 1: Write test helpers
+Create helpers for setting up temp repos with various commit histories. Use the real SQLiteClient and either real or mock GraphGitClient depending on test needs.
 
-### Step 1: Create test file with mocks
+### Step 2: Write test functions
+- `TestIndexService_EmptyRepo`
+- `TestIndexService_FullIndex`
+- `TestIndexService_Renames`
+- `TestIndexService_LastIndexedCommit`
+- `TestIndexService_FileCommitCounts`
+- `TestIndexService_BatchInsert`
 
-Create `application/graph_service_test.go` with mock implementations of GraphRepository, ASTParser, and GraphGitClient.
-
-### Step 2: Write full index tests
-
-- `TestGraphService_Index_FirstTime`: Verifies commit, file, author nodes and MODIFIES/AUTHORED edges are created for a fresh repository
-- `TestGraphService_Index_SkipsBinaryAndVendor`: Verifies vendor/, node_modules/, binary files (.png), and lock files (go.sum) are excluded
-- `TestGraphService_Index_SetsIndexState`: Verifies IndexState is updated with the latest commit hash after indexing
-- `TestGraphService_Index_EmptyRepo`: Verifies graceful handling of repository with no commits
-
-### Step 3: Verify tests fail (Red)
-
-- **Verification**: `go test ./application/... -run TestGraphService_Index` -- tests MUST FAIL
+### Step 3: Verify tests fail
+```bash
+go test ./application/... -run TestIndexService -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should fail (Red)
-go test ./application/... -run TestGraphService_Index -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./application/... -run TestIndexService -v 2>&1 | grep FAIL
+# Tests MUST fail -- Red phase
 ```
 
 ## Success Criteria
-
-- Test file created with mocks for all dependencies
-- Tests cover full index flow with node/edge creation
-- Tests verify file filtering logic
+- Test file compiles
 - All tests FAIL (Red phase)
+- Tests cover: empty repo, full index, renames, last indexed commit, file counts, batch insert
+- Tests use domain interfaces (GraphRepository, GraphGitClient) for dependency injection

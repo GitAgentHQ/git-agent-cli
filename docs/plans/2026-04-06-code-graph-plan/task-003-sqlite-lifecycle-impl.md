@@ -1,77 +1,79 @@
-# Task 003: SQLite Client Lifecycle Impl
+# Task 003: SQLite client lifecycle implementation (GREEN)
 
-**depends-on**: task-003-sqlite-lifecycle-test
+**depends-on**: task-003-test
 
 ## Description
-
-Implement SQLite client with lifecycle operations: open database, initialize schema with all tables from the design, close connection, and drop database. This is the foundation for all graph persistence.
+Implement the SQLite client that satisfies the lifecycle tests. Uses `modernc.org/sqlite` (pure Go, no CGo). Sets performance PRAGMAs and creates all 13 tables with CREATE TABLE IF NOT EXISTS.
 
 ## Execution Context
-
-**Task Number**: 003 of 020 (impl)
-**Phase**: Infrastructure Foundation
-**Prerequisites**: Failing tests from task-003-sqlite-lifecycle-test
+**Task Number**: 003 of 018 (impl phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-003-test (failing tests exist)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: SQLite client creates database on Open
-  Given no database file exists at the target path
-  When I call Open on the SQLiteClient
-  Then a database file should be created at the target path
+Feature: SQLite client implementation
 
-Scenario: SQLite client initializes schema
-  Given an open SQLite connection
-  When I call InitSchema
-  Then all node and edge tables should exist
-
-Scenario: SQLite client drops database
-  Given an existing graph database
-  When I call Drop
-  Then the database file should be removed from disk
+  Scenario: All lifecycle tests pass
+    Given the SQLite client is implemented
+    When I run the lifecycle tests
+    Then all tests pass (Green phase)
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (SQLite client lifecycle)
-
 ## Files to Modify/Create
-
-- Create: `infrastructure/graph/sqlite_client.go`
-- Create: `infrastructure/graph/sqlite_repository.go` -- skeleton implementing GraphRepository interface, with lifecycle methods implemented and query/write methods as stubs
+- `infrastructure/graph/sqlite_client.go` -- SQLiteClient struct with Open, Close, InitSchema, Drop
 
 ## Steps
+### Step 1: Implement SQLiteClient struct
+```go
+type SQLiteClient struct {
+    db     *sql.DB
+    dbPath string
+}
+```
 
-### Step 1: Implement SQLite client struct
+### Step 2: Implement Open with PRAGMAs
+Open the database and set:
+- `PRAGMA journal_mode=WAL`
+- `PRAGMA busy_timeout=5000`
+- `PRAGMA synchronous=NORMAL`
+- `PRAGMA cache_size=-64000`
 
-Create `SQLiteClient` struct wrapping the `modernc.org/sqlite` database connection. Constructor takes a path string (`.git-agent/graph.db`).
-
-### Step 2: Implement Open
-
-Open the SQLite database at the given path. Configure WAL mode, busy_timeout=5000, synchronous=NORMAL, cache_size=-64000. Create the parent directory if it does not exist.
-
-### Step 3: Implement InitSchema
-
-Execute all CREATE TABLE IF NOT EXISTS statements from the design's DDL (Commit, File, Symbol, Author, Session, Action, IndexState + all edge tables).
+### Step 3: Implement InitSchema with 13 tables
+CREATE TABLE IF NOT EXISTS for all 13 tables:
+1. `commits` (hash PK, message, timestamp)
+2. `files` (path PK, total_commits)
+3. `authors` (email PK, name)
+4. `modifies` (commit_hash, file_path, status, old_path, additions, deletions)
+5. `authored` (commit_hash, author_email)
+6. `co_changed` (file_a, file_b, co_count, commits_a, commits_b, coupling_strength)
+7. `renames` (old_path, new_path, commit_hash)
+8. `index_state` (key PK, value)
+9. `sessions` (id PK, instance_id, started_at, source)
+10. `actions` (id PK, session_id, tool, timestamp, intent)
+11. `action_modifies` (action_id, file_path, before_hash, after_hash)
+12. `action_produces` (action_id, file_path, after_hash)
+13. `capture_baseline` (session_id, file_path, hash)
 
 ### Step 4: Implement Close and Drop
 
-Close releases the database connection. Drop closes and removes the database file from disk.
-
-### Step 5: Verify tests pass (Green)
-
-- **Verification**: `go test ./infrastructure/graph/... -run TestSQLiteClient` -- all tests PASS
+### Step 5: Run tests
+```bash
+go test ./infrastructure/graph/... -run TestSQLiteClient -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should pass (Green)
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
 go test ./infrastructure/graph/... -run TestSQLiteClient -v
-
-# Existing tests unaffected
+# All tests must PASS
+make build
 make test
 ```
 
 ## Success Criteria
-
-- SQLite client opens, initializes schema, closes, and drops correctly
-- All lifecycle tests pass (Green)
-- `make test` still passes (no regression)
+- All `TestSQLiteClient_*` tests pass
+- WAL mode is active
+- Exactly 13 tables created (no symbols/contains_symbol/calls/imports)
+- PRAGMAs set to specified values
+- `make build` and `make test` pass

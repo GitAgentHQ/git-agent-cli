@@ -1,67 +1,65 @@
-# Task 011: P0 E2E Impl
+# Task 011: P0 E2E implementation (GREEN)
 
-**depends-on**: task-011-e2e-p0-test
+**depends-on**: task-011-test
 
 ## Description
-
-Fix any issues discovered during E2E testing, ensure the full P0 pipeline works end-to-end: index a real repository, query blast radius, check status, and reset. This task focuses on integration fixes, not new features.
+Make the P0 E2E tests pass. If all prior tasks (001-010) are implemented correctly, these tests should already pass. This task is a verification checkpoint.
 
 ## Execution Context
-
-**Task Number**: 011 of 020 (impl)
-**Phase**: Integration (P0)
-**Prerequisites**: Failing E2E tests from task-011-e2e-p0-test
+**Task Number**: 011 of 018 (impl phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-011-test (failing E2E tests exist), all of tasks 001-010
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: First-time full index of a git repository
-  Given a git repository at a temporary test directory
-  And the repository has 3 commits modifying 5 files
-  When I run "git-agent graph index"
-  Then a graph database should be created at ".git-agent/graph.db"
-  And the graph should contain 3 Commit nodes
-  And the command should exit with code 0
+Feature: P0 E2E verification
+
+  Scenario: All P0 E2E tests pass
+    Given tasks 001 through 010 are complete
+    When I run the P0 E2E tests
+    Then all tests pass (Green phase)
+
+  Scenario: Full test suite still passes
+    Given P0 features are complete
+    When I run make test
+    Then all tests pass including existing tests
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
-
-- May modify any P0 files to fix integration issues discovered by E2E tests
-- Focus areas: `cmd/graph_*.go`, `application/graph_service.go`, `infrastructure/graph/sqlite_repository.go`
+- No new files expected -- fix issues in prior task implementations if tests fail
 
 ## Steps
-
-### Step 1: Run E2E tests and diagnose failures
-
-Run the E2E tests, read error output, and identify integration issues (data flow, serialization, path handling, etc.).
-
-### Step 2: Fix integration issues
-
-Address each failing E2E test. Common issues: JSON marshaling, path resolution, SQLite connection lifecycle in subprocess, exit code propagation.
-
-### Step 3: Verify all P0 tests pass (Green)
-
-- **Verification**: `go test ./e2e/... -run TestE2E_Graph` -- all tests PASS
-- **Verification**: `go test ./application/... ./infrastructure/graph/...` -- unit tests still pass
-- **Verification**: `make test` -- existing tests unaffected
-
-## Verification Commands
-
+### Step 1: Build the binary
 ```bash
-# E2E tests pass
-go test ./e2e/... -run TestE2E_Graph -v
+make build
+```
 
-# Unit tests still pass
-go test ./application/... ./infrastructure/graph/... -v
+### Step 2: Run E2E tests
+```bash
+go test ./e2e/... -run "TestE2E_Impact|TestE2E_Commit_WithGraph" -v
+```
 
-# Existing tests unaffected
+### Step 3: Fix any failures
+If tests fail, trace the issue back to the responsible task (001-010) and fix there.
+
+### Step 4: Run full test suite
+```bash
 make test
 ```
 
-## Success Criteria
+## Verification Commands
+```bash
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+make build
+go test ./e2e/... -run "TestE2E_Impact|TestE2E_Commit_WithGraph" -v
+# All tests must PASS
+make test
+# Full suite must PASS
+```
 
-- All P0 E2E tests pass (Green)
-- No regression in existing tests
-- Full P0 pipeline works: index -> query -> status -> reset
+## Success Criteria
+- All `TestE2E_Impact_*` and `TestE2E_Commit_WithGraph` tests pass
+- `make test` passes (full suite including existing tests)
+- `make build` produces a working binary
+- `git-agent impact --help` works
+- P0 milestone complete: impact command + invisible commit enhancement

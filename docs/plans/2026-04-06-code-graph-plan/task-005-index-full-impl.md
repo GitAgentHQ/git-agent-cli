@@ -1,77 +1,72 @@
-# Task 005: Full Graph Index Impl
+# Task 005: Full graph indexing service implementation (GREEN)
 
-**depends-on**: task-005-index-full-test
+**depends-on**: task-005-test
 
 ## Description
-
-Implement `GraphService.Index` for full indexing: walk git history, create Commit/File/Author nodes, MODIFIES/AUTHORED edges, filter binary/vendor files, and update IndexState. This is the core indexing engine.
+Implement the full graph indexing service that walks git log output and batch-inserts into SQLite. Uses transaction wrapping for performance.
 
 ## Execution Context
-
-**Task Number**: 005 of 020 (impl)
-**Phase**: Core Features (P0)
-**Prerequisites**: Failing tests from task-005-index-full-test
+**Task Number**: 005 of 018 (impl phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-005-test (failing tests exist)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: First-time full index of a git repository
-  Given the repository has no existing graph database
-  And the repository has 3 commits modifying 5 files
-  When I run "git-agent graph index"
-  Then a graph database should be created at ".git-agent/graph.db"
-  And the graph should contain 3 Commit nodes
-  And the graph should contain 5 File nodes
-  And the graph should contain Author nodes for each unique committer
-  And the graph should contain MODIFIES edges linking commits to files
-  And the graph should contain AUTHORED edges linking authors to commits
-  And the IndexState should record the latest commit hash
+Feature: Full graph indexing implementation
+
+  Scenario: All index tests pass
+    Given the IndexService is implemented
+    When I run the index tests
+    Then all tests pass (Green phase)
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
-
-- Create: `application/graph_service.go` - Create: `pkg/graph/filter.go` -- file filtering logic (vendor, binary, lock files)
+- `application/graph_index_service.go` -- IndexService struct and methods
 
 ## Steps
+### Step 1: Define IndexService struct
+```go
+type IndexService struct {
+    repo graph.GraphRepository
+    git  graph.GraphGitClient
+}
+```
 
-### Step 1: Create GraphService struct
+### Step 2: Implement FullIndex method
+1. Call `git.CommitLogDetailed(ctx, "", 0)` to get all commits
+2. Begin a transaction via the repository
+3. For each commit:
+   - InsertCommit (hash, message, timestamp)
+   - InsertAuthor (email, name) -- upsert
+   - Link commit to author via authored table
+   - For each file change:
+     - InsertFileChange (commit_hash, file_path, status, old_path, additions, deletions)
+     - Update file total_commits count
+     - If status == "R": InsertRename (old_path, new_path, commit_hash)
+4. Store `last_indexed_commit` = HEAD in index_state
+5. Commit transaction
 
-Define `GraphService` with `GraphRepository`, `ASTParser`, and `GraphGitClient` dependencies. Constructor function `NewGraphService(...)`.
+### Step 3: Implement helper methods
+- `updateFileCounts` -- aggregate commit counts per file path
+- `storeIndexState` -- key-value write to index_state table
 
-### Step 2: Implement Index method
-
-Follow the index algorithm from the design:
-1. Open DB, InitSchema
-2. Read last indexed commit from IndexState (empty = full index)
-3. Call `CommitLogDetailed(since, max)` to get commits
-4. For each commit: UpsertCommit, UpsertAuthor, CreateAuthored
-5. For each modified file: filter, UpsertFile, CreateModifies
-6. Update IndexState with latest commit hash
-7. Return IndexResult with stats
-
-### Step 3: Implement file filtering
-
-Create `pkg/graph/filter.go` with `ShouldIndex(path string) bool` that excludes vendor directories, node_modules, binary files, and lock files. Reuse patterns from existing `pkg/filter/`.
-
-### Step 4: Verify tests pass (Green)
-
-- **Verification**: `go test ./application/... -run TestGraphService_Index` -- all tests PASS
+### Step 4: Run tests
+```bash
+go test ./application/... -run TestIndexService -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should pass (Green)
-go test ./application/... -run TestGraphService_Index -v
-
-# Existing tests unaffected
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./application/... -run TestIndexService -v
+# All tests must PASS
+make build
 make test
 ```
 
 ## Success Criteria
-
-- GraphService.Index creates all expected nodes and edges
-- File filtering correctly excludes vendor/binary/lockfiles
-- IndexState updated after successful indexing
-- All index tests pass (Green)
+- All `TestIndexService_*` tests pass
+- Commits, files, authors, modifies, authored, renames tables populated correctly
+- index_state stores last_indexed_commit
+- File commit counts are accurate
+- `make build` and `make test` pass
