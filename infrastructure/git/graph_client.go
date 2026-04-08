@@ -13,6 +13,9 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
+// Compile-time check that GraphClient satisfies GraphGitClient.
+var _ graph.GraphGitClient = (*GraphClient)(nil)
+
 // GraphClient implements graph.GraphGitClient by executing git commands in a
 // specific repository directory.
 type GraphClient struct {
