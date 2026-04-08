@@ -175,6 +175,11 @@ func (s *CommitService) SetActionLinker(linker ActionLinker) {
 	s.actionLinker = linker
 }
 
+// SetCoChangeProvider sets an optional co-change hint provider.
+func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
+	s.coChange = provider
+}
+
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
 	if req.Verbose && req.LogWriter != nil {
 		fmt.Fprintf(req.LogWriter, format+"\n", args...)
