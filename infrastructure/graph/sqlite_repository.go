@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -419,11 +420,9 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 
 // sortImpactEntries sorts entries by CouplingStrength descending.
 func sortImpactEntries(entries []graph.ImpactEntry) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && entries[j].CouplingStrength > entries[j-1].CouplingStrength; j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].CouplingStrength > entries[j].CouplingStrength
+	})
 }
 
 func (r *SQLiteRepository) ResolveRenames(ctx context.Context, filePath string) ([]string, error) {
@@ -776,18 +775,27 @@ func (r *SQLiteRepository) GetCaptureBaseline(ctx context.Context, filePaths []s
 }
 
 func (r *SQLiteRepository) UpdateCaptureBaseline(ctx context.Context, updates map[string]string) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := r.db().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT OR REPLACE INTO capture_baseline (file_path, content_hash, captured_at) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
 	now := time.Now().Unix()
 	for path, hash := range updates {
-		_, err := r.db().ExecContext(ctx,
-			`INSERT OR REPLACE INTO capture_baseline (file_path, content_hash, captured_at)
-			 VALUES (?, ?, ?)`,
-			path, hash, now,
-		)
-		if err != nil {
+		if _, err := stmt.ExecContext(ctx, path, hash, now); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (r *SQLiteRepository) CleanupCaptureBaseline(ctx context.Context, currentFiles []string, olderThan int64) error {
