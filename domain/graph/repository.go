@@ -37,6 +37,7 @@ type GraphRepository interface {
 	UpsertSession(ctx context.Context, s SessionNode) error
 	EndSession(ctx context.Context, sessionID string) error
 	CreateAction(ctx context.Context, a ActionNode) error
+	GetActionCountForSession(ctx context.Context, sessionID string) (int, error)
 	CreateActionModifies(ctx context.Context, actionID, filePath string, additions, deletions int) error
 	CreateActionProduces(ctx context.Context, actionID, commitHash string) error
 	Timeline(ctx context.Context, req TimelineRequest) (*TimelineResult, error)
