@@ -33,7 +33,7 @@ go.work
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
 
 # Thumbnails
 ._*
@@ -67,3 +67,8 @@ git-agent-proxy/node_modules
 git-agent-proxy/.dev.vars
 git-agent-proxy/.wrangler
 .env
+
+# SQLite temporary files
+*.db-shm
+*.db-wal
+*.db-journal
