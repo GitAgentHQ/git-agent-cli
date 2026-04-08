@@ -571,6 +571,13 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 			strings.Join(req.UnstagedDiff.Files, "\n"),
 		))
 	}
+	if len(req.CoChangeHints) > 0 {
+		var lines []string
+		for _, h := range req.CoChangeHints {
+			lines = append(lines, fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100))
+		}
+		planParts = append(planParts, "Files that frequently change together (consider grouping in same commit):\n"+strings.Join(lines, "\n"))
+	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
 	raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 8192, planMaxTokensCeiling)
