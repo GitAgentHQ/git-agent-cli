@@ -1,71 +1,83 @@
-# Task 001: Project Setup and Dependencies
+# Task 001: Setup -- add SQLite dep, create directories
 
-**depends-on**: (none)
+**depends-on**: none
 
 ## Description
-
-Set up the directory structure and dependencies for the graph feature. This creates the skeleton that all subsequent tasks build upon. No build tags needed -- SQLite via `modernc.org/sqlite` is pure Go, so graph code compiles in the default binary.
+Add the `modernc.org/sqlite` pure-Go SQLite dependency and create the directory structure for the graph feature. No Tree-sitter dependency -- co-change analysis uses git history only.
 
 ## Execution Context
-
-**Task Number**: 001 of 020
-**Phase**: Setup
-**Prerequisites**: None
+**Task Number**: 001 of 018
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: None (first task)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: Graph dependencies compile in default build
-  Given the git-agent-cli project exists
-  When I run "make build"
-  Then the binary should compile as pure Go
-  And the binary should include graph commands
-```
+Feature: Project setup for code graph
 
-**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (Architecture section)
+  Scenario: SQLite dependency is available
+    Given the go.mod file
+    When I check for modernc.org/sqlite
+    Then it appears as a direct dependency
+    And no tree-sitter dependency exists
+
+  Scenario: Directory structure exists
+    Given the repository
+    When I list domain/graph/
+    Then the directory exists
+    When I list infrastructure/graph/
+    Then the directory exists
+    And infrastructure/treesitter/ does NOT exist
+
+  Scenario: Build and tests pass
+    Given the new dependency is added
+    When I run make build
+    Then the binary compiles successfully
+    When I run make test
+    Then all existing tests pass
+```
 
 ## Files to Modify/Create
-
-- Create: `domain/graph/` directory
-- Create: `infrastructure/graph/` directory
-- Create: `infrastructure/treesitter/` directory
-- Create: `pkg/graph/` directory
-- Modify: `go.mod` (add `modernc.org/sqlite` and `gotreesitter` dependencies)
+- `go.mod` -- add `modernc.org/sqlite` via `go get`
+- `domain/graph/` -- create directory (already exists from prior work)
+- `infrastructure/graph/` -- create directory (already exists from prior work)
 
 ## Steps
-
-### Step 1: Create directory structure
-
-Create the following empty directories with placeholder files:
-- `domain/graph/`
-- `infrastructure/graph/`
-- `infrastructure/treesitter/`
-- `pkg/graph/`
-
-### Step 2: Add dependencies
-
+### Step 1: Add SQLite dependency
 ```bash
-go get modernc.org/sqlite@latest
-go get github.com/nicois/gotreesitter@v0.6.4
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go get modernc.org/sqlite
 ```
 
-### Step 3: Verify default build is unaffected
+### Step 2: Verify directory structure
+Confirm `domain/graph/` and `infrastructure/graph/` directories exist. Create if missing.
 
-- **Verification**: `make build` succeeds as pure Go
-- **Verification**: `make test` passes (all existing tests)
-
-## Verification Commands
-
+### Step 3: Verify no Tree-sitter dependency
 ```bash
-# Default build still works
-make build
+grep -r treesitter go.mod go.sum || echo "No tree-sitter -- correct"
+```
 
-# Existing tests pass
+### Step 4: Build and test
+```bash
+make build
 make test
 ```
 
-## Success Criteria
+## Verification Commands
+```bash
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+grep 'modernc.org/sqlite' go.mod           # dependency present
+grep -r treesitter go.mod && exit 1 || true # no tree-sitter
+ls domain/graph/                            # directory exists
+ls infrastructure/graph/                    # directory exists
+make build                                  # compiles
+make test                                   # all tests pass
+```
 
-- Directory structure created
-- `make build` succeeds as pure Go (no regression)
-- `make test` passes
+## Success Criteria
+- `modernc.org/sqlite` appears in `go.mod`
+- No tree-sitter dependency in `go.mod` or `go.sum`
+- `domain/graph/` directory exists
+- `infrastructure/graph/` directory exists
+- `infrastructure/treesitter/` does NOT exist
+- `make build` succeeds
+- `make test` passes all existing tests

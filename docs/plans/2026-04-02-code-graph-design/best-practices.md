@@ -5,11 +5,11 @@
 ### Schema Design
 
 - **Relational tables model the property graph**: Node tables (`commits`,
-  `files`, `symbols`, `authors`) and join tables for edges (`authored`,
-  `modifies`, `co_changed`, `calls`, `imports`, `contains_symbol`).
-- **Natural keys over surrogates**: Use commit hash, file path, composite
-  symbol ID as primary keys. Enables `INSERT OR IGNORE` / `INSERT OR REPLACE`
-  for idempotent operations -- re-indexing the same commit is a no-op.
+  `files`, `authors`) and join tables for edges (`authored`, `modifies`,
+  `co_changed`). 13 tables total.
+- **Natural keys over surrogates**: Use commit hash, file path as primary
+  keys. Enables `INSERT OR IGNORE` / `INSERT OR REPLACE` for idempotent
+  operations -- re-indexing the same commit is a no-op.
 - **Foreign keys for referential integrity**: Enable with
   `PRAGMA foreign_keys = ON` at connection open.
 - **`IF NOT EXISTS`**: All `CREATE TABLE` statements use `IF NOT EXISTS` for
@@ -46,46 +46,14 @@ All PRAGMAs are set once at connection open, before any queries.
 |-----------|----------|--------|
 | Commits, Authors | `INSERT OR IGNORE` | Append-only; duplicate insert is a no-op |
 | MODIFIES, AUTHORED | `INSERT OR IGNORE` | Edge follows commit lifecycle |
-| Symbols | `DELETE` by file_path + `INSERT` | AST must be fully reparsed; diffing individual symbols is fragile |
-| CONTAINS, CALLS | `DELETE` by file_path + `INSERT` | Follow symbol lifecycle |
-| IMPORTS | `DELETE` by file_path + `INSERT` | Follow file parse lifecycle |
-| CO_CHANGED | Incremental: delete pairs involving touched files + recompute those pairs; full recompute on --force or >500 new commits | Avoids O(n^2) self-join on entire modifies table for small incremental updates |
+| CO_CHANGED | Incremental: delete pairs involving touched files + recompute those pairs; full recompute on force re-index or >500 new commits | Avoids O(n^2) self-join on entire modifies table for small incremental updates |
 
-### Query Patterns for Graph Traversal
+### Query Patterns
 
 - **Co-change pairs**: Simple `JOIN` on the `modifies` table, grouping by
   commit to find files that changed together.
-- **Blast radius (co-change)**: Direct `SELECT` on `co_changed` filtered by
+- **Impact query (co-change)**: Direct `SELECT` on `co_changed` filtered by
   `coupling_strength` threshold.
-- **Blast radius (call chain)**: Recursive CTE with depth tracking and cycle
-  prevention:
-  ```sql
-  WITH RECURSIVE call_chain(symbol_id, file_path, depth, visited) AS (
-      SELECT s.id, s.file_path, 0, s.id
-      FROM symbols s WHERE s.file_path = ?1
-
-      UNION ALL
-
-      SELECT c.to_symbol, s2.file_path, cc.depth + 1,
-             cc.visited || '|' || c.to_symbol
-      FROM call_chain cc
-      JOIN calls c ON c.from_symbol = cc.symbol_id
-      JOIN symbols s2 ON s2.id = c.to_symbol
-      WHERE cc.depth < ?2
-        AND instr('|' || cc.visited || '|', '|' || c.to_symbol || '|') = 0
-  )
-  SELECT DISTINCT file_path FROM call_chain WHERE depth > 0;
-  ```
-  Always include cycle prevention via delimiter-bounded `instr()` matching
-  on the visited path. Do NOT use `LIKE '%' || symbol || '%'` -- it
-  produces false positives when one symbol ID is a substring of another
-  (e.g., `pkg/foo.go:function:Get:10` matching `pkg/foo.go:function:GetAll:10`).
-  The `|` delimiter with `instr` ensures exact-match semantics.
-- **Import reverse lookup**: Simple `SELECT from_file FROM imports WHERE to_file = ?`.
-- **Hotspots**: `GROUP BY file_path` on `modifies` with `COUNT(*)` ordered
-  descending.
-- **Ownership**: `GROUP BY author_email` on `authored JOIN modifies` with
-  `COUNT(*)` per file.
 
 ### CO_CHANGED Computation
 
@@ -126,69 +94,9 @@ GROUP BY m1.file_path, m2.file_path
 HAVING COUNT(DISTINCT m1.commit_hash) >= ?2;
 ```
 
-## Tree-sitter (gotreesitter)
+## Excluded Paths
 
-### Language Support Priority
-
-| Tier | Languages | Reason |
-|------|-----------|--------|
-| 1 (v1) | Go, TypeScript, Python | Most common in coding agent ecosystem |
-| 2 (v1.1) | Rust, Java | High demand, well-supported grammars |
-| 3 (future) | C/C++, Ruby, PHP, C#, Swift, Kotlin | On-demand |
-
-### Go Files: Prefer go/ast
-
-For Go source files, use `go/ast` + `go/parser` instead of tree-sitter.
-This provides higher precision for symbol extraction (full type resolution,
-interface satisfaction, package-qualified names) with zero added dependency
-since these are stdlib packages.
-
-### Symbol Extraction
-
-- **Composite ID**: `"{file_path}:{kind}:{name}:{start_line}"` handles overloaded
-  names and ensures uniqueness.
-- **Method receivers**: For Go methods, include receiver type in the symbol ID:
-  `"pkg/foo.go:method:Bar.Baz:42"`.
-- **Confidence scoring for CALLS edges**:
-  - 1.0: Exact static call, unambiguous name resolution
-  - 0.8: Receiver/method dispatch (type could be interface)
-  - 0.5: Same-name match across packages (fuzzy)
-
-### Import Resolution
-
-| Language | Import syntax | Resolution strategy |
-|----------|--------------|---------------------|
-| Go | `"github.com/pkg/..."` | Module path -> local directory |
-| TypeScript | `'./utils'`, `'../lib/format'` | Relative path + extension resolution |
-| Python | `from pkg import module` | Dotted path -> directory/file |
-| Rust | `use crate::module` | Crate-relative path |
-| Java | `import com.pkg.Class` | Package path -> directory structure |
-
-### Query Files
-
-Store tree-sitter S-expression queries as embedded `.scm` files:
-```
-infrastructure/treesitter/queries/
-  go.scm
-  typescript.scm
-  python.scm
-  rust.scm
-  java.scm
-```
-
-Embed via `//go:embed queries/*.scm` for zero-overhead at runtime.
-
-### Language Detection
-
-File extension mapping with fallback:
-```
-.go -> Go           .ts/.tsx -> TypeScript    .js/.jsx -> JavaScript (use TS parser)
-.py -> Python        .rs -> Rust               .java -> Java
-```
-
-Skip files with no recognized extension or in excluded directories.
-
-### Excluded Paths
+During indexing, skip files that add noise without value:
 
 Reuse the existing `skipDirs` pattern from `infrastructure/git/client.go`:
 ```
@@ -225,9 +133,7 @@ test:
 |-----------|---------------|
 | Current binary | ~7.2 MB |
 | modernc.org/sqlite | +8-12 MB |
-| gotreesitter (5 grammars) | +5-10 MB |
-| Total | ~20-30 MB |
-| Target ceiling | 35 MB |
+| Total | ~15-20 MB |
 
 ## Action Capture and Timeline (P1b)
 
@@ -261,7 +167,7 @@ complete in under 200ms to avoid degrading agent UX.
 | Subsequent capture within 30 min (same source + instance) | Append to existing session |
 | No capture for 30 min | Next capture starts new session, auto-closes old one |
 | `--end-session` flag | Explicitly close the session |
-| `graph reset` | Deletes all sessions and actions |
+| Manual DB delete (`rm .git-agent/graph.db*`) | Deletes all sessions and actions |
 | Two concurrent agents of same source | Separate sessions via different `instance_id` (defaults to `$PPID`) |
 
 The 30-minute timeout is configurable in `.git-agent/config.yml`:
@@ -276,9 +182,8 @@ graph:
 - Truncate at 100KB with `[truncated]` marker
 - Expected median: 1-5KB per action (typical agent edits are small)
 - For a 200-action session, expect ~200KB-1MB of diff data
-- Purge old action data: `graph reset --actions-before 2026-03-01`
 
-### Timeline Compression
+### Timeline Compression (P2)
 
 When `--compress` is used, the LLM receives grouped diffs per session:
 
@@ -305,14 +210,8 @@ Guidelines:
 - Should not produce stdout output (agents may parse it)
 - Can write warnings to stderr (agent ignores stderr)
 
-Recommended setup command (future):
-```bash
-git-agent graph setup-hooks --agent claude-code
-# Writes PostToolUse hook to ~/.claude/settings.json
-```
-
 **Universal fallback** for agents without hooks:
-- Git `post-commit` hook: `git-agent graph capture --source git-hook`
+- Git `post-commit` hook: `git-agent capture --source git-hook`
 - Captures at commit granularity instead of action granularity
 - Better than nothing; loses per-tool-call attribution
 
@@ -326,21 +225,19 @@ git-agent graph setup-hooks --agent claude-code
   author names/emails from git log). Action diffs may contain code snippets but
   never credentials (diffs come from `git diff`, which respects `.gitignore`).
 - **Gitignore**: `graph.db`, `graph.db-wal`, and `graph.db-shm` are
-  auto-added to `.gitignore` during `graph index`.
+  auto-added to `.gitignore` during EnsureIndex.
 
 ## Error Handling Patterns
 
 | Scenario | Behavior |
 |----------|----------|
 | No git repository | Exit 1, `{"error": "not a git repository"}` |
-| No graph DB exists | Exit 3, `{"error": "graph not indexed", "hint": "run 'git-agent graph index'"}` |
+| EnsureIndex fails | Exit 3, `{"error": "auto-index failed", "detail": "..."}` |
 | SQLite busy/locked | Retry via busy_timeout (5s); if exhausted, exit 1 |
-| Database disk image is malformed | Exit 1, suggest `git-agent graph reset` |
+| Database disk image is malformed | Exit 1, suggest `rm .git-agent/graph.db*` |
 | Lock contention (capture) | Skip silently, exit 0, warn on stderr |
 | Force-push / history rewrite | Auto-detect via `merge-base --is-ancestor`, fall back to full re-index |
 | Schema version mismatch (minor) | Auto-migrate forward (ALTER TABLE, CREATE TABLE IF NOT EXISTS) |
-| Schema version mismatch (major) | Exit 1, suggest `graph reset` with warning about action data loss |
-| Unsupported language | Skip file, warn in verbose mode |
-| Tree-sitter parse error | Skip file, warn in verbose mode |
-| LLM not configured (`--compress`/`diagnose`) | Exit 1, `{"error": "LLM endpoint not configured"}` |
+| Schema version mismatch (major) | Exit 1, suggest deleting graph.db (warns about action data loss) |
+| LLM not configured (`--compress`) | Exit 1, `{"error": "LLM endpoint not configured"}` |
 | LLM call fails | Exit 1, `{"error": "LLM request failed", "detail": "..."}` |

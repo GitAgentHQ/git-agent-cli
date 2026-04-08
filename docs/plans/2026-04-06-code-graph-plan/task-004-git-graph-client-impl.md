@@ -1,71 +1,67 @@
-# Task 004: Git Graph Client Extensions Impl
+# Task 004: Git graph client extensions implementation (GREEN)
 
-**depends-on**: task-004-git-graph-client-test
+**depends-on**: task-004-test
 
 ## Description
-
-Implement the GraphGitClient interface methods by extending the existing `infrastructure/git/client.go` with detailed commit log parsing, file content retrieval at specific commits, current HEAD, and diff operations.
+Implement the git client extensions for graph indexing. The `GraphClient` struct wraps git CLI subprocess calls, following the same pattern as the existing `infrastructure/git/client.go`.
 
 ## Execution Context
-
-**Task Number**: 004 of 020 (impl)
-**Phase**: Infrastructure Foundation
-**Prerequisites**: Failing tests from task-004-git-graph-client-test
+**Task Number**: 004 of 018 (impl phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-004-test (failing tests exist)
+**Note**: `infrastructure/git/graph_client.go` already exists from prior work -- verify and update as needed
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: First-time full index of a git repository
-  Given the repository has 3 commits modifying 5 files
-  When I run "git-agent graph index"
-  Then the graph should contain 3 Commit nodes
-  And the graph should contain 5 File nodes
-  And the graph should contain Author nodes for each unique committer
-  And the graph should contain MODIFIES edges linking commits to files
+Feature: Git graph client implementation
+
+  Scenario: All git graph client tests pass
+    Given the GraphClient is implemented
+    When I run the git graph client tests
+    Then all tests pass (Green phase)
+
+  Scenario: GraphClient satisfies GraphGitClient interface
+    Given the GraphClient struct
+    Then it implements all methods of graph.GraphGitClient
+    And a compile-time assertion var _ graph.GraphGitClient = (*GraphClient)(nil) exists
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
-
-- Create: `infrastructure/git/graph_client.go` -- new file with graph-specific methods
-- Modify: `infrastructure/git/client.go` -- if needed to expose shared helpers
+- `infrastructure/git/graph_client.go` -- GraphClient struct (already exists, verify completeness)
 
 ## Steps
+### Step 1: Verify existing implementation
+The file `infrastructure/git/graph_client.go` already exists with implementations for:
+- CommitLogDetailed (with parseCommitLog, parseRawLine, parseNumStatLine helpers)
+- CurrentHead
+- MergeBaseIsAncestor
+- HashObject
+- DiffNameOnly
+- DiffForFiles
 
-### Step 1: Implement CommitLogDetailed
+### Step 2: Verify compile-time interface check
+Ensure `var _ graph.GraphGitClient = (*GraphClient)(nil)` is present.
 
-Parse `git log --format=...` with `--name-status` to extract commit hash, message, author name/email, timestamp, parent hashes, and per-file modifications (status + path). Support `since` hash filter and `max` limit.
+### Step 3: Fix any failing tests
+Update implementation if any test cases reveal issues.
 
-### Step 2: Implement FileContentAt
-
-Run `git show {hash}:{path}` to retrieve file content at a specific commit. Return error if file does not exist at that commit.
-
-### Step 3: Implement CurrentHead
-
-Run `git rev-parse HEAD` to get the current HEAD commit hash.
-
-### Step 4: Implement Diff and DiffFiles
-
-- `Diff`: Combine `git diff` (unstaged) and `git diff --cached` (staged) output
-- `DiffFiles`: Parse `git diff --name-only` + `git diff --cached --name-only` for changed file paths
-
-### Step 5: Verify tests pass (Green)
-
-- **Verification**: `go test ./infrastructure/git/... -run TestGraphGitClient` -- all tests PASS
+### Step 4: Run tests
+```bash
+go test ./infrastructure/git/... -run TestGraphClient -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should pass (Green)
-go test ./infrastructure/git/... -run TestGraphGitClient -v
-
-# Existing git tests unaffected
-go test ./infrastructure/git/... -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./infrastructure/git/... -run TestGraphClient -v
+# All tests must PASS
+go vet ./infrastructure/git/...
+make build
+make test
 ```
 
 ## Success Criteria
-
-- All GraphGitClient interface methods implemented
-- All graph git client tests pass (Green)
-- Existing git client tests still pass (no regression)
+- All `TestGraphClient_*` tests pass
+- Compile-time interface assertion present
+- `make build` and `make test` pass
+- No Tree-sitter references in the implementation

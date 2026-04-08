@@ -1,70 +1,81 @@
-# Task 007: CO_CHANGED Computation Impl
+# Task 007: Co-change computation implementation (GREEN)
 
-**depends-on**: task-007-co-change-test
+**depends-on**: task-007-test
 
 ## Description
-
-Implement CO_CHANGED edge computation in the SQLite repository layer. After all commits are indexed, recompute co-change relationships by querying commit-file pairings, calculating coupling count and strength, and storing edges that meet the minimum threshold.
+Implement co-change computation using SQL self-join on the modifies table. Full recompute clears and rebuilds co_changed. Incremental mode recomputes only pairs involving files from newly indexed commits.
 
 ## Execution Context
-
-**Task Number**: 007 of 020 (impl)
-**Phase**: Core Features (P0)
-**Prerequisites**: Failing tests from task-007-co-change-test
+**Task Number**: 007 of 018 (impl phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-007-test (failing tests exist)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: Index computes CO_CHANGED edges
-  Given the repository has commits where "a.go" and "b.go" are modified together 5 times
-  And "a.go" has been modified 8 times total
-  And "b.go" has been modified 6 times total
-  When I run "git-agent graph index"
-  Then the graph should contain a CO_CHANGED edge from "a.go" to "b.go"
-  And the edge should have coupling_count of 5
-  And the edge should have coupling_strength of approximately 0.625
-  And pairs with fewer than 3 co-changes should not have CO_CHANGED edges
+Feature: Co-change computation implementation
+
+  Scenario: All co-change tests pass
+    Given the co-change computation is implemented
+    When I run the co-change tests
+    Then all tests pass (Green phase)
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
-
-- Create: `infrastructure/graph/co_change.go` - Modify: `infrastructure/graph/sqlite_repository.go` -- implement RecomputeCoChanged
+- `infrastructure/graph/cochange.go` -- SQL queries for co-change computation
+- Application service wiring in `application/graph_index_service.go` or separate service
 
 ## Steps
+### Step 1: Implement full recompute SQL
+```sql
+-- Self-join on modifies to find file pairs in the same commit
+INSERT OR REPLACE INTO co_changed (file_a, file_b, co_count, commits_a, commits_b, coupling_strength)
+SELECT
+  m1.file_path AS file_a,
+  m2.file_path AS file_b,
+  COUNT(DISTINCT m1.commit_hash) AS co_count,
+  (SELECT COUNT(DISTINCT commit_hash) FROM modifies WHERE file_path = m1.file_path) AS commits_a,
+  (SELECT COUNT(DISTINCT commit_hash) FROM modifies WHERE file_path = m2.file_path) AS commits_b,
+  CAST(COUNT(DISTINCT m1.commit_hash) AS REAL) /
+    MAX(
+      (SELECT COUNT(DISTINCT commit_hash) FROM modifies WHERE file_path = m1.file_path),
+      (SELECT COUNT(DISTINCT commit_hash) FROM modifies WHERE file_path = m2.file_path)
+    ) AS coupling_strength
+FROM modifies m1
+JOIN modifies m2 ON m1.commit_hash = m2.commit_hash AND m1.file_path < m2.file_path
+GROUP BY m1.file_path, m2.file_path;
+```
 
-### Step 1: Implement co-change computation
+### Step 2: Implement incremental recompute
+For a set of affected files (from new commits):
+1. Delete existing co_changed rows where file_a OR file_b is in the affected set
+2. Recompute only pairs involving at least one affected file
+3. Apply same coupling_strength formula
 
-Query all commit-file pairs from MODIFIES edges. Group by file pairs to count co-occurrences. Compute coupling_strength = co_count / max(total_commits_a, total_commits_b).
+### Step 3: Implement min_count filtering
+Query method accepts min_count parameter and filters `WHERE co_count >= ?`.
 
-### Step 2: Implement threshold filtering
+### Step 4: Wire into repository
+Add `RecomputeCoChanged(ctx, affectedFiles []string)` and `RecomputeCoChangedFull(ctx)` to the SQLite repository.
 
-Only create CO_CHANGED edges where coupling_count >= minCount (default 3). Skip commits with more than `maxFilesPerCommit` modified files (default 50).
-
-### Step 3: Implement RecomputeCoChanged in repository
-
-Delete existing CO_CHANGED edges, then insert new ones from the computation. Use MERGE to handle idempotent recomputation.
-
-### Step 4: Wire into GraphService.Index
-
-Call `repo.RecomputeCoChanged(ctx, minCount)` after all commits are indexed.
-
-### Step 5: Verify tests pass (Green)
-
-- **Verification**: `go test ./infrastructure/graph/... -run TestCoChange` -- all tests PASS
+### Step 5: Run tests
+```bash
+go test ./application/... -run TestCoChange -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should pass (Green)
-go test ./infrastructure/graph/... -run TestCoChange -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./application/... -run TestCoChange -v
+# All tests must PASS
+make build
+make test
 ```
 
 ## Success Criteria
-
-- CO_CHANGED edges correctly computed from commit-file data
-- Coupling strength calculated accurately
-- Threshold filtering works
-- Large commit exclusion works
-- All co-change tests pass (Green)
+- All `TestCoChange_*` tests pass
+- Full recompute SQL self-join produces correct pairs
+- Incremental mode only recomputes affected pairs
+- Coupling strength = co_count / max(commits_a, commits_b)
+- Canonical ordering (file_a < file_b) enforced
+- No self-pairs (a.go, a.go)
+- `make build` and `make test` pass

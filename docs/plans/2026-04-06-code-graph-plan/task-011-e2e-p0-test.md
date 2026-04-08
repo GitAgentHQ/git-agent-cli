@@ -1,87 +1,85 @@
-# Task 011: P0 E2E Tests
+# Task 011: P0 E2E test (RED)
 
-**depends-on**: task-010
+**depends-on**: task-009, task-010
 
 ## Description
-
-Write end-to-end tests for P0 graph features following the existing e2e pattern: TestMain builds the binary once, then each test invokes it as a subprocess against a real temporary git repository.
+Write end-to-end tests for the P0 feature set: impact command and commit co-change enhancement. Tests invoke the compiled `git-agent` binary as a subprocess (same pattern as existing e2e tests).
 
 ## Execution Context
-
-**Task Number**: 011 of 020 (test)
-**Phase**: Integration (P0)
-**Prerequisites**: CLI wiring from task-010
+**Task Number**: 011 of 018 (test phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-009 (impact CLI), task-010 (commit enhancement)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: First-time full index of a git repository
-  Given a git repository at a temporary test directory
-  And the repository has 3 commits modifying 5 files
-  When I run "git-agent graph index"
-  Then a graph database should be created at ".git-agent/graph.db"
-  And the command should exit with code 0
+Feature: P0 end-to-end tests
 
-Scenario: Agent queries via CLI and gets JSON output
-  When I run "git-agent graph blast-radius pkg/service.go"
-  Then the output should be valid JSON
+  Scenario: impact command returns results for a file
+    Given a git repository with 10+ commits and shared file modifications
+    And the git-agent binary is built
+    When I run git-agent impact <file> in the repository
+    Then the exit code is 0
+    And stdout contains file paths with co-change percentages
 
-Scenario: Graph status when no index exists
-  Given a git repository with no graph database
-  When I run "git-agent graph status"
-  Then stdout should contain {"exists": false}
-  And the exit code should be 3
+  Scenario: impact --json produces valid JSON
+    Given a git repository with indexed history
+    When I run git-agent impact <file> --json
+    Then stdout is valid JSON
+    And JSON contains "target" and "co_changed" keys
 
-Scenario: Graph reset deletes the database
-  Given an indexed repository
-  When I run "git-agent graph reset"
-  Then ".git-agent/graph.db" should not exist
+  Scenario: Auto-index creates graph.db on first impact run
+    Given a git repository with no .git-agent/graph.db
+    When I run git-agent impact <file>
+    Then .git-agent/graph.db exists after the command
+    And exit code is 0
+
+  Scenario: impact for file with no co-changes returns empty
+    Given a git repository where "isolated.go" was modified in only 1 commit alone
+    When I run git-agent impact isolated.go --json
+    Then JSON co_changed array is empty
+    And exit code is 0
+
+  Scenario: commit still works with graph feature present
+    Given a git repository with graph.db
+    And staged changes exist
+    When I run git-agent commit (with appropriate test mocking)
+    Then the commit succeeds
+    And no graph-related error appears in output
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing, Blast Radius, Graph Lifecycle)
-
 ## Files to Modify/Create
+- `e2e/impact_test.go` -- all e2e test functions
 
-- Create: `e2e/graph_test.go` 
 ## Steps
+### Step 1: Review existing e2e patterns
+Follow the pattern in existing e2e tests: `TestMain` builds the binary, tests invoke it as a subprocess via `exec.Command`.
 
-### Step 1: Set up test infrastructure
+### Step 2: Write e2e test functions
+- `TestE2E_Impact_ReturnsResults`
+- `TestE2E_Impact_JSONOutput`
+- `TestE2E_Impact_AutoIndex`
+- `TestE2E_Impact_NoCoChanges`
+- `TestE2E_Commit_WithGraph`
 
-In `TestMain`, build the binary with ``. Create a temporary git repository with multiple commits, authors, and file modifications (same pattern as existing e2e tests).
+### Step 3: Set up test repositories
+Each test creates a temporary git repository with enough commit history to produce co-change data (at least 3 commits with overlapping file modifications for min_count=3).
 
-### Step 2: Write graph index E2E test
-
-- `TestE2E_GraphIndex`: Run `git-agent graph index`, verify JSON output contains indexed_commits > 0, exit code 0
-- `TestE2E_GraphIndex_Incremental`: Index, add commit, re-index, verify new_commits = 1
-
-### Step 3: Write blast-radius E2E test
-
-- `TestE2E_GraphBlastRadius`: Index, then query blast radius of a file with known co-changes, verify JSON output
-- `TestE2E_GraphBlastRadius_NonExistent`: Query non-existent file, verify exit code 1
-
-### Step 4: Write status E2E tests
-
-- `TestE2E_GraphStatus_NoIndex`: Without indexing, verify exit code 3 and exists=false
-- `TestE2E_GraphStatus_Indexed`: After indexing, verify exit code 0 and node counts
-
-### Step 5: Write reset E2E test
-
-- `TestE2E_GraphReset`: Index, reset, verify graph.db file is removed
-
-### Step 6: Verify tests fail (Red)
-
-- **Verification**: `go test  ./e2e/... -run TestE2E_Graph` -- tests MUST FAIL (need binary + test data)
+### Step 4: Verify tests fail
+```bash
+go test ./e2e/... -run TestE2E_Impact -v
+go test ./e2e/... -run TestE2E_Commit_WithGraph -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should fail initially, then pass after impl
-go test  ./e2e/... -run TestE2E_Graph -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./e2e/... -run "TestE2E_Impact|TestE2E_Commit_WithGraph" -v 2>&1 | grep FAIL
+# Tests MUST fail -- Red phase
 ```
 
 ## Success Criteria
-
-- E2E tests follow existing pattern (subprocess invocation)
-- Tests compile in the default build (no build tags needed)
-- All P0 scenarios covered end-to-end
+- Test file compiles
 - All tests FAIL (Red phase)
+- Tests cover: impact results, JSON output, auto-index, empty co-changes, commit with graph
+- Tests use subprocess invocation (not direct function calls)
+- Each test creates its own isolated git repository

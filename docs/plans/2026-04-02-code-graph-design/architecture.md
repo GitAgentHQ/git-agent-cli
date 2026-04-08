@@ -5,18 +5,20 @@
 The graph feature follows the existing 4-layer inward-dependency pattern:
 
 ```
-cmd/graph*.go  -->  application/graph_*.go  -->  domain/graph/  <--  infrastructure/graph/
-                                                                <--  infrastructure/treesitter/
+cmd/impact.go      -->  application/graph_*.go  -->  domain/graph/  <--  infrastructure/graph/
+cmd/capture.go
+cmd/timeline.go
+cmd/diagnose.go
 ```
 
-Domain has zero external imports. SQLite (`modernc.org/sqlite`) and Tree-sitter
-live exclusively in `infrastructure/`.
+Domain has zero external imports. SQLite (`modernc.org/sqlite`) lives exclusively
+in `infrastructure/`.
 
 ## Always-On Binary
 
 The graph feature is compiled into every `git-agent` binary. There is no
 `//go:build graph` tag, no separate `make build-graph` target, and no
-conditional command registration. The `graph` subcommand is always available.
+conditional command registration. The graph commands are always available.
 
 This simplifies distribution, CI, and user experience: one binary, one build,
 one test invocation. The pure-Go SQLite driver (`modernc.org/sqlite`) requires
@@ -30,16 +32,19 @@ git-agent-cli/
     graph/
       repository.go          # GraphRepository interface
       index.go               # IndexRequest, IndexResult, IndexStatus DTOs
-      query.go               # BlastRadiusRequest, BlastRadiusResult, etc.
+      query.go               # ImpactRequest, ImpactResult DTOs
       session.go             # SessionNode, ActionNode, CaptureRequest, CaptureResult DTOs
-      timeline.go            # TimelineRequest, TimelineResult, DiagnoseRequest, DiagnoseResult DTOs
-      nodes.go               # CommitNode, FileNode, SymbolNode, AuthorNode
+      timeline.go            # TimelineRequest, TimelineResult DTOs
+      nodes.go               # CommitNode, FileNode, AuthorNode
       edges.go               # Edge types, CO_CHANGED weight
+    commit/
+      planner.go             # CoChangeHint type (for commit enhancement)
 
   application/
-    graph_service.go          # GraphService: Index, BlastRadius, Hotspots, Ownership, Status, Reset
+    graph_index_service.go    # GraphIndexService: Index (full + incremental)
+    graph_ensure_index.go     # GraphEnsureIndexService: EnsureIndex (auto-index logic)
+    graph_impact_service.go   # GraphImpactService: Impact (co-change query)
     graph_capture_service.go  # CaptureService: Capture, EndSession, Timeline
-    graph_diagnose_service.go # DiagnoseService: Diagnose (P2, requires LLM)
 
   infrastructure/
     graph/
@@ -48,32 +53,15 @@ git-agent-cli/
       indexer.go              # Git history walker + incremental logic
       co_change.go            # CO_CHANGED edge computation
 
-    treesitter/
-      parser.go               # Language detection + gotreesitter wrapper
-      extractor.go            # Symbol extraction (functions, classes, calls, imports)
-      go_parser.go            # go/ast parser for Go files (higher precision)
-      queries/                # Embedded .scm query files per language
-        go.scm
-        typescript.scm
-        python.scm
-        rust.scm
-        java.scm
-
   cmd/
-    graph.go                  # Root "graph" command (Cobra)
-    graph_index.go            # "graph index" subcommand
-    graph_blast_radius.go     # "graph blast-radius" subcommand
-    graph_capture.go          # "graph capture" subcommand (P1b)
-    graph_timeline.go         # "graph timeline" subcommand (P1b)
-    graph_hotspots.go         # "graph hotspots" subcommand (P1a)
-    graph_ownership.go        # "graph ownership" subcommand (P1a)
-    graph_diagnose.go         # "graph diagnose" subcommand (P2)
-    graph_status.go           # "graph status" subcommand
-    graph_reset.go            # "graph reset" subcommand
+    impact.go                 # "impact" command (flat on rootCmd)
+    capture.go                # "capture" command (flat on rootCmd, hidden)
+    timeline.go               # "timeline" command (flat on rootCmd)
+    diagnose.go               # "diagnose" command (flat on rootCmd, P2 stub)
 
   pkg/
     graph/
-      format.go               # JSON/text output formatting for graph results
+      format.go               # JSON/text output formatting, TTY detection
 ```
 
 ## Domain Interfaces
@@ -86,7 +74,6 @@ type GraphRepository interface {
     Open(ctx context.Context) error
     Close() error
     InitSchema(ctx context.Context) error
-    Drop(ctx context.Context) error
 
     // Write (indexing)
     UpsertCommit(ctx context.Context, c CommitNode) error
@@ -94,18 +81,14 @@ type GraphRepository interface {
     UpsertFile(ctx context.Context, f FileNode) error
     CreateModifies(ctx context.Context, commitHash, filePath, status string, additions, deletions int) error
     CreateAuthored(ctx context.Context, authorEmail, commitHash string) error
-    ReplaceFileSymbols(ctx context.Context, filePath string, symbols []SymbolNode, calls []CallEdge, imports []ImportEdge) error
     RecomputeCoChanged(ctx context.Context, minCount int) error
 
     // State
     GetLastIndexedCommit(ctx context.Context) (string, error)
     SetLastIndexedCommit(ctx context.Context, hash string) error
-    GetStats(ctx context.Context) (*GraphStats, error)
 
     // Read (queries)
-    BlastRadius(ctx context.Context, req BlastRadiusRequest) (*BlastRadiusResult, error)
-    Hotspots(ctx context.Context, req HotspotsRequest) (*HotspotsResult, error)
-    Ownership(ctx context.Context, req OwnershipRequest) (*OwnershipResult, error)
+    Impact(ctx context.Context, req ImpactRequest) (*ImpactResult, error)
 
     // Session/Action tracking (P1b)
     UpsertSession(ctx context.Context, s SessionNode) error
@@ -124,7 +107,7 @@ type GraphRepository interface {
 
     // Rename tracking
     CreateRename(ctx context.Context, oldPath, newPath, commitHash string) error
-    ResolveRenames(ctx context.Context, filePath string) ([]string, error)  // returns all historical paths (follows rename chains via recursive query)
+    ResolveRenames(ctx context.Context, filePath string) ([]string, error)
 
     // Schema migration
     GetSchemaVersion(ctx context.Context) (int, error)
@@ -139,57 +122,58 @@ Note: `Query` accepts `[]any` positional parameters (matching SQLite `?`
 placeholders), not a `map[string]any`. All other methods use parameterized
 statements internally -- never string concatenation.
 
-### ASTParser
-
-```go
-type ASTParser interface {
-    Parse(ctx context.Context, language string, source []byte) (*ParseResult, error)
-    SupportedLanguages() []string
-}
-
-type ParseResult struct {
-    Symbols []SymbolNode
-    Calls   []CallEdge    // {from: symbol ID, to: symbol name, confidence}
-    Imports []ImportEdge  // {from: file path, import_path: raw string, resolved: file path}
-}
-```
-
-For Go files, `infrastructure/treesitter/go_parser.go` delegates to `go/ast`
-for higher precision on function signatures, interface methods, and struct
-fields. Other languages use gotreesitter with embedded `.scm` query files.
-
 ## Application Services
 
-### GraphService (index + queries)
+### GraphIndexService (indexing)
 
 ```go
-type GraphService struct {
-    repo   graph.GraphRepository
-    parser graph.ASTParser
-    git    GraphGitClient
+type GraphIndexService struct {
+    repo graph.GraphRepository
+    git  GraphGitClient
 }
 
 // GraphGitClient extends the existing git client interface
 type GraphGitClient interface {
     CommitLogDetailed(ctx context.Context, since string, max int) ([]graph.CommitInfo, error)
-    FileContentAt(ctx context.Context, commitHash, filePath string) ([]byte, error)
     CurrentHead(ctx context.Context) (string, error)
-    IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)  // merge-base --is-ancestor
-    Diff(ctx context.Context) (string, error)            // unstaged + staged diff
-    DiffFiles(ctx context.Context) ([]string, error)     // list of changed file paths
-    DiffForFiles(ctx context.Context, files []string) (string, error)  // diff restricted to specific files
-    HashObject(ctx context.Context, filePath string) (string, error)   // git hash-object for content hash
+    IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)
+    Diff(ctx context.Context) (string, error)
+    DiffFiles(ctx context.Context) ([]string, error)
+    DiffForFiles(ctx context.Context, files []string) (string, error)
+    HashObject(ctx context.Context, filePath string) (string, error)
 }
 ```
 
 | Method | Description | Priority |
 |--------|-------------|----------|
 | `Index(ctx, req IndexRequest) (*IndexResult, error)` | Full or incremental index | P0 |
-| `BlastRadius(ctx, req BlastRadiusRequest) (*BlastRadiusResult, error)` | Co-change + call chain | P0 |
-| `Hotspots(ctx, req HotspotsRequest) (*HotspotsResult, error)` | Ranked change frequency | P1a |
-| `Ownership(ctx, req OwnershipRequest) (*OwnershipResult, error)` | Author contribution | P1a |
-| `Status(ctx) (*GraphStatus, error)` | DB metadata + row counts | P0 |
-| `Reset(ctx) error` | Delete database file | P0 |
+
+### GraphEnsureIndexService (auto-indexing)
+
+```go
+type GraphEnsureIndexService struct {
+    indexSvc *GraphIndexService
+    repo     graph.GraphRepository
+    git      GraphGitClient
+}
+```
+
+| Method | Description | Priority |
+|--------|-------------|----------|
+| `EnsureIndex(ctx) error` | Auto-index: DB missing -> full; unreachable lastHash -> full re-index; else -> incremental | P0 |
+
+### GraphImpactService (queries)
+
+```go
+type GraphImpactService struct {
+    repo     graph.GraphRepository
+    ensureSvc *GraphEnsureIndexService
+}
+```
+
+| Method | Description | Priority |
+|--------|-------------|----------|
+| `Impact(ctx, req ImpactRequest) (*ImpactResult, error)` | Co-change neighbors (calls EnsureIndex first) | P0 |
 
 ### CaptureService (session/action tracking -- P1b)
 
@@ -206,69 +190,51 @@ type CaptureService struct {
 | `EndSession(ctx, sessionID string) error` | Mark session as ended |
 | `Timeline(ctx, req TimelineRequest) (*TimelineResult, error)` | Query sessions/actions with filters |
 
-### DiagnoseService (P2, requires LLM)
-
-```go
-type DiagnoseService struct {
-    repo    graph.GraphRepository
-    graph   *GraphService       // reuses BlastRadius
-    capture *CaptureService     // reuses Timeline/ActionsForFiles
-    llm     LLMClient           // existing OpenAI-compatible client
-}
-
-// LLMClient reuses the existing infrastructure/openai client interface
-type LLMClient interface {
-    Complete(ctx context.Context, prompt string) (string, error)
-}
-```
-
-| Method | Description |
-|--------|-------------|
-| `Diagnose(ctx, req DiagnoseRequest) (*DiagnoseResult, error)` | Combine blast-radius + timeline + LLM reasoning to identify introducing action |
-
 ## CLI Wiring (Cobra)
 
 Following the existing pattern in `cmd/commit.go` and `cmd/init.go`.
-No build tag -- the command is always registered:
+All commands are registered directly on rootCmd -- no parent `graph` command:
 
 ```go
-// cmd/graph.go
-var graphCmd = &cobra.Command{
-    Use:   "graph",
-    Short: "Query the code knowledge graph",
+// cmd/impact.go
+var impactCmd = &cobra.Command{
+    Use:   "impact <path>",
+    Short: "Show co-changed files for a target path",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        repo := sqlite.NewRepository(graphDBPath())
+        gitClient := git.NewClient()
+        indexSvc := application.NewGraphIndexService(repo, gitClient)
+        ensureSvc := application.NewGraphEnsureIndexService(indexSvc, repo, gitClient)
+        impactSvc := application.NewGraphImpactService(repo, ensureSvc)
+        defer repo.Close()
+
+        result, err := impactSvc.Impact(cmd.Context(), application.ImpactRequest{
+            Path:     args[0],
+            Top:      top,
+            MinCount: minCount,
+        })
+        // ... format and output result (TTY-aware)
+    },
 }
 
 func init() {
-    graphCmd.AddCommand(graphIndexCmd)
-    graphCmd.AddCommand(graphBlastRadiusCmd)
-    graphCmd.AddCommand(graphStatusCmd)
-    graphCmd.AddCommand(graphResetCmd)
-    rootCmd.AddCommand(graphCmd)
+    rootCmd.AddCommand(impactCmd)
 }
 ```
 
-Each subcommand constructs the service with wired dependencies:
-
 ```go
-// cmd/graph_index.go
-var graphIndexCmd = &cobra.Command{
-    Use:   "index",
-    Short: "Build or update the code graph",
+// cmd/diagnose.go
+var diagnoseCmd = &cobra.Command{
+    Use:   "diagnose",
+    Short: "Trace a bug to its introducing action (not yet implemented)",
     RunE: func(cmd *cobra.Command, args []string) error {
-        repo := sqlite.NewRepository(graphDBPath())
-        parser := treesitter.NewParser()
-        gitClient := git.NewClient()
-        svc := application.NewGraphService(repo, parser, gitClient)
-        defer repo.Close()
-
-        result, err := svc.Index(cmd.Context(), application.IndexRequest{
-            Force:             force,
-            MaxCommits:        maxCommits,
-            AST:               ast,
-            MaxFilesPerCommit: maxFilesPerCommit,
-        })
-        // ... format and output result
+        fmt.Fprintln(os.Stderr, "not yet implemented")
+        return nil
     },
+}
+
+func init() {
+    rootCmd.AddCommand(diagnoseCmd)
 }
 ```
 
@@ -279,8 +245,12 @@ these are managed by SQLite and must not be deleted independently.
 ## SQLite Schema
 
 > **Authoritative schema**: See [_index.md](./_index.md) for the complete DDL
-> with all tables, indexes, and constraints. This section highlights key
+> with all 13 tables, indexes, and constraints. This section highlights key
 > design choices.
+
+13 tables total: `commits`, `files`, `authors`, `modifies`, `authored`,
+`co_changed`, `renames`, `index_state`, `sessions`, `actions`,
+`action_modifies`, `action_produces`, `capture_baseline`.
 
 All tables are created in `InitSchema`. Session/Action tables (P1b) are
 included in the DDL from day one but remain empty until the `capture` command
@@ -289,8 +259,7 @@ is implemented.
 Key schema decisions:
 - **Canonical co-change ordering**: `CHECK (file_a < file_b)` on `co_changed`
   prevents duplicate pairs
-- **Natural primary keys**: commit hash, file path, composite symbol ID
-  (`{file_path}:{kind}:{name}:{start_line}`)
+- **Natural primary keys**: commit hash, file path
 - **Foreign keys**: enabled via `PRAGMA foreign_keys=ON` for referential integrity
 - **WAL mode PRAGMAs**: set once at connection open before any queries
 
@@ -305,8 +274,8 @@ Key schema decisions:
 5. Read index_state WHERE key = 'last_indexed_commit'
 6. If lastHash is set:
    a. Verify reachability: git merge-base --is-ancestor lastHash HEAD
-   b. If NOT reachable (force-push/rebase): log warning, set --force flag
-7. If --force: DELETE FROM all tables except index_state, sessions, actions,
+   b. If NOT reachable (force-push/rebase): log warning, do full re-index
+7. If full re-index: DELETE FROM all tables except index_state, sessions, actions,
    action_modifies, capture_baseline (preserve action history).
    Also DELETE FROM action_produces (commit hashes change after rebase,
    so action-to-commit links are invalidated; log warning about this)
@@ -321,17 +290,12 @@ Key schema decisions:
        - If status starts with R (rename):
          * Parse old_path and new_path from git status line
          * INSERT OR IGNORE INTO renames (old_path, new_path, commit_hash)
-       - If --ast and file extension is supported:
-         * git show commitHash:filePath
-         * Parse: go/ast for .go files, gotreesitter for others
-         * ReplaceFileSymbols: DELETE FROM symbols/calls/imports/contains_symbol
-           WHERE file_path = ?, then batch INSERT new rows
 11. Commit transaction
 12. Incremental co_changed update in a separate transaction:
     a. Collect set of files modified in newly indexed commits
     b. DELETE FROM co_changed WHERE file_a IN (...) OR file_b IN (...)
     c. Recompute co_changed only for pairs involving those files
-    d. On --force or when new commits > 500: full DELETE + recompute instead
+    d. On full re-index or when new commits > 500: full DELETE + recompute instead
 13. UPDATE index_state: last_indexed_commit, schema_version
 14. Return IndexResult with stats
 ```
@@ -339,9 +303,9 @@ Key schema decisions:
 Batch inserts use prepared statements with multiple value tuples per
 `INSERT` (e.g., 500 rows per batch).
 
-## Blast Radius Queries
+## Impact Query
 
-### Phase 1: Co-change neighbors (P0)
+### Co-change neighbors (P0)
 
 ```sql
 SELECT
@@ -356,71 +320,8 @@ ORDER BY cc.coupling_strength DESC
 LIMIT ?3
 ```
 
-### Phase 2: Import reverse lookup (P1a)
-
-```sql
-SELECT i.from_file AS path, 'imports' AS reason
-FROM imports i
-WHERE i.to_file = ?
-```
-
-### Phase 3: Call chain via recursive CTE (P1a)
-
-```sql
-WITH RECURSIVE call_chain(symbol_id, file_path, depth, visited) AS (
-    -- Base case: symbols in the target file
-    SELECT s.id, s.file_path, 0, s.id
-    FROM symbols s
-    WHERE s.file_path = ?1
-
-    UNION ALL
-
-    -- Recursive step: follow CALLS edges outward
-    SELECT c.to_symbol, s2.file_path, cc.depth + 1,
-           cc.visited || '|' || c.to_symbol
-    FROM call_chain cc
-    JOIN calls c ON c.from_symbol = cc.symbol_id
-    JOIN symbols s2 ON s2.id = c.to_symbol
-    WHERE cc.depth < ?2                                                       -- depth limit
-      AND instr('|' || cc.visited || '|', '|' || c.to_symbol || '|') = 0     -- cycle prevention (delimiter-bounded)
-)
-SELECT DISTINCT file_path, 'call-dependency' AS reason
-FROM call_chain
-WHERE depth > 0 AND file_path <> ?1
-```
-
-### Phase 4: Symbol-level entry point (P1a)
-
-When `--symbol` is provided:
-
-```sql
-WITH RECURSIVE callers(symbol_id, file_path, depth, visited) AS (
-    SELECT s.id, s.file_path, 0, s.id
-    FROM symbols s
-    WHERE s.name = ?1 AND s.file_path = ?2
-
-    UNION ALL
-
-    SELECT c.from_symbol, s2.file_path, cl.depth + 1,
-           cl.visited || '|' || c.from_symbol
-    FROM callers cl
-    JOIN calls c ON c.to_symbol = cl.symbol_id
-    JOIN symbols s2 ON s2.id = c.from_symbol
-    WHERE cl.depth < ?3
-      AND instr('|' || cl.visited || '|', '|' || c.from_symbol || '|') = 0
-)
-SELECT DISTINCT
-    s.file_path AS file,
-    s.name AS symbol,
-    s.kind AS kind
-FROM callers cl
-JOIN symbols s ON s.id = cl.symbol_id
-WHERE cl.depth > 0
-ORDER BY s.file_path
-```
-
-Results from all phases are merged, deduplicated by file path, and ranked
-by coupling strength (co-change) then by reason type.
+Impact queries resolve renames (union old+new paths) before querying co_changed,
+preserving co-change history across file renames.
 
 ## Capture Algorithm (P1b)
 
@@ -457,11 +358,8 @@ only new changes to each action, preventing diff accumulation across tool calls.
     a. INSERT OR IGNORE INTO files (path)
     b. INSERT INTO action_modifies (action_id, file_path, additions, deletions)
 16. Update capture_baseline: INSERT OR REPLACE for ALL changed files (not just delta)
-    -- This ensures the baseline stays current even for files unchanged since last capture
-    -- For deleted files, store the "deleted" sentinel so re-creation is detected
 17. Cleanup stale baseline: DELETE FROM capture_baseline WHERE file_path NOT IN
     (current changed files list) AND captured_at < (now - 24h)
-    -- Prevents unbounded growth; only runs if transaction is fast enough
 18. Commit transaction
 19. Return CaptureResult
 ```
@@ -489,27 +387,6 @@ Then `INSERT INTO action_produces` for each match. This runs inside the
 existing commit flow (`cmd/commit.go`), bridging action-level and
 commit-level history.
 
-## Diagnose Algorithm (P2)
-
-```
-1. Parse input: bug description or file path
-2. If file path:
-   a. BlastRadius(filePath) -> affected files
-   b. ActionsForFiles(affected + target, --since) -> candidate actions
-3. If description:
-   a. LLM: extract likely file paths from description
-   b. BlastRadius for each -> affected files
-   c. ActionsForFiles(affected, --since) -> candidate actions
-4. Build context for LLM:
-   a. Bug description
-   b. Candidate actions (action ID, tool, timestamp, diff excerpt, files)
-   c. Blast radius summary
-5. LLM prompt: "Given this bug and these recent actions, which action
-   most likely introduced it? Explain why and suggest a fix."
-6. Parse LLM response into DiagnoseResult
-7. Return ranked suspects with explanations
-```
-
 ## Hook Integration Architecture
 
 ```
@@ -518,7 +395,7 @@ Agent (Claude Code)
   | PostToolUse hook fires after Edit/Write/Bash
   |
   v
-git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME
+git-agent capture --source claude-code --tool $CLAUDE_TOOL_NAME
   |
   | 1. git diff (fast, local)
   | 2. Write Session/Action rows to SQLite
@@ -529,9 +406,8 @@ git-agent graph capture --source claude-code --tool $CLAUDE_TOOL_NAME
   |
   | Later, user or agent queries:
   |
-  +--> git-agent graph timeline --since 1h
-  +--> git-agent graph diagnose "test failures"
-  +--> git-agent graph blast-radius src/foo.go
+  +--> git-agent impact src/foo.go
+  +--> git-agent timeline --since 1h
 ```
 
 Key design constraint: `capture` must never fail the hook. If SQLite is
@@ -552,8 +428,7 @@ SQLite provides built-in locking; no external lock file is needed.
   capture transactions are short (<50ms) so contention is rare.
 - **Query**: Read-only. WAL mode allows queries to proceed concurrently with
   an active writer without blocking.
-- **Reset**: Close connection, then `os.Remove(graph.db)`. SQLite sidecar files
-  (`-wal`, `-shm`) are cleaned up automatically when the last connection closes.
+- **Reset**: Users delete the file manually (`rm .git-agent/graph.db*`).
 
 For in-process concurrency (multiple goroutines sharing one `*sql.DB`), the
 Go `database/sql` pool handles connection management. No additional
@@ -563,47 +438,44 @@ Go `database/sql` pool handles connection management. No additional
 
 | Condition | Behavior |
 |-----------|----------|
-| Graph not indexed | Exit code 3 with `{"error": "graph not indexed", "hint": "run 'git-agent graph index'"}` |
-| SQLite corruption | `graph reset` deletes the file; re-index to recover |
+| EnsureIndex fails | Exit code 3 with `{"error": "auto-index failed", "detail": "..."}` |
+| SQLite corruption | User deletes DB (`rm .git-agent/graph.db*`); next query re-indexes |
 | `SQLITE_BUSY` during index | Retry via busy_timeout (5s); if exhausted, exit 1 with lock error |
 | `SQLITE_BUSY` during capture | Skip silently, exit 0 (never block agent hooks) |
-| Unsupported language (AST) | Skip file, log warning in verbose mode |
-| LLM unavailable (`--compress` / `diagnose`) | Exit 1 with `{"error": "LLM endpoint not configured"}` |
+| LLM unavailable (`--compress`) | Exit 1 with `{"error": "LLM endpoint not configured"}` |
 | Force-push / history rewrite | Auto-detected via `merge-base --is-ancestor`; falls back to full re-index with warning |
 | Schema version mismatch (minor) | Run forward migrations automatically |
-| Schema version mismatch (major) | Exit 1, suggest `graph reset` (warns about action history loss) |
+| Schema version mismatch (major) | Exit 1, suggest deleting graph.db (warns about action history loss) |
 
 ## Mermaid: Component Diagram
 
 ```mermaid
 graph LR
     subgraph cmd
-        G[graph.go]
-        GI[graph_index.go]
-        GBR[graph_blast_radius.go]
-        GC[graph_capture.go]
-        GTL[graph_timeline.go]
-        GDX[graph_diagnose.go]
-        GS[graph_status.go]
-        GR[graph_reset.go]
+        IMP[impact.go]
+        CAP[capture.go]
+        TL[timeline.go]
+        DGN[diagnose.go]
     end
 
     subgraph application
-        SVC[GraphService]
-        CAP[CaptureService]
-        DGN[DiagnoseService]
+        IDX[GraphIndexService]
+        ENS[GraphEnsureIndexService]
+        IQ[GraphImpactService]
+        CAPSVC[CaptureService]
     end
 
     subgraph domain/graph
         REPO[GraphRepository]
-        AST[ASTParser]
         DTO[DTOs]
+    end
+
+    subgraph domain/commit
+        CHT[CoChangeHint]
     end
 
     subgraph infrastructure
         SQL[graph/sqlite_repository.go]
-        TS[treesitter/parser.go]
-        GOAST[treesitter/go_parser.go]
         GIT[git/client.go]
         LLM[openai/client.go]
     end
@@ -613,18 +485,17 @@ graph LR
         GITCLI[git CLI]
     end
 
-    G --> GI & GBR & GC & GTL & GDX & GS & GR
-    GI & GBR & GS & GR --> SVC
-    GC & GTL --> CAP
-    GDX --> DGN
-    DGN --> SVC & CAP & LLM
-    SVC --> REPO & AST
-    CAP --> REPO
+    IMP --> IQ
+    CAP & TL --> CAPSVC
+    DGN -->|P2 stub| DGN
+    IQ --> ENS --> IDX
+    IDX --> REPO
+    IQ --> REPO
+    CAPSVC --> REPO
     SQL -.implements.-> REPO
-    TS -.implements.-> AST
-    GOAST -.implements.-> AST
-    SVC --> GIT
-    CAP --> GIT
+    IDX --> GIT
+    ENS --> GIT
+    CAPSVC --> GIT
     SQL --> DB
     GIT --> GITCLI
 ```
@@ -633,7 +504,6 @@ graph LR
 
 | Priority | Scope | Key Deliverables |
 |----------|-------|------------------|
-| P0 | Git history + co-change + blast-radius | `commits`, `files`, `authors`, `modifies`, `authored`, `co_changed` tables; `index` + `blast-radius` + `status` + `reset` commands |
-| P1a | AST + symbols + CALLS/IMPORTS | `symbols`, `contains_symbol`, `calls`, `imports` tables; `--ast` flag on index; import/call-chain in blast-radius; `hotspots` + `ownership` commands |
-| P1b | Action capture + timeline + hooks | `sessions`, `actions`, `action_modifies`, `action_produces` tables; `capture` + `timeline` commands; hook integration; action-to-commit linking |
-| P2 | LLM compress + diagnose | `diagnose` command; LLM-powered analysis; `--compress` flag on timeline |
+| P0 | Git history + co-change + impact + EnsureIndex + commit enhancement | `commits`, `files`, `authors`, `modifies`, `authored`, `co_changed`, `renames`, `index_state` tables; `impact` command; EnsureIndex; commit co-change hints; TTY-aware output |
+| P1b | Action capture + timeline + hooks + diagnose stub | `sessions`, `actions`, `action_modifies`, `action_produces`, `capture_baseline` tables; `capture` + `timeline` commands; `diagnose` stub; hook integration; action-to-commit linking |
+| P2 | LLM compress + diagnose implementation | `diagnose` implementation; LLM-powered analysis; `--compress` flag on timeline |

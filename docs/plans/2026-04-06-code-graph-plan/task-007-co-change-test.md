@@ -1,63 +1,94 @@
-# Task 007: CO_CHANGED Computation Test
+# Task 007: Co-change computation test (RED)
 
 **depends-on**: task-005
 
 ## Description
-
-Write tests for CO_CHANGED edge computation: detecting files that frequently change together in the same commits, calculating coupling strength, and respecting the minimum co-change threshold.
+Write failing tests for co-change computation. Co-change identifies files that frequently change together in the same commits. Uses SQL self-join on the modifies table for full recompute, and incremental mode for only pairs involving files from new commits.
 
 ## Execution Context
-
-**Task Number**: 007 of 020 (test)
-**Phase**: Core Features (P0)
-**Prerequisites**: Full index implementation from task-005
+**Task Number**: 007 of 018 (test phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-005 (IndexService working, modifies table populated)
+**Parallel with**: task-006 (EnsureIndex)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: Index computes CO_CHANGED edges
-  Given the repository has commits where "a.go" and "b.go" are modified together 5 times
-  And "a.go" has been modified 8 times total
-  And "b.go" has been modified 6 times total
-  When I run "git-agent graph index"
-  Then the graph should contain a CO_CHANGED edge from "a.go" to "b.go"
-  And the edge should have coupling_count of 5
-  And the edge should have coupling_strength of approximately 0.625
-  And pairs with fewer than 3 co-changes should not have CO_CHANGED edges
+Feature: Co-change computation
+
+  Scenario: Full recompute finds co-changed pairs
+    Given a repository indexed with commits where:
+      | commit | files modified     |
+      | c1     | a.go, b.go         |
+      | c2     | a.go, b.go, c.go   |
+      | c3     | a.go, b.go         |
+      | c4     | d.go               |
+    When I run full co-change computation
+    Then co_changed contains (a.go, b.go) with co_count=3
+    And co_changed contains (a.go, c.go) with co_count=1
+    And co_changed contains (b.go, c.go) with co_count=1
+    And d.go has no co-change entries (only appeared alone)
+
+  Scenario: Coupling strength calculated correctly
+    Given co_changed entry (a.go, b.go) with co_count=3, commits_a=3, commits_b=3
+    Then coupling_strength = 3 / max(3, 3) = 1.0
+
+  Scenario: Coupling strength with asymmetric counts
+    Given co_changed entry (a.go, c.go) with co_count=1, commits_a=3, commits_c=1
+    Then coupling_strength = 1 / max(3, 1) = 0.333
+
+  Scenario: Min count filter excludes low-frequency pairs
+    Given co_changed entries with various co_counts
+    When I query with min_count=3
+    Then only pairs with co_count >= 3 are returned
+
+  Scenario: Incremental recompute updates only affected pairs
+    Given an indexed repository with existing co_changed data
+    And a new commit modifying files x.go and a.go
+    When I run incremental co-change computation for new commits
+    Then co_changed pairs involving x.go or a.go are recomputed
+    And co_changed pairs NOT involving x.go or a.go are unchanged
+
+  Scenario: Self-join excludes self-pairs
+    Given commits where a.go is the only file modified
+    When I run co-change computation
+    Then no entry (a.go, a.go) exists in co_changed
+
+  Scenario: Pair ordering is canonical
+    Given co-changed files a.go and b.go
+    Then the entry is stored as (a.go, b.go) where file_a < file_b
+    And no duplicate (b.go, a.go) entry exists
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/bdd-specs.md` (Graph Indexing)
-
 ## Files to Modify/Create
+- `application/graph_cochange_test.go` -- all test functions
 
-- Create: `infrastructure/graph/co_change_test.go` 
 ## Steps
+### Step 1: Write test helpers
+Set up indexed repositories with known commit/file patterns for predictable co-change results.
 
-### Step 1: Write co-change computation tests
+### Step 2: Write test functions
+- `TestCoChange_FullRecompute`
+- `TestCoChange_CouplingStrength`
+- `TestCoChange_AsymmetricStrength`
+- `TestCoChange_MinCountFilter`
+- `TestCoChange_Incremental`
+- `TestCoChange_NoSelfPairs`
+- `TestCoChange_CanonicalOrdering`
 
-- `TestCoChange_ComputeEdges`: Given known commit-file pairings, verify CO_CHANGED edges are created with correct coupling_count
-- `TestCoChange_CouplingStrength`: Verify strength = co_occurrences / max(individual_commits_a, individual_commits_b). For (5, 8, 6) -> 5/8 = 0.625
-- `TestCoChange_MinimumThreshold`: Pairs with fewer than 3 co-changes should produce no CO_CHANGED edge
-- `TestCoChange_SkipsLargeCommits`: Commits touching more than 50 files should be excluded from co-change computation
-
-### Step 2: Write integration test
-
-- `TestCoChange_Integration`: Using a real SQLite instance with seeded data, verify RecomputeCoChanged produces correct edges
-
-### Step 3: Verify tests fail (Red)
-
-- **Verification**: `go test ./infrastructure/graph/... -run TestCoChange` -- tests MUST FAIL
+### Step 3: Verify tests fail
+```bash
+go test ./application/... -run TestCoChange -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should fail (Red)
-go test ./infrastructure/graph/... -run TestCoChange -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./application/... -run TestCoChange -v 2>&1 | grep FAIL
+# Tests MUST fail -- Red phase
 ```
 
 ## Success Criteria
-
-- Tests cover co-change edge creation, strength calculation, and threshold filtering
-- Tests verify large commit exclusion
-- Integration test uses real SQLite
+- Test file compiles
 - All tests FAIL (Red phase)
+- Tests cover: full recompute, coupling strength, min count filter, incremental, no self-pairs, canonical ordering
+- Coupling strength formula: `co_count / max(commits_a, commits_b)`, min_count default=3

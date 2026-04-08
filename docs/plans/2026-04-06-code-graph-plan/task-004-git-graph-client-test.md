@@ -1,88 +1,107 @@
-# Task 004: Git Graph Client Extensions Test
+# Task 004: Git graph client extensions test (RED)
 
 **depends-on**: task-002
 
 ## Description
-
-Write tests for the extended git client methods needed by the graph feature: detailed commit log parsing, file content retrieval at a specific commit, current HEAD hash, and diff operations. Tests run against a real temporary git repository.
+Write failing tests for the git client extensions needed by graph indexing. These methods wrap git CLI commands (CommitLogDetailed, CurrentHead, MergeBaseIsAncestor, HashObject, DiffNameOnly, DiffForFiles).
 
 ## Execution Context
-
-**Task Number**: 004 of 020 (test)
-**Phase**: Infrastructure Foundation
-**Prerequisites**: Domain interfaces from task-002 (GraphGitClient interface)
+**Task Number**: 004 of 018 (test phase)
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-002 (domain types defined, GraphGitClient interface exists)
+**Parallel with**: task-003 (SQLite lifecycle)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: CommitLogDetailed returns structured commit data
-  Given a temporary git repository with 3 commits modifying 5 files
-  When I call CommitLogDetailed with no since filter
-  Then it should return 3 commit entries
-  And each entry should have hash, message, author name/email, timestamp, parent hashes
-  And each entry should include changed files with status (A/M/D)
+Feature: Git graph client extensions
 
-Scenario: CommitLogDetailed respects since filter
-  Given a repository with 5 commits
-  When I call CommitLogDetailed with since set to the 3rd commit hash
-  Then only the 2 commits after that hash should be returned
+  Scenario: CommitLogDetailed returns structured commit data
+    Given a git repository with 3 commits modifying different files
+    When I call CommitLogDetailed with no sinceHash
+    Then I receive 3 CommitInfo structs
+    And each has Hash, Message, AuthorName, AuthorEmail, Timestamp
+    And each has a Files slice with Status and Path
 
-Scenario: FileContentAt returns file content at a specific commit
-  Given a repository where "main.go" was modified across commits
-  When I call FileContentAt with a specific commit hash and "main.go"
-  Then it should return the file content as it existed at that commit
+  Scenario: CommitLogDetailed handles renames
+    Given a git repository where file "old.go" was renamed to "new.go"
+    When I call CommitLogDetailed
+    Then the rename commit has a FileChange with Status "R", OldPath "old.go", Path "new.go"
 
-Scenario: Diff returns unstaged and staged changes
-  Given a repository with uncommitted modifications to "src/main.go"
-  When I call Diff
-  Then it should return the unified diff of all changes
-  When I call DiffFiles
-  Then it should return ["src/main.go"]
+  Scenario: CommitLogDetailed with sinceHash returns only new commits
+    Given a git repository with 5 commits
+    And I know the hash of commit 3
+    When I call CommitLogDetailed with sinceHash=commit3
+    Then I receive exactly 2 CommitInfo structs (commits 4 and 5)
+
+  Scenario: CurrentHead returns HEAD hash
+    Given a git repository with at least one commit
+    When I call CurrentHead
+    Then I receive a 40-character hex string matching git rev-parse HEAD
+
+  Scenario: MergeBaseIsAncestor returns true for ancestor
+    Given a git repository with commits A -> B -> C
+    When I call MergeBaseIsAncestor(A, C)
+    Then it returns true
+
+  Scenario: MergeBaseIsAncestor returns false for non-ancestor
+    Given a git repository with diverged branches
+    When I call MergeBaseIsAncestor(branchA_head, branchB_head)
+    Then it returns false
+
+  Scenario: HashObject returns blob hash
+    Given a git repository with a file "test.go"
+    When I call HashObject("test.go")
+    Then I receive a 40-character hex string
+
+  Scenario: HashObject returns deleted sentinel for missing file
+    Given a git repository
+    When I call HashObject("nonexistent.go")
+    Then I receive "deleted"
+
+  Scenario: DiffNameOnly returns changed files
+    Given a git repository with staged and unstaged changes
+    When I call DiffNameOnly
+    Then I receive a sorted list of changed file paths
+
+  Scenario: DiffForFiles returns diff output
+    Given a git repository with modifications to "a.go" and "b.go"
+    When I call DiffForFiles(["a.go", "b.go"])
+    Then I receive combined diff text for both files
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (GraphGitClient interface)
-
 ## Files to Modify/Create
-
-- Create: `infrastructure/git/graph_client_test.go`
+- `infrastructure/git/graph_client_test.go` -- all test functions
 
 ## Steps
+### Step 1: Write test helpers
+Create helper functions to set up temporary git repositories with commits, renames, and file modifications.
 
-### Step 1: Create test file
+### Step 2: Write test functions
+- `TestGraphClient_CommitLogDetailed`
+- `TestGraphClient_CommitLogDetailed_Renames`
+- `TestGraphClient_CommitLogDetailed_SinceHash`
+- `TestGraphClient_CurrentHead`
+- `TestGraphClient_MergeBaseIsAncestor`
+- `TestGraphClient_MergeBaseIsAncestor_False`
+- `TestGraphClient_HashObject`
+- `TestGraphClient_HashObject_Deleted`
+- `TestGraphClient_DiffNameOnly`
+- `TestGraphClient_DiffForFiles`
 
-Create `infrastructure/git/graph_client_test.go` with test helpers to create temporary git repositories with deterministic commits.
-
-### Step 2: Write CommitLogDetailed tests
-
-- `TestGraphGitClient_CommitLogDetailed`: Returns commits with hash, message, author, timestamp, parent hashes, and changed files (with status A/M/D)
-- `TestGraphGitClient_CommitLogDetailedSince`: Only returns commits after a given hash
-- `TestGraphGitClient_CommitLogDetailedMaxCommits`: Respects the max limit
-
-### Step 3: Write FileContentAt tests
-
-- `TestGraphGitClient_FileContentAt`: Returns file content at a specific commit hash
-- `TestGraphGitClient_FileContentAt_DeletedFile`: Returns error for deleted files
-
-### Step 4: Write CurrentHead and Diff tests
-
-- `TestGraphGitClient_CurrentHead`: Returns the current HEAD commit hash
-- `TestGraphGitClient_Diff`: Returns combined unstaged + staged diff
-- `TestGraphGitClient_DiffFiles`: Returns list of changed file paths
-
-### Step 5: Verify tests fail (Red)
-
-- **Verification**: `go test ./infrastructure/git/... -run TestGraphGitClient` -- tests MUST FAIL
+### Step 3: Verify tests fail
+```bash
+go test ./infrastructure/git/... -run TestGraphClient -v
+```
 
 ## Verification Commands
-
 ```bash
-# Tests should fail (Red)
-go test ./infrastructure/git/... -run TestGraphGitClient -v
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+go test ./infrastructure/git/... -run TestGraphClient -v 2>&1 | grep FAIL
+# Tests MUST fail -- Red phase
 ```
 
 ## Success Criteria
-
-- Test file created with proper test helpers
-- Tests cover all GraphGitClient interface methods
-- Tests use temporary git repositories with deterministic setup
+- Test file compiles (`go vet ./infrastructure/git/...`)
 - All tests FAIL (Red phase)
+- Tests cover all GraphGitClient interface methods
+- Each test creates its own temporary git repository (no shared state)

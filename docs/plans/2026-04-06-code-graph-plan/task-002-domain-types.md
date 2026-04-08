@@ -1,85 +1,119 @@
-# Task 002: Domain Types and Interfaces
+# Task 002: Domain types and interfaces
 
 **depends-on**: task-001
 
 ## Description
-
-Define all domain value objects (DTOs) and interfaces for the graph feature. Domain layer has zero external imports -- only pure Go types and interfaces. These define the contracts that infrastructure and application layers implement and consume.
+Define all domain types, value objects, and interfaces for the graph feature in `domain/graph/`. This layer has zero external imports -- pure Go only. Also add `CoChangeHint` and `CoChangeHints` to the existing `domain/commit/planner.go` (already done in prior work).
 
 ## Execution Context
-
-**Task Number**: 002 of 020
-**Phase**: Foundation
-**Prerequisites**: Directory structure from task-001
+**Task Number**: 002 of 018
+**Phase**: P0 -- Co-change + Impact + Commit Enhancement
+**Prerequisites**: task-001 (directory structure exists)
 
 ## BDD Scenario
-
 ```gherkin
-Scenario: Domain types have zero external imports
-  Given the domain/graph/ package exists
-  When I inspect its import statements
-  Then no external dependencies should be imported
-  And only standard library packages should be used
-  And all interfaces should be defined for consumers to implement
+Feature: Domain types for code graph
+
+  Scenario: Domain graph package has zero external imports
+    Given the domain/graph/ package
+    When I check all import statements
+    Then no import references an external module
+    And no import references infrastructure/ or application/
+
+  Scenario: All value objects are defined
+    Given the domain/graph/types.go file
+    Then CommitNode has fields: Hash, Message, AuthorName, AuthorEmail, Timestamp, ParentHashes
+    And FileNode has fields: Path, TotalCommits
+    And AuthorNode has fields: Name, Email
+    And CoChangedEntry has fields: FileA, FileB, CoCount, CommitsA, CommitsB, CouplingStrength
+    And RenameEntry has fields: OldPath, NewPath, CommitHash
+
+  Scenario: Session types are defined
+    Given the domain/graph/session.go file
+    Then SessionNode has fields: ID, InstanceID, StartedAt, Source
+    And ActionNode has fields: ID, SessionID, Tool, Timestamp, Intent
+    And CaptureRequest has fields: SessionID, InstanceID, Source, Tool, Intent
+    And CaptureResult has fields: ActionID, FilesModified, FilesCreated
+    And CaptureBaseline has fields: SessionID, FileHashes map
+
+  Scenario: Query types are defined
+    Given the domain/graph/query.go file
+    Then ImpactRequest has fields: FilePath, Depth, TopN, MinCount
+    And ImpactResult has fields: Target, CoChanged entries, RenameChain
+    And TimelineRequest has fields: SessionID, Since, Until
+    And TimelineResult has fields: Sessions list
+
+  Scenario: Repository interface is complete
+    Given the domain/graph/repository.go file
+    Then GraphRepository interface defines lifecycle methods: Open, Close, InitSchema, Drop
+    And write methods: InsertCommit, InsertFileChange, InsertCoChanged, InsertRename
+    And read methods: GetIndexState, CoChangedFor, ResolveRenames
+    And capture methods: InsertSession, InsertAction, InsertActionModifies, InsertActionProduces
+    And baseline methods: GetBaseline, SetBaseline
+
+  Scenario: Git client interface is defined
+    Given the domain/graph/git_client.go file
+    Then GraphGitClient interface defines: CommitLogDetailed, CurrentHead
+    And MergeBaseIsAncestor, HashObject, DiffNameOnly, DiffForFiles
+
+  Scenario: Index types are defined
+    Given the domain/graph/index.go file
+    Then IndexRequest has fields: RepoPath, ForceReindex
+    And IndexResult has fields: CommitsIndexed, IsIncremental
+
+  Scenario: CoChangeHint exists in commit domain
+    Given the domain/commit/planner.go file
+    Then PlanRequest has field CoChangeHints of type []CoChangeHint
+    And CoChangeHint has fields: FileA, FileB, Strength
 ```
 
-**Spec Source**: `../2026-04-02-code-graph-design/architecture.md` (Domain Interfaces section)
-
 ## Files to Modify/Create
-
-- Create: `domain/graph/repository.go` -- GraphRepository interface
-- Create: `domain/graph/nodes.go` -- CommitNode, FileNode, SymbolNode, AuthorNode, SessionNode, ActionNode, IndexState
-- Create: `domain/graph/edges.go` -- CallEdge, ImportEdge, CoChangedEntry
-- Create: `domain/graph/index.go` -- IndexRequest, IndexResult, IndexStatus DTOs
-- Create: `domain/graph/query.go` -- BlastRadiusRequest, BlastRadiusResult, HotspotsRequest, HotspotsResult, OwnershipRequest, OwnershipResult, GraphStats, GraphStatus
-- Create: `domain/graph/session.go` -- CaptureRequest, CaptureResult DTOs
-- Create: `domain/graph/timeline.go` -- TimelineRequest, TimelineResult DTOs
-- Create: `domain/graph/parser.go` -- ASTParser interface, ParseResult
+- `domain/graph/types.go` -- CommitNode, FileNode, AuthorNode, CoChangedEntry, RenameEntry, CommitInfo, FileChange
+- `domain/graph/session.go` -- SessionNode, ActionNode, CaptureRequest, CaptureResult, CaptureBaseline
+- `domain/graph/query.go` -- ImpactRequest, ImpactResult, TimelineRequest, TimelineResult
+- `domain/graph/repository.go` -- GraphRepository interface
+- `domain/graph/git_client.go` -- GraphGitClient interface
+- `domain/graph/index.go` -- IndexRequest, IndexResult
+- `domain/commit/planner.go` -- CoChangeHint, CoChangeHints field (already present)
 
 ## Steps
+### Step 1: Define core types in `types.go`
+Define CommitNode, FileNode, AuthorNode, CoChangedEntry, RenameEntry. Also CommitInfo and FileChange (used by git client for raw log parsing).
 
-### Step 1: Define node types in nodes.go
+### Step 2: Define session types in `session.go`
+SessionNode, ActionNode, CaptureRequest, CaptureResult, CaptureBaseline.
 
-Create value objects for all graph node types: CommitNode, FileNode, SymbolNode, AuthorNode, SessionNode, ActionNode. Each struct has exported fields matching the SQLite schema columns.
+### Step 3: Define query types in `query.go`
+ImpactRequest/Result, TimelineRequest/Result.
 
-### Step 2: Define edge types in edges.go
+### Step 4: Define repository interface in `repository.go`
+Single GraphRepository interface covering lifecycle, write, read, capture, and baseline operations.
 
-Create value objects for edge data: CallEdge (from/to symbol ID + confidence), ImportEdge (from file + import path + resolved path), CoChangedEntry (file pair + coupling count/strength).
+### Step 5: Define git client interface in `git_client.go`
+GraphGitClient interface with methods needed by index and capture services.
 
-### Step 3: Define request/result DTOs
+### Step 6: Define index types in `index.go`
+IndexRequest, IndexResult value objects.
 
-Create DTOs for each operation: IndexRequest/IndexResult, BlastRadiusRequest/BlastRadiusResult, HotspotsRequest/HotspotsResult, OwnershipRequest/OwnershipResult, CaptureRequest/CaptureResult, TimelineRequest/TimelineResult, GraphStats, GraphStatus.
-
-### Step 4: Define GraphRepository interface
-
-Define the full `GraphRepository` interface with lifecycle methods (Open, Close, InitSchema, Drop), write methods (Upsert*, Create*, Replace*, Recompute*), state methods (Get/SetLastIndexedCommit, GetStats), and read methods (BlastRadius, Hotspots, Ownership, Timeline, etc.).
-
-### Step 5: Define ASTParser interface
-
-Define the `ASTParser` interface with `Parse(ctx, language, source) (*ParseResult, error)` and `SupportedLanguages() []string`.
-
-### Step 6: Define GraphGitClient interface
-
-Define the `GraphGitClient` interface extending the existing git client with `CommitLogDetailed`, `FileContentAt`, `CurrentHead`, `Diff`, `DiffFiles`.
-
-### Step 7: Verify compilation
-
-- **Verification**: `go build ./domain/graph/...` compiles with no external imports
+### Step 7: Verify CoChangeHint in commit domain
+Confirm `domain/commit/planner.go` has CoChangeHint type and CoChangeHints field on PlanRequest.
 
 ## Verification Commands
-
 ```bash
-# Verify compilation
-go build ./domain/graph/...
-
-# Verify no external imports
-go list -f '{{.Imports}}' ./domain/graph/ | grep -v "^[" | grep -v "context\|fmt\|time\|strings"
-# Should output nothing (only stdlib imports)
+cd /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli
+# No external imports in domain/graph
+go vet ./domain/graph/...
+# Check for import violations
+grep -r '"github.com' domain/graph/ | grep -v 'gitagenthq/git-agent/domain' && exit 1 || true
+# Build passes
+make build
+make test
 ```
 
 ## Success Criteria
-
-- All DTOs and interfaces defined in `domain/graph/`
-- Zero external imports in domain layer
-- Package compiles successfully
-- All types match the schema defined in the design document
+- All types compile with `go vet ./domain/graph/...`
+- Zero external imports in `domain/graph/` (only stdlib and sibling domain packages)
+- No imports of `infrastructure/` or `application/` from domain
+- `domain/commit/planner.go` contains CoChangeHint and CoChangeHints field
+- `make build` succeeds
+- `make test` passes
