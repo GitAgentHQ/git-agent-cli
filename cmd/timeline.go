@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
@@ -171,16 +170,6 @@ func truncateID(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-func useTimelineJSON(jsonFlag, textFlag bool) bool {
-	if jsonFlag {
-		return true
-	}
-	if textFlag {
-		return false
-	}
-	return !isatty.IsTerminal(os.Stdout.Fd())
 }
 
 func init() {
