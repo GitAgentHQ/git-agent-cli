@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
@@ -35,11 +34,9 @@ func (s *ImpactService) Impact(ctx context.Context, req graph.ImpactRequest) (*g
 		req.MinCount = 3
 	}
 
-	start := time.Now()
 	result, err := s.repo.Impact(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	result.QueryMs = time.Since(start).Milliseconds()
 	return result, nil
 }

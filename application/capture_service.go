@@ -121,14 +121,8 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 		Timestamp:    time.Now().Unix(),
 		Message:      req.Message,
 	}
-	if err := s.repo.CreateAction(ctx, action); err != nil {
+	if err := s.repo.CreateActionBatch(ctx, action, deltaFiles); err != nil {
 		return nil, fmt.Errorf("create action: %w", err)
-	}
-
-	for _, f := range deltaFiles {
-		if err := s.repo.CreateActionModifies(ctx, actionID, f, 0, 0); err != nil {
-			return nil, fmt.Errorf("create action modifies: %w", err)
-		}
 	}
 
 	// Update baseline for ALL changed files (not just delta).
