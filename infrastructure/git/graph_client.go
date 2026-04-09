@@ -273,7 +273,7 @@ func (g *GraphClient) HashObject(ctx context.Context, filePath string) (string, 
 }
 
 // DiffNameOnly returns a sorted, deduplicated list of files with changes
-// (both staged and unstaged).
+// (staged, unstaged, and untracked).
 func (g *GraphClient) DiffNameOnly(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	var files []string
@@ -296,6 +296,18 @@ func (g *GraphClient) DiffNameOnly(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	for _, f := range strings.Split(strings.TrimSpace(staged), "\n") {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			files = append(files, f)
+		}
+	}
+
+	// Untracked files (new files not yet staged).
+	untracked, err := g.run(ctx, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range strings.Split(strings.TrimSpace(untracked), "\n") {
 		if f != "" && !seen[f] {
 			seen[f] = true
 			files = append(files, f)

@@ -167,6 +167,7 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*graph.GraphStats, err
 	}
 	stats.LastIndexedCommit = lastCommit
 
+	// Table names are hardcoded constants below — safe for fmt.Sprintf.
 	tables := []struct {
 		name string
 		dest *int
@@ -537,6 +538,38 @@ func (r *SQLiteRepository) CreateAction(ctx context.Context, a graph.ActionNode)
 	return err
 }
 
+func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []string) error {
+	tx, err := r.db().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	filesJSON, err := json.Marshal(a.FilesChanged)
+	if err != nil {
+		return fmt.Errorf("marshal files_changed: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO actions (id, session_id, sequence, tool, diff, files_changed, timestamp, message)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.SessionID, a.Sequence, a.Tool, a.Diff, string(filesJSON), a.Timestamp, a.Message,
+	); err != nil {
+		return fmt.Errorf("insert action: %w", err)
+	}
+
+	for _, f := range modifiedFiles {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO action_modifies (action_id, file_path, additions, deletions)
+			 VALUES (?, ?, 0, 0)`,
+			a.ID, f,
+		); err != nil {
+			return fmt.Errorf("insert action_modifies: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (r *SQLiteRepository) GetActionCountForSession(ctx context.Context, sessionID string) (int, error) {
 	var count int
 	err := r.db().QueryRowContext(ctx,
@@ -573,14 +606,31 @@ func (r *SQLiteRepository) Timeline(ctx context.Context, req graph.TimelineReque
 
 	sinceTS := req.Since
 
-	rows, err := r.db().QueryContext(ctx,
-		`SELECT id, source, instance_id, started_at, ended_at FROM sessions
-		 WHERE (? = '' OR source = ?)
-		   AND started_at >= ?
-		 ORDER BY started_at DESC
-		 LIMIT ?`,
-		req.Source, req.Source, sinceTS, top,
-	)
+	// When filtering by file, pre-select sessions that have matching actions
+	// so the LIMIT applies to qualifying sessions, not all sessions.
+	var query string
+	var args []any
+	if req.File != "" {
+		query = `SELECT DISTINCT s.id, s.source, s.instance_id, s.started_at, s.ended_at
+			FROM sessions s
+			JOIN actions a ON a.session_id = s.id
+			JOIN action_modifies am ON am.action_id = a.id
+			WHERE (? = '' OR s.source = ?)
+			  AND s.started_at >= ?
+			  AND am.file_path = ?
+			ORDER BY s.started_at DESC
+			LIMIT ?`
+		args = []any{req.Source, req.Source, sinceTS, req.File, top}
+	} else {
+		query = `SELECT id, source, instance_id, started_at, ended_at FROM sessions
+			WHERE (? = '' OR source = ?)
+			  AND started_at >= ?
+			ORDER BY started_at DESC
+			LIMIT ?`
+		args = []any{req.Source, req.Source, sinceTS, top}
+	}
+
+	rows, err := r.db().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)
 	}
@@ -615,11 +665,6 @@ func (r *SQLiteRepository) Timeline(ctx context.Context, req graph.TimelineReque
 		sess.Actions = actions
 		sess.ActionCount = len(actions)
 		totalActions += len(actions)
-
-		// If filtering by file, skip sessions with no matching actions.
-		if req.File != "" && len(actions) == 0 {
-			continue
-		}
 
 		sessions = append(sessions, sess)
 	}
