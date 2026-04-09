@@ -26,14 +26,14 @@ func NewGraphActionLinker(repo graph.GraphRepository) *GraphActionLinker {
 
 // LinkActionsToCommit finds unlinked actions that modified any of the given files
 // and creates action_produces edges to the commit.
-func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitHash string, files []string) error {
-	if len(files) == 0 || commitHash == "" {
+// commitOutput is the raw stdout from `git commit`, e.g. "[branch hash] subject".
+func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitOutput string, files []string) error {
+	if len(files) == 0 || commitOutput == "" {
 		return nil
 	}
-	// Trim the commit hash from git output (may contain extra info)
-	commitHash = strings.TrimSpace(commitHash)
-	if idx := strings.IndexByte(commitHash, ' '); idx > 0 {
-		commitHash = commitHash[:idx]
+	commitHash := parseCommitHash(commitOutput)
+	if commitHash == "" {
+		return nil
 	}
 
 	// Look back 24h for unlinked actions matching these files
@@ -49,4 +49,19 @@ func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitHash 
 		}
 	}
 	return nil
+}
+
+// parseCommitHash extracts the short commit hash from git commit output.
+// Format: "[branch hash] subject" or "[branch (root-commit) hash] subject"
+func parseCommitHash(gitOutput string) string {
+	start := strings.IndexByte(gitOutput, '[')
+	end := strings.IndexByte(gitOutput, ']')
+	if start < 0 || end < 0 || end <= start {
+		return ""
+	}
+	fields := strings.Fields(gitOutput[start+1 : end])
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[len(fields)-1]
 }
