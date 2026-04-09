@@ -68,7 +68,8 @@ git-agent-proxy/.dev.vars
 git-agent-proxy/.wrangler
 .env
 
-# SQLite temporary files
+# SQLite database and temporary files
+.git-agent/graph.db
 *.db-shm
 *.db-wal
 *.db-journal
