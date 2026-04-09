@@ -224,21 +224,3 @@ func TestSQLiteClient_BusyTimeout(t *testing.T) {
 		t.Errorf("busy_timeout = %d, want %d", timeout, 5000)
 	}
 }
-
-func TestSQLiteClient_ForeignKeys(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	client := NewSQLiteClient(dbPath)
-	if err := client.Open(context.Background()); err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer client.Close()
-
-	var fk int
-	err := client.DB().QueryRow("PRAGMA foreign_keys").Scan(&fk)
-	if err != nil {
-		t.Fatalf("PRAGMA foreign_keys error = %v", err)
-	}
-	if fk != 1 {
-		t.Errorf("foreign_keys = %d, want %d", fk, 1)
-	}
-}

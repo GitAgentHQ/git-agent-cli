@@ -39,7 +39,6 @@ func (c *SQLiteClient) Open(ctx context.Context) error {
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA synchronous=NORMAL",
 		"PRAGMA cache_size=-64000",
-		"PRAGMA foreign_keys=ON",
 	}
 	for _, p := range pragmas {
 		if _, err := db.ExecContext(ctx, p); err != nil {
