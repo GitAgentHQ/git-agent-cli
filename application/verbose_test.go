@@ -7,12 +7,19 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/diff"
 	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	var buf bytes.Buffer
@@ -26,11 +33,8 @@ func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "staged files:") {
-		t.Errorf("verbose output missing 'staged files:', got:\n%s", out)
-	}
-	if !strings.Contains(out, "diff lines:") {
-		t.Errorf("verbose output missing 'diff lines:', got:\n%s", out)
+	if !strings.Contains(out, "unstaged files:") {
+		t.Errorf("verbose output missing 'unstaged files:', got:\n%s", out)
 	}
 	if !strings.Contains(out, "calling LLM") {
 		t.Errorf("verbose output missing 'calling LLM', got:\n%s", out)
@@ -42,7 +46,13 @@ func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 
 func TestCommitService_Verbose_False_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	var buf bytes.Buffer
@@ -62,7 +72,13 @@ func TestCommitService_Verbose_False_NoOutput(t *testing.T) {
 
 func TestCommitService_Verbose_NilLogWriter_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{
