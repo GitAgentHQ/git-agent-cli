@@ -15,7 +15,8 @@ import (
 func TestCommitService_NoStagedChanges(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
-		stagedDiff: &diff.StagedDiff{Files: []string{}, Content: "", Lines: 0},
+		stagedDiff:      &diff.StagedDiff{}, // nothing pre-staged
+		allChangedFiles: []string{},         // no changed files at all
 	}
 	svc := newSvc(gen, git, noopHook())
 
@@ -23,7 +24,7 @@ func TestCommitService_NoStagedChanges(t *testing.T) {
 	_, err := svc.Commit(context.Background(), req)
 
 	if err == nil {
-		t.Fatal("expected error for empty staged diff, got nil")
+		t.Fatal("expected error for empty changes, got nil")
 	}
 	if !strings.Contains(err.Error(), "no changes") {
 		t.Errorf("expected error containing 'no changes', got: %v", err)
@@ -33,11 +34,10 @@ func TestCommitService_NoStagedChanges(t *testing.T) {
 func TestCommitService_PlannerReturnsEmptyPlan(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
-		stagedDiff: defaultDiff(),
 		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{}, Content: "", Lines: 0},
-			{Files: []string{"main.go", "b.go"}, Content: "+main+b", Lines: 2},
+			&diff.StagedDiff{}, // nothing pre-staged
 		},
+		allChangedFiles: []string{"main.go", "b.go"},
 	}
 	planner := &mockCommitPlanner{
 		plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
@@ -60,7 +60,13 @@ func TestCommitService_PlannerReturnsEmptyPlan(t *testing.T) {
 func TestCommitService_LLMError(t *testing.T) {
 	llmErr := errors.New("LLM unavailable")
 	gen := &mockCommitGenerator{err: llmErr}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
@@ -78,8 +84,12 @@ func TestCommitService_GitCommitError(t *testing.T) {
 	commitErr := errors.New("git commit failed")
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
-		stagedDiff: defaultDiff(),
-		commitErr:  commitErr,
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+		commitErr:       commitErr,
 	}
 	svc := newSvc(gen, git, noopHook())
 
