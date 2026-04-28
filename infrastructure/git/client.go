@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -149,20 +151,102 @@ func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
+	// Try git ls-files first (works for repos with commits).
 	out, err := exec.CommandContext(ctx, "git", "ls-files").Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var files []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if line != "" {
-			files = append(files, line)
+	if err == nil {
+		files := splitNonEmpty(string(out))
+		if len(files) > 0 {
+			return capFiles(files), nil
 		}
 	}
-	// Cap to avoid overwhelming the LLM prompt.
+
+	// Fallback: filesystem walk (for zero-commit repos).
+	var files []string
+	if walkErr := walkFiles(".", &files); walkErr != nil {
+		return nil, walkErr
+	}
+	return capFiles(files), nil
+}
+
+func walkFiles(root string, files *[]string) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name != "." && (strings.HasPrefix(name, ".") || skipDirs[name]) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		*files = append(*files, path)
+		return nil
+	})
+}
+
+func splitNonEmpty(s string) []string {
+	var result []string
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+func capFiles(files []string) []string {
 	if len(files) > 300 {
-		files = files[:300]
+		return files[:300]
+	}
+	return files
+}
+
+// AllChangedFiles returns all changed file names (staged, unstaged, and
+// untracked-but-not-gitignored) without modifying the git index.
+func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
+	type src struct {
+		label string
+		out   []byte
+		err   error
+	}
+	staged := src{label: "git diff --staged"}
+	unstaged := src{label: "git diff"}
+	untracked := src{label: "git ls-files --others"}
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		staged.out, staged.err = exec.CommandContext(ctx, "git", "diff", "--staged", "--name-only").Output()
+	}()
+	go func() {
+		defer wg.Done()
+		unstaged.out, unstaged.err = exec.CommandContext(ctx, "git", "diff", "--name-only").Output()
+	}()
+	go func() {
+		defer wg.Done()
+		untracked.out, untracked.err = exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard").Output()
+	}()
+	wg.Wait()
+
+	// Hard-fail on any error: silently dropping a source could omit files the
+	// user expects to be committed.
+	for _, s := range []src{staged, unstaged, untracked} {
+		if s.err != nil {
+			return nil, fmt.Errorf("%s: %w", s.label, s.err)
+		}
+	}
+
+	seen := make(map[string]bool)
+	var files []string
+	for _, s := range []src{staged, unstaged, untracked} {
+		for _, f := range splitNonEmpty(string(s.out)) {
+			if !seen[f] {
+				seen[f] = true
+				files = append(files, f)
+			}
+		}
 	}
 	return files, nil
 }
