@@ -26,34 +26,37 @@ func (m *mockCommitGenerator) Generate(_ context.Context, _ commit.GenerateReque
 }
 
 type mockCommitPlanner struct {
-	plan *commit.CommitPlan
-	err  error
+	plan    *commit.CommitPlan
+	err     error
+	lastReq *commit.PlanRequest
 }
 
-func (m *mockCommitPlanner) Plan(_ context.Context, _ commit.PlanRequest) (*commit.CommitPlan, error) {
+func (m *mockCommitPlanner) Plan(_ context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {
+	m.lastReq = &req
 	return m.plan, m.err
 }
 
 type mockCommitGitClient struct {
-	stagedDiff        *diff.StagedDiff
-	stagedDiffSeq     []*diff.StagedDiff // if set, returned in order; falls back to stagedDiff
-	stagedErr         error
-	unstagedDiff      *diff.StagedDiff
-	unstagedErr       error
-	commitCalled      bool
-	commitCount       int
-	commitMessage     string
-	commitErr         error
-	addAllCalled      bool
-	addAllErr         error
-	unstageAllCalls   int
-	stageFilesCalls   int
-	stagedFiles       [][]string // tracks each StageFiles call
-	lastCommitDiff    *diff.StagedDiff
-	lastCommitDiffErr error
-	amendCalled       bool
-	amendMessage      string
-	amendErr          error
+	stagedDiff            *diff.StagedDiff
+	stagedDiffSeq         []*diff.StagedDiff // if set, returned in order; falls back to stagedDiff
+	stagedErr             error
+	unstagedDiff          *diff.StagedDiff
+	unstagedErr           error
+	allChangedFiles       []string
+	allChangedFilesErr    error
+	allChangedFilesCalled bool
+	commitCalled          bool
+	commitCount           int
+	commitMessage         string
+	commitErr             error
+	unstageAllCalls       int
+	stageFilesCalls       int
+	stagedFiles           [][]string // tracks each StageFiles call
+	lastCommitDiff        *diff.StagedDiff
+	lastCommitDiffErr     error
+	amendCalled           bool
+	amendMessage          string
+	amendErr              error
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -61,6 +64,9 @@ func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, e
 		d := m.stagedDiffSeq[0]
 		m.stagedDiffSeq = m.stagedDiffSeq[1:]
 		return d, m.stagedErr
+	}
+	if m.stagedDiff == nil {
+		return &diff.StagedDiff{}, m.stagedErr
 	}
 	return m.stagedDiff, m.stagedErr
 }
@@ -72,16 +78,16 @@ func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff,
 	return m.unstagedDiff, m.unstagedErr
 }
 
+func (m *mockCommitGitClient) AllChangedFiles(_ context.Context) ([]string, error) {
+	m.allChangedFilesCalled = true
+	return m.allChangedFiles, m.allChangedFilesErr
+}
+
 func (m *mockCommitGitClient) Commit(_ context.Context, message string) (string, error) {
 	m.commitCalled = true
 	m.commitCount++
 	m.commitMessage = message
 	return "", m.commitErr
-}
-
-func (m *mockCommitGitClient) AddAll(_ context.Context) error {
-	m.addAllCalled = true
-	return m.addAllErr
 }
 
 func (m *mockCommitGitClient) UnstageAll(_ context.Context) error {
@@ -157,7 +163,13 @@ func newSvc(gen *mockCommitGenerator, git *mockCommitGitClient, hookExec *mockHo
 
 func TestCommitService_GeneratesAndCommits(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // pre-staged check: nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
@@ -175,7 +187,13 @@ func TestCommitService_GeneratesAndCommits(t *testing.T) {
 
 func TestCommitService_DryRun(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{DryRun: true, Config: &project.Config{}}
@@ -197,7 +215,13 @@ func TestCommitService_DryRun(t *testing.T) {
 
 func TestCommitService_CoAuthor(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{
@@ -215,7 +239,13 @@ func TestCommitService_CoAuthor(t *testing.T) {
 
 func TestCommitService_MixedTrailers(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{
@@ -239,7 +269,15 @@ func TestCommitService_MixedTrailers(t *testing.T) {
 
 func TestCommitService_HookBlocks(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution (hook retry 1)
+			defaultDiff(),      // per-group execution (hook retry 2)
+			defaultDiff(),      // per-group execution (hook retry 3)
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	blockingHook := &mockHookExecutor{result: &hook.HookResult{ExitCode: 1, Stderr: "blocked"}}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
 	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil)
@@ -260,16 +298,16 @@ func TestCommitService_HookBlocks(t *testing.T) {
 
 func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	// stagedDiffSeq: first call = preStagedDiff (user intent), second call = fullStagedDiff after AddAll.
-	// Subsequent calls (per-group) fall back to stagedDiff.
+	// User pre-staged main.go.
+	preStagedDiff := &diff.StagedDiff{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1}
 	git := &mockCommitGitClient{
-		stagedDiff: defaultDiff(),
 		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1},
-			{Files: []string{"main.go", "b.go", "c.go"}, Content: "+func main(){}+b+c", Lines: 3},
+			preStagedDiff, // pre-staged check: user has main.go staged
+			&diff.StagedDiff{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1}, // group 1 (main.go)
+			&diff.StagedDiff{Files: []string{"b.go", "c.go"}, Content: "+b+c", Lines: 2},      // group 2 (b.go, c.go)
 		},
+		allChangedFiles: []string{"main.go", "b.go", "c.go"},
 	}
-	_ = git.unstagedDiff // unused; unstaged is derived from stagedDiffSeq[1] vs stagedDiffSeq[0]
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
 		Groups: []commit.CommitGroup{
@@ -290,9 +328,114 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	}
 }
 
-func TestCommitService_UntrackedFiles_AutoStaged(t *testing.T) {
+func TestCommitService_AllChangedFiles_PropagatesError(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiff:         &diff.StagedDiff{},
+		allChangedFilesErr: errors.New("git diff exploded"),
+	}
+	svc := newSvc(gen, git, noopHook())
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when AllChangedFiles fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "git diff exploded") {
+		t.Errorf("expected wrapped error from AllChangedFiles, got: %v", err)
+	}
+	if git.commitCalled {
+		t.Fatal("git.Commit must NOT be called when AllChangedFiles fails")
+	}
+}
+
+func TestCommitService_AllPreStaged_UnstagedEmpty(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	preStaged := &diff.StagedDiff{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			preStaged, // pre-staged check: user has both files staged
+			&diff.StagedDiff{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // group execution
+		},
+		allChangedFiles: []string{"a.go", "b.go"},
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"a.go", "b.go"})}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if planner.lastReq == nil {
+		t.Fatal("planner was not invoked")
+	}
+	if got := planner.lastReq.StagedDiff.Files; len(got) != 2 {
+		t.Errorf("expected 2 staged files passed to planner, got %v", got)
+	}
+	if got := planner.lastReq.UnstagedDiff.Files; len(got) != 0 {
+		t.Errorf("expected unstaged file list to be empty when all files are pre-staged, got %v", got)
+	}
+}
+
+func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	preStaged := &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			preStaged, // user pre-staged a.go
+			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},             // group 1 (a.go)
+			&diff.StagedDiff{Files: []string{"b.go", "new.go"}, Content: "+b+n", Lines: 2}, // group 2 (b.go modified + new.go untracked)
+		},
+		// AllChangedFiles returns staged + unstaged + untracked, deduplicated.
+		allChangedFiles: []string{"a.go", "b.go", "new.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{"a.go"}},
+			{Files: []string{"b.go", "new.go"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if planner.lastReq == nil {
+		t.Fatal("planner was not invoked")
+	}
+	stagedFiles := planner.lastReq.StagedDiff.Files
+	if len(stagedFiles) != 1 || stagedFiles[0] != "a.go" {
+		t.Errorf("expected planner staged=[a.go], got %v", stagedFiles)
+	}
+	unstagedFiles := planner.lastReq.UnstagedDiff.Files
+	if len(unstagedFiles) != 2 {
+		t.Errorf("expected planner unstaged to contain both b.go and new.go, got %v", unstagedFiles)
+	}
+	seen := map[string]bool{}
+	for _, f := range unstagedFiles {
+		seen[f] = true
+	}
+	if !seen["b.go"] || !seen["new.go"] {
+		t.Errorf("expected unstaged to include b.go and new.go, got %v", unstagedFiles)
+	}
+	if len(result.Commits) != 2 {
+		t.Errorf("expected 2 commits, got %d", len(result.Commits))
+	}
+}
+
+func TestCommitService_AllChangedFiles_ListsUntracked(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			&diff.StagedDiff{Files: []string{"main.go", "new_file.go"}, Content: "+main+new", Lines: 2}, // per-group execution
+		},
+		allChangedFiles: []string{"main.go", "new_file.go"},
+	}
 	svc := newSvc(gen, git, noopHook())
 
 	req := application.CommitRequest{Config: &project.Config{}}
@@ -300,8 +443,8 @@ func TestCommitService_UntrackedFiles_AutoStaged(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !git.addAllCalled {
-		t.Fatal("expected git.AddAll to be called before diff checks")
+	if !git.allChangedFilesCalled {
+		t.Fatal("expected git.AllChangedFiles to be called")
 	}
 }
 
@@ -309,10 +452,11 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{}, Content: "", Lines: 0},                   // preStagedDiff (nothing pre-staged)
-			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // fullStagedDiff after AddAll
+			&diff.StagedDiff{}, // nothing pre-staged
+			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1
+			&diff.StagedDiff{Files: []string{"b.go"}, Content: "+b", Lines: 1}, // group 2
 		},
-		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // per-group fallback
+		allChangedFiles: []string{"a.go", "b.go"},
 	}
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
@@ -346,8 +490,8 @@ func TestCommitService_NoStage_UsesExistingStaging(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if git.addAllCalled {
-		t.Fatal("git.AddAll must NOT be called when --no-stage is set")
+	if git.allChangedFilesCalled {
+		t.Fatal("git.AllChangedFiles must NOT be called when --no-stage is set")
 	}
 	if !git.commitCalled {
 		t.Fatal("expected git.Commit to be called")
@@ -399,12 +543,22 @@ func TestCommitService_CapCommitGroups(t *testing.T) {
 	for i := range allFiles {
 		allFiles[i] = fmt.Sprintf("file%d.go", i)
 	}
+
+	// Build stagedDiffSeq: pre-staged check (empty) + 5 per-group diffs (capped to 5 groups).
+	groupDiffSeq := []*diff.StagedDiff{
+		&diff.StagedDiff{}, // nothing pre-staged
+	}
+	for i := 0; i < 5; i++ {
+		groupDiffSeq = append(groupDiffSeq, &diff.StagedDiff{
+			Files:   []string{fmt.Sprintf("file%d.go", i)},
+			Content: fmt.Sprintf("+file%d", i),
+			Lines:   1,
+		})
+	}
+
 	git := &mockCommitGitClient{
-		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{}, Content: "", Lines: 0},
-			{Files: allFiles, Content: "+all", Lines: 8},
-		},
-		stagedDiff: &diff.StagedDiff{Files: []string{"file0.go"}, Content: "+f", Lines: 1},
+		stagedDiffSeq:   groupDiffSeq,
+		allChangedFiles: allFiles,
 	}
 
 	groups := make([]commit.CommitGroup, 8)
@@ -489,7 +643,13 @@ func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
 	msg2 := &commit.CommitMessage{Title: "feat(cli): short title", Bullets: []string{"Add feature"}, Explanation: "Test."}
 
 	gen := &recordingGenerator{msgs: []*commit.CommitMessage{msg1, msg2}}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			&diff.StagedDiff{}, // nothing pre-staged
+			defaultDiff(),      // per-group execution
+		},
+		allChangedFiles: []string{"main.go"},
+	}
 	hookSeq := &sequenceHookExecutor{results: []*hook.HookResult{
 		{ExitCode: 1, Stderr: "error: title must be 50 characters or less"},
 		{ExitCode: 0},
@@ -553,11 +713,11 @@ func TestCommitService_RestagesOnCommitError(t *testing.T) {
 
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			{Files: []string{}, Content: "", Lines: 0},                   // preStagedDiff
-			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // fullStagedDiff
+			&diff.StagedDiff{}, // nothing pre-staged
+			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1 execution
 		},
-		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
-		commitErr:  fmt.Errorf("simulated commit failure"),
+		allChangedFiles: []string{"a.go", "b.go"},
+		commitErr:       fmt.Errorf("simulated commit failure"),
 	}
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{

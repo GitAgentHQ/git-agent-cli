@@ -46,10 +46,10 @@ type CommitResult struct {
 type CommitGitClient interface {
 	StagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
+	AllChangedFiles(ctx context.Context) ([]string, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) (string, error)
-	AddAll(ctx context.Context) error
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
@@ -134,7 +134,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		staged = fullStagedDiff
 		unstaged = &diff.StagedDiff{}
 	} else {
-		// Capture user's staging intent before AddAll erases the distinction.
+		// Capture which files the user pre-staged so they anchor group 0.
+		// Only the file list is preserved — partial-hunk staging is collapsed
+		// when the per-group loop re-stages the working tree.
 		preStagedDiff, err := s.git.StagedDiff(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("staged diff: %w", err)
@@ -144,16 +146,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			userStagedFiles[f] = true
 		}
 
-		if err := s.git.AddAll(ctx); err != nil {
-			return nil, fmt.Errorf("git add --all: %w", err)
-		}
-
-		fullStagedDiff, err := s.git.StagedDiff(ctx)
+		// Get all changed files WITHOUT modifying the index.
+		allFiles, err := s.git.AllChangedFiles(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("staged diff: %w", err)
+			return nil, fmt.Errorf("listing changed files: %w", err)
 		}
-
-		if len(fullStagedDiff.Files) == 0 {
+		if len(allFiles) == 0 {
 			return nil, fmt.Errorf("no changes")
 		}
 
@@ -162,64 +160,32 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		// planner can create multiple atomic commits without the "group 0" constraint.
 		if len(userStagedFiles) == 0 {
 			staged = &diff.StagedDiff{}
-			unstaged = fullStagedDiff
+			unstaged = &diff.StagedDiff{Files: allFiles}
 		} else {
-			staged = preStagedDiff
-			var newFiles []string
-			for _, f := range fullStagedDiff.Files {
-				if !userStagedFiles[f] {
-					newFiles = append(newFiles, f)
+			var userFiles []string
+			var autoFiles []string
+			for _, f := range allFiles {
+				if userStagedFiles[f] {
+					userFiles = append(userFiles, f)
+				} else {
+					autoFiles = append(autoFiles, f)
 				}
 			}
-			if len(newFiles) > 0 {
-				unstaged = filterDiffByFiles(fullStagedDiff, newFiles)
+			staged = &diff.StagedDiff{Files: userFiles}
+			if len(autoFiles) > 0 {
+				unstaged = &diff.StagedDiff{Files: autoFiles}
 			} else {
 				unstaged = &diff.StagedDiff{}
 			}
 		}
 	}
 
-	var err error
-	if s.filter != nil {
-		if len(staged.Files) > 0 {
-			staged, err = s.filter.Filter(ctx, staged)
-			if err != nil {
-				return nil, fmt.Errorf("filter staged diff: %w", err)
-			}
-		}
-		if len(unstaged.Files) > 0 {
-			filtered, err := s.filter.Filter(ctx, unstaged)
-			if err != nil {
-				s.vlog(req, "filter unstaged diff (using unfiltered): %v", err)
-			} else {
-				unstaged = filtered
-			}
-		}
-	}
-
-	if s.truncator != nil && req.MaxLines > 0 {
-		var truncated bool
-		staged, truncated, err = s.truncator.Truncate(ctx, staged, req.MaxLines)
-		if err != nil {
-			return nil, fmt.Errorf("truncate staged diff: %w", err)
-		}
-		if truncated {
-			s.vlog(req, "staged diff truncated to %d lines", req.MaxLines)
-		}
-		if len(unstaged.Files) > 0 {
-			unstaged, truncated, err = s.truncator.Truncate(ctx, unstaged, req.MaxLines)
-			if err != nil {
-				return nil, fmt.Errorf("truncate unstaged diff: %w", err)
-			}
-			if truncated {
-				s.vlog(req, "unstaged diff truncated to %d lines", req.MaxLines)
-			}
-		}
-	}
+	// staged and unstaged carry only file lists at this point — the planner
+	// reads .Files only, and per-group filter/truncate runs on groupDiff
+	// inside the commit loop where actual diff content is available.
 
 	s.vlog(req, "staged files: %v", staged.Files)
 	s.vlog(req, "unstaged files: %v", unstaged.Files)
-	s.vlog(req, "diff lines: %d", staged.Lines+unstaged.Lines)
 
 	// Build the allowed-files set for planner output validation.
 	allowed := make(map[string]bool, len(staged.Files)+len(unstaged.Files))
@@ -254,7 +220,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		req.Config = &project.Config{}
 	}
 
-	var plan *commit.CommitPlan
+	var (
+		plan *commit.CommitPlan
+		err  error
+	)
 
 	allFiles := make([]string, 0, len(allowed))
 	for f := range allowed {
@@ -381,6 +350,16 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			if fd, ferr := s.filter.Filter(ctx, groupDiff); ferr == nil {
 				genDiff = fd
 			}
+		}
+		if s.truncator != nil && req.MaxLines > 0 {
+			truncated, didTruncate, terr := s.truncator.Truncate(ctx, genDiff, req.MaxLines)
+			if terr != nil {
+				return nil, fmt.Errorf("truncate group diff: %w", terr)
+			}
+			if didTruncate {
+				s.vlog(req, "group diff truncated to %d lines", req.MaxLines)
+			}
+			genDiff = truncated
 		}
 
 		// Seed hook feedback from previous re-plan failure so the first Generate
@@ -643,42 +622,4 @@ func hasUnscopedGroups(plan *commit.CommitPlan) bool {
 		}
 	}
 	return false
-}
-
-// filterDiffByFiles returns a new StagedDiff containing only the given files,
-// extracting the relevant hunks from the diff content.
-func filterDiffByFiles(d *diff.StagedDiff, files []string) *diff.StagedDiff {
-	kept := make(map[string]bool, len(files))
-	for _, f := range files {
-		kept[f] = true
-	}
-
-	const prefix = "diff --git "
-	parts := strings.Split(d.Content, prefix)
-
-	var sb strings.Builder
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		firstLine := part
-		if idx := strings.IndexByte(part, '\n'); idx >= 0 {
-			firstLine = part[:idx]
-		}
-		bIdx := strings.LastIndex(firstLine, " b/")
-		if bIdx < 0 {
-			continue
-		}
-		if kept[firstLine[bIdx+3:]] {
-			sb.WriteString(prefix)
-			sb.WriteString(part)
-		}
-	}
-
-	content := sb.String()
-	return &diff.StagedDiff{
-		Files:   files,
-		Content: content,
-		Lines:   strings.Count(content, "\n"),
-	}
 }
