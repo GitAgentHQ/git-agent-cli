@@ -10,6 +10,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
@@ -61,6 +62,19 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	projCfgPath := infraConfig.ProjectConfigPath(root)
 	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
+
+	// Hook executor reads policy off projCfg, so fold user-scope values in.
+	if providerCfg.RequireModelCoAuthor || len(providerCfg.ModelCoAuthorDomains) > 0 {
+		if projCfg == nil {
+			projCfg = &project.Config{}
+		}
+		if providerCfg.RequireModelCoAuthor {
+			projCfg.RequireModelCoAuthor = true
+		}
+		if len(providerCfg.ModelCoAuthorDomains) > 0 {
+			projCfg.ModelCoAuthorDomains = append(projCfg.ModelCoAuthorDomains, providerCfg.ModelCoAuthorDomains...)
+		}
+	}
 
 	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
 	var trailers []commit.Trailer

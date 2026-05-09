@@ -55,12 +55,14 @@ func (s *rawScope) UnmarshalYAML(value *yaml.Node) error {
 
 // rawProjectConfig is the YAML shape for project/local config files.
 type rawProjectConfig struct {
-	Scopes             []rawScope `yaml:"scopes,omitempty"`
-	Hooks              []string   `yaml:"hook,omitempty"`
-	HookTypeLegacy     string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
-	MaxDiffLines       *int       `yaml:"max_diff_lines,omitempty"`
-	NoGitAgentCoAuthor *bool      `yaml:"no_git_agent_co_author,omitempty"`
-	NoModelCoAuthor    *bool      `yaml:"no_model_co_author,omitempty"`
+	Scopes               []rawScope `yaml:"scopes,omitempty"`
+	Hooks                []string   `yaml:"hook,omitempty"`
+	HookTypeLegacy       string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
+	MaxDiffLines         *int       `yaml:"max_diff_lines,omitempty"`
+	NoGitAgentCoAuthor   *bool      `yaml:"no_git_agent_co_author,omitempty"`
+	NoModelCoAuthor      *bool      `yaml:"no_model_co_author,omitempty"`
+	RequireModelCoAuthor *bool      `yaml:"require_model_co_author,omitempty"`
+	ModelCoAuthorDomains []string   `yaml:"model_co_author_domains,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {
@@ -120,9 +122,16 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.NoModelCoAuthor != nil {
 		merged.NoModelCoAuthor = local.NoModelCoAuthor
 	}
+	if local.RequireModelCoAuthor != nil {
+		merged.RequireModelCoAuthor = local.RequireModelCoAuthor
+	}
+	if len(local.ModelCoAuthorDomains) > 0 {
+		merged.ModelCoAuthorDomains = local.ModelCoAuthorDomains
+	}
 
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
-		merged.NoGitAgentCoAuthor == nil && merged.NoModelCoAuthor == nil {
+		merged.NoGitAgentCoAuthor == nil && merged.NoModelCoAuthor == nil &&
+		merged.RequireModelCoAuthor == nil && len(merged.ModelCoAuthorDomains) == 0 {
 		return nil
 	}
 
@@ -144,6 +153,12 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if merged.NoModelCoAuthor != nil {
 		cfg.NoModelCoAuthor = *merged.NoModelCoAuthor
 	}
+	if merged.RequireModelCoAuthor != nil {
+		cfg.RequireModelCoAuthor = *merged.RequireModelCoAuthor
+	}
+	if len(merged.ModelCoAuthorDomains) > 0 {
+		cfg.ModelCoAuthorDomains = append([]string(nil), merged.ModelCoAuthorDomains...)
+	}
 	return cfg
 }
 
@@ -154,27 +169,7 @@ func WriteProjectField(path, key, value string) error {
 		return err
 	}
 	rawMap := ReadYAMLMap(path)
-	def := KeyRegistry[key]
-	switch def.Type {
-	case "bool":
-		b, _ := strconv.ParseBool(value)
-		rawMap[key] = b
-	case "int":
-		n, _ := strconv.Atoi(value)
-		rawMap[key] = n
-	case "stringslice":
-		parts := strings.Split(value, ",")
-		var trimmed []string
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				trimmed = append(trimmed, p)
-			}
-		}
-		rawMap[key] = trimmed
-	default:
-		rawMap[key] = value
-	}
+	rawMap[key] = coerceForWrite(key, value)
 	data, err := yaml.Marshal(rawMap)
 	if err != nil {
 		return err

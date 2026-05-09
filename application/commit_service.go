@@ -403,7 +403,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				}
 			}
 
-			if len(req.Config.Hooks) == 0 {
+			if len(req.Config.Hooks) == 0 && !req.Config.RequireModelCoAuthor {
 				hookPassed = true
 				break
 			}

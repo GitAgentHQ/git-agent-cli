@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,14 +14,7 @@ func WriteUserField(configPath, key, value string) error {
 		return err
 	}
 	rawMap := ReadYAMLMap(configPath)
-	def := KeyRegistry[key]
-	switch def.Type {
-	case "bool":
-		b, _ := strconv.ParseBool(value)
-		rawMap[key] = b
-	default:
-		rawMap[key] = value
-	}
+	rawMap[key] = coerceForWrite(key, value)
 	data, err := yaml.Marshal(rawMap)
 	if err != nil {
 		return err

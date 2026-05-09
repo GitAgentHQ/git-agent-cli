@@ -197,6 +197,133 @@ func TestCompositeExecutor_ScopeWhitelist_Blocked(t *testing.T) {
 	}
 }
 
+func TestCompositeExecutor_RequireModelCoAuthor_OnlyGitAgentBlocks(t *testing.T) {
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode == 0 {
+		t.Errorf("expected commit with only Git Agent trailer to be blocked")
+	}
+	if !strings.Contains(result.Stderr, "Co-Authored-By trailer from one of") {
+		t.Errorf("expected stderr to mention required trailer, got: %s", result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_RequireModelCoAuthor_AnthropicTrailerPasses(t *testing.T) {
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected commit with anthropic trailer to pass, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_RequireModelCoAuthor_UserExtendedDomainPasses(t *testing.T) {
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Acme Bot <bot@acme.ai>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+			ModelCoAuthorDomains: []string{"acme.ai"},
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected user-extended domain to pass, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_RequireModelCoAuthor_RunsWithEmptyHooks(t *testing.T) {
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), nil, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode == 0 {
+		t.Errorf("expected pre-check to block even with no hooks configured")
+	}
+}
+
+func TestCompositeExecutor_RequireModelCoAuthor_DefaultFalseSkipsCheck(t *testing.T) {
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, compositeInput(msg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected default behavior to allow git-agent-only commit, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_RequireModelCoAuthor_ShellHookSkipsWhenPreCheckBlocks(t *testing.T) {
+	// Side-effect guard: shell hook must not run when the pre-check already blocked.
+	script := writeTempScript(t, "#!/bin/sh\necho 'should-not-run' >&2\nexit 0\n", 0o755)
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{script}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode == 0 {
+		t.Error("expected pre-check to block before shell hook runs")
+	}
+	if strings.Contains(result.Stderr, "should-not-run") {
+		t.Errorf("shell hook should not have run when pre-check blocks; stderr: %s", result.Stderr)
+	}
+}
+
 func TestCompositeExecutor_ScopeWhitelist_Allowed(t *testing.T) {
 	exec := infraHook.NewCompositeHookExecutor()
 	input := domainHook.HookInput{

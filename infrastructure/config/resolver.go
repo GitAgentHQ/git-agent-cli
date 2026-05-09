@@ -19,20 +19,24 @@ var (
 )
 
 type ProviderConfig struct {
-	APIKey             string
-	BaseURL            string
-	Model              string
-	FreeMode           bool // When true, use only build-time proxy credentials; all user config sources are ignored
-	NoGitAgentCoAuthor bool // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor    bool // When true, ignore all --co-author trailers
+	APIKey               string
+	BaseURL              string
+	Model                string
+	FreeMode             bool     // When true, use only build-time proxy credentials; all user config sources are ignored
+	NoGitAgentCoAuthor   bool     // When true, omit the default Co-Authored-By: Git Agent trailer
+	NoModelCoAuthor      bool     // When true, ignore all --co-author trailers
+	RequireModelCoAuthor bool     // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	ModelCoAuthorDomains []string // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
 }
 
 type fileConfig struct {
-	APIKey             string `yaml:"api_key"`
-	BaseURL            string `yaml:"base_url"`
-	Model              string `yaml:"model"`
-	NoGitAgentCoAuthor bool   `yaml:"no_git_agent_co_author"`
-	NoModelCoAuthor    bool   `yaml:"no_model_co_author"`
+	APIKey               string   `yaml:"api_key"`
+	BaseURL              string   `yaml:"base_url"`
+	Model                string   `yaml:"model"`
+	NoGitAgentCoAuthor   bool     `yaml:"no_git_agent_co_author"`
+	NoModelCoAuthor      bool     `yaml:"no_model_co_author"`
+	RequireModelCoAuthor bool     `yaml:"require_model_co_author"`
+	ModelCoAuthorDomains []string `yaml:"model_co_author_domains"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -109,6 +113,14 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	result.NoGitAgentCoAuthor = flags.NoGitAgentCoAuthor || file.NoGitAgentCoAuthor
 	result.NoModelCoAuthor = flags.NoModelCoAuthor || file.NoModelCoAuthor
+	result.RequireModelCoAuthor = flags.RequireModelCoAuthor || file.RequireModelCoAuthor
+
+	if len(flags.ModelCoAuthorDomains) > 0 {
+		result.ModelCoAuthorDomains = append(result.ModelCoAuthorDomains, flags.ModelCoAuthorDomains...)
+	}
+	if len(file.ModelCoAuthorDomains) > 0 {
+		result.ModelCoAuthorDomains = append(result.ModelCoAuthorDomains, file.ModelCoAuthorDomains...)
+	}
 
 	return result, nil
 }

@@ -53,6 +53,10 @@ git-agent automatically splits staged changes into multiple atomic commits (up t
 
 If no scopes are configured for the project, git-agent generates scopes from git history automatically before planning. Each scope is a structured object with a `name` and an optional `description` (used as LLM context during commit message generation). To trigger scope generation manually: `git-agent init --scope`.
 
+## Require model co-author
+
+Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain. The default Git Agent attribution trailer alone does not satisfy this — only domains in `anthropic.com`, `openai.com`, `google.com`, plus anything listed under `model_co_author_domains:`, count. Failure is treated like any other hook block (exit code `2` after retries).
+
 ## Hook failures
 
 If the commit is blocked (exit code `2`), retry with a more specific `--intent`:

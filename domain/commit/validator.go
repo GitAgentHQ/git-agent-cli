@@ -260,3 +260,60 @@ func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
 		}
 	}
 }
+
+// ValidateModelCoAuthor enforces the require_model_co_author policy: at least
+// one well-formed Co-Authored-By line in the message must carry an email whose
+// domain is in allowedDomains (case-insensitive). Malformed Co-Authored-By
+// lines are ignored here — ValidateConventional already reports them.
+//
+// The allowedDomains slice is taken as-is; callers are expected to merge
+// project.DefaultModelCoAuthorDomains with any user-configured extensions
+// before calling.
+func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResult {
+	result := &ValidationResult{}
+
+	normalized := make([]string, 0, len(allowedDomains))
+	for _, d := range allowedDomains {
+		d = strings.TrimSpace(strings.ToLower(d))
+		if d != "" {
+			normalized = append(normalized, d)
+		}
+	}
+
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.HasPrefix(line, "Co-Authored-By:") || !coAuthorRe.MatchString(line) {
+			continue
+		}
+		domain := extractEmailDomain(line)
+		if domain == "" {
+			continue
+		}
+		for _, d := range normalized {
+			if domain == d {
+				return result
+			}
+		}
+	}
+
+	result.Issues = append(result.Issues, ValidationIssue{
+		SeverityError,
+		fmt.Sprintf("commit must include a Co-Authored-By trailer from one of: %s", strings.Join(normalized, ", ")),
+	})
+	return result
+}
+
+// extractEmailDomain returns the lowercased domain from the last <...@...>
+// pair on the line. Callers should pre-validate format with coAuthorRe.
+func extractEmailDomain(line string) string {
+	openIdx := strings.LastIndex(line, "<")
+	closeIdx := strings.LastIndex(line, ">")
+	if openIdx == -1 || closeIdx == -1 || closeIdx <= openIdx {
+		return ""
+	}
+	email := line[openIdx+1 : closeIdx]
+	at := strings.LastIndex(email, "@")
+	if at == -1 || at == len(email)-1 {
+		return ""
+	}
+	return strings.ToLower(email[at+1:])
+}

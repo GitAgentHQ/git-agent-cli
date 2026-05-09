@@ -23,23 +23,52 @@ type KeyDef struct {
 
 // KeyRegistry is the authoritative list of supported config keys.
 var KeyRegistry = map[string]KeyDef{
-	"api_key":                {Name: "api_key", Type: "string", AllowUser: true},
-	"base_url":               {Name: "base_url", Type: "string", AllowUser: true},
-	"model":                  {Name: "model", Type: "string", AllowUser: true},
-	"scopes":                 {Name: "scopes", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"hook":                   {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"max_diff_lines":         {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
-	"no_git_agent_co_author": {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"no_model_co_author":     {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"api_key":                 {Name: "api_key", Type: "string", AllowUser: true},
+	"base_url":                {Name: "base_url", Type: "string", AllowUser: true},
+	"model":                   {Name: "model", Type: "string", AllowUser: true},
+	"scopes":                  {Name: "scopes", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"hook":                    {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"max_diff_lines":          {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
+	"no_git_agent_co_author":  {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"no_model_co_author":      {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"require_model_co_author": {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"model_co_author_domains": {Name: "model_co_author_domains", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 }
 
 // KeyAliases maps kebab-case flag names to their canonical snake_case registry keys.
 var KeyAliases = map[string]string{
-	"api-key":                "api_key",
-	"base-url":               "base_url",
-	"max-diff-lines":         "max_diff_lines",
-	"no-git-agent-co-author": "no_git_agent_co_author",
-	"no-model-co-author":     "no_model_co_author",
+	"api-key":                 "api_key",
+	"base-url":                "base_url",
+	"max-diff-lines":          "max_diff_lines",
+	"no-git-agent-co-author":  "no_git_agent_co_author",
+	"no-model-co-author":      "no_model_co_author",
+	"require-model-co-author": "require_model_co_author",
+	"model-co-author-domains": "model_co_author_domains",
+}
+
+// coerceForWrite converts a raw string value into the right Go type for the
+// key's declared YAML shape. Used by WriteProjectField and WriteUserField.
+func coerceForWrite(key, value string) any {
+	switch KeyRegistry[key].Type {
+	case "bool":
+		b, _ := strconv.ParseBool(value)
+		return b
+	case "int":
+		n, _ := strconv.Atoi(value)
+		return n
+	case "stringslice":
+		parts := strings.Split(value, ",")
+		var trimmed []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				trimmed = append(trimmed, p)
+			}
+		}
+		return trimmed
+	default:
+		return value
+	}
 }
 
 // ResolveKey normalizes a user-supplied key (kebab or snake) to its canonical

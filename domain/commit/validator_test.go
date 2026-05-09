@@ -244,6 +244,139 @@ func TestValidateConventional(t *testing.T) {
 	}
 }
 
+func TestValidateModelCoAuthor(t *testing.T) {
+	const baseBody = "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\n"
+
+	defaults := []string{"anthropic.com", "openai.com", "google.com"}
+
+	cases := []struct {
+		name        string
+		msg         string
+		domains     []string
+		wantErrors  bool
+		errContains string
+	}{
+		{
+			name:       "anthropic trailer alongside git agent passes",
+			msg:        baseBody + "Co-Authored-By: Git Agent <noreply@git-agent.dev>\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+			domains:    defaults,
+			wantErrors: false,
+		},
+		{
+			name:       "openai trailer alone passes",
+			msg:        baseBody + "Co-Authored-By: GPT-5 <noreply@openai.com>",
+			domains:    defaults,
+			wantErrors: false,
+		},
+		{
+			name:       "google trailer alone passes",
+			msg:        baseBody + "Co-Authored-By: Gemini Pro <noreply@google.com>",
+			domains:    defaults,
+			wantErrors: false,
+		},
+		{
+			name:       "case-insensitive domain match",
+			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@ANTHROPIC.COM>",
+			domains:    []string{"anthropic.com"},
+			wantErrors: false,
+		},
+		{
+			name:       "case-insensitive allow-list entry",
+			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+			domains:    []string{"Anthropic.COM"},
+			wantErrors: false,
+		},
+		{
+			name:       "user-extended domain passes",
+			msg:        baseBody + "Co-Authored-By: Acme Bot <bot@acme.ai>",
+			domains:    append([]string{"acme.ai"}, defaults...),
+			wantErrors: false,
+		},
+		{
+			name:        "only git agent trailer is rejected",
+			msg:         baseBody + "Co-Authored-By: Git Agent <noreply@git-agent.dev>",
+			domains:     defaults,
+			wantErrors:  true,
+			errContains: "Co-Authored-By trailer from one of",
+		},
+		{
+			name:        "no co-authored-by at all is rejected",
+			msg:         "feat: x\n\n- y\n\nz.",
+			domains:     defaults,
+			wantErrors:  true,
+			errContains: "Co-Authored-By trailer from one of",
+		},
+		{
+			name:        "human co-author with non-listed domain rejected",
+			msg:         baseBody + "Co-Authored-By: Alice <alice@example.com>",
+			domains:     defaults,
+			wantErrors:  true,
+			errContains: "Co-Authored-By trailer from one of",
+		},
+		{
+			name:       "malformed co-authored-by line ignored, sibling valid trailer accepted",
+			msg:        baseBody + "Co-Authored-By: Bot bot@anthropic.com\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+			domains:    defaults,
+			wantErrors: false,
+		},
+		{
+			name:       "malformed co-authored-by line alone is rejected",
+			msg:        baseBody + "Co-Authored-By: Bot bot@anthropic.com",
+			domains:    defaults,
+			wantErrors: true,
+		},
+		{
+			name:       "empty allow-list rejects every commit",
+			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+			domains:    nil,
+			wantErrors: true,
+		},
+		{
+			name:       "whitespace-only allow-list entries are dropped",
+			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+			domains:    []string{"  ", "", "anthropic.com"},
+			wantErrors: false,
+		},
+		{
+			name:       "subdomain does not satisfy parent domain entry",
+			msg:        baseBody + "Co-Authored-By: Bot <bot@api.anthropic.com>",
+			domains:    []string{"anthropic.com"},
+			wantErrors: true,
+		},
+		{
+			name:       "multiple trailers — any single match passes",
+			msg:        baseBody + "Co-Authored-By: Alice <alice@example.com>\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nCo-Authored-By: Git Agent <noreply@git-agent.dev>",
+			domains:    defaults,
+			wantErrors: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := commit.ValidateModelCoAuthor(tc.msg, tc.domains)
+
+			if tc.wantErrors && !result.HasErrors() {
+				t.Errorf("expected errors but got none")
+			}
+			if !tc.wantErrors && result.HasErrors() {
+				t.Errorf("expected no errors but got: %v", result.Errors())
+			}
+			if tc.errContains != "" {
+				found := false
+				for _, e := range result.Errors() {
+					if strings.Contains(e, tc.errContains) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("errors %v do not contain %q", result.Errors(), tc.errContains)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateConventional_ScopeWhitelist(t *testing.T) {
 	allowed := []string{"app", "cli", "infra"}
 	base := "\n\n- add route handler\n\nThis adds the route."

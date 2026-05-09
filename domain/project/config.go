@@ -31,11 +31,22 @@ func (s *Scope) UnmarshalJSON(data []byte) error {
 
 // Config holds project-level configuration for git-agent.
 type Config struct {
-	Scopes             []Scope  `json:"scopes"`
-	Hooks              []string `json:"hooks"`              // ordered list: "conventional", file paths, etc. Empty = no validation.
-	MaxDiffLines       int      `json:"maxDiffLines"`       // 0 = no limit
-	NoGitAgentCoAuthor bool     `json:"noGitAgentCoAuthor"` // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor    bool     `json:"noModelCoAuthor"`    // When true, ignore all --co-author trailers
+	Scopes               []Scope  `json:"scopes"`
+	Hooks                []string `json:"hooks"`                // ordered list: "conventional", file paths, etc. Empty = no validation.
+	MaxDiffLines         int      `json:"maxDiffLines"`         // 0 = no limit
+	NoGitAgentCoAuthor   bool     `json:"noGitAgentCoAuthor"`   // When true, omit the default Co-Authored-By: Git Agent trailer
+	NoModelCoAuthor      bool     `json:"noModelCoAuthor"`      // When true, ignore all --co-author trailers
+	RequireModelCoAuthor bool     `json:"requireModelCoAuthor"` // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	ModelCoAuthorDomains []string `json:"modelCoAuthorDomains"` // Extra email domains accepted by the require check; appended to DefaultModelCoAuthorDomains
+}
+
+// DefaultModelCoAuthorDomains is the built-in allow-list of email domains
+// that count as a "model" co-author for RequireModelCoAuthor enforcement.
+// User-supplied ModelCoAuthorDomains are appended to this list.
+var DefaultModelCoAuthorDomains = []string{
+	"anthropic.com",
+	"openai.com",
+	"google.com",
 }
 
 // ScopeNames returns just the scope name strings.

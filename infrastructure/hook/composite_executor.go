@@ -6,6 +6,7 @@ import (
 
 	domainCommit "github.com/gitagenthq/git-agent/domain/commit"
 	domainHook "github.com/gitagenthq/git-agent/domain/hook"
+	domainProject "github.com/gitagenthq/git-agent/domain/project"
 )
 
 type compositeHookExecutor struct {
@@ -23,6 +24,13 @@ func NewCompositeHookExecutor() domainHook.HookExecutor {
 }
 
 func (e *compositeHookExecutor) Execute(ctx context.Context, hooks []string, input domainHook.HookInput) (*domainHook.HookResult, error) {
+	// Runs even with no hooks configured — that is the point of the policy flag.
+	if input.Config.RequireModelCoAuthor {
+		if result := e.runModelCoAuthorCheck(input); result.ExitCode != 0 {
+			return result, nil
+		}
+	}
+
 	if len(hooks) == 0 {
 		return &domainHook.HookResult{ExitCode: 0}, nil
 	}
@@ -57,34 +65,39 @@ func (e *compositeHookExecutor) Execute(ctx context.Context, hooks []string, inp
 	return &domainHook.HookResult{ExitCode: 0, Stderr: combinedWarnings.String()}, nil
 }
 
+func (e *compositeHookExecutor) runModelCoAuthorCheck(input domainHook.HookInput) *domainHook.HookResult {
+	domains := append([]string(nil), domainProject.DefaultModelCoAuthorDomains...)
+	domains = append(domains, input.Config.ModelCoAuthorDomains...)
+
+	validation := domainCommit.ValidateModelCoAuthor(input.CommitMessage, domains)
+	if !validation.HasErrors() {
+		return &domainHook.HookResult{ExitCode: 0}
+	}
+	return &domainHook.HookResult{ExitCode: 1, Stderr: formatIssueLines("error: ", validation.Errors())}
+}
+
 func (e *compositeHookExecutor) runValidation(input domainHook.HookInput) *domainHook.HookResult {
 	validation := domainCommit.ValidateConventional(input.CommitMessage, input.Config.ScopeNames())
 
 	if validation.HasErrors() {
-		var sb strings.Builder
-		for _, msg := range validation.Errors() {
-			sb.WriteString("error: ")
-			sb.WriteString(msg)
-			sb.WriteString("\n")
-		}
-		for _, msg := range validation.Warnings() {
-			sb.WriteString("warning: ")
-			sb.WriteString(msg)
-			sb.WriteString("\n")
-		}
-		return &domainHook.HookResult{ExitCode: 1, Stderr: sb.String()}
+		stderr := formatIssueLines("error: ", validation.Errors()) +
+			formatIssueLines("warning: ", validation.Warnings())
+		return &domainHook.HookResult{ExitCode: 1, Stderr: stderr}
 	}
 
-	var warnText string
-	if warnings := validation.Warnings(); len(warnings) > 0 {
-		var sb strings.Builder
-		for _, msg := range warnings {
-			sb.WriteString("warning: ")
-			sb.WriteString(msg)
-			sb.WriteString("\n")
-		}
-		warnText = sb.String()
-	}
+	return &domainHook.HookResult{ExitCode: 0, Stderr: formatIssueLines("warning: ", validation.Warnings())}
+}
 
-	return &domainHook.HookResult{ExitCode: 0, Stderr: warnText}
+// formatIssueLines renders one "<prefix><msg>\n" line per message, or "" for none.
+func formatIssueLines(prefix string, msgs []string) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, msg := range msgs {
+		sb.WriteString(prefix)
+		sb.WriteString(msg)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
