@@ -271,27 +271,15 @@ func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
 // before calling.
 func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResult {
 	result := &ValidationResult{}
-
-	normalized := make([]string, 0, len(allowedDomains))
-	for _, d := range allowedDomains {
-		d = strings.TrimSpace(strings.ToLower(d))
-		if d != "" {
-			normalized = append(normalized, d)
-		}
-	}
+	normalized := normalizeDomains(allowedDomains)
 
 	for _, line := range strings.Split(raw, "\n") {
 		if !strings.HasPrefix(line, "Co-Authored-By:") || !coAuthorRe.MatchString(line) {
 			continue
 		}
 		domain := extractEmailDomain(line)
-		if domain == "" {
-			continue
-		}
-		for _, d := range normalized {
-			if domain == d {
-				return result
-			}
+		if domain != "" && containsDomain(normalized, domain) {
+			return result
 		}
 	}
 
@@ -300,6 +288,47 @@ func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResul
 		fmt.Sprintf("commit must include a Co-Authored-By trailer from one of: %s", strings.Join(normalized, ", ")),
 	})
 	return result
+}
+
+// HasModelCoAuthor reports whether trailers contains at least one
+// Co-Authored-By entry whose email domain is in allowedDomains
+// (case-insensitive). Use this for fail-fast pre-flight at the cmd layer,
+// before the message body is assembled or the LLM is called.
+func HasModelCoAuthor(trailers []Trailer, allowedDomains []string) bool {
+	normalized := normalizeDomains(allowedDomains)
+	if len(normalized) == 0 {
+		return false
+	}
+	for _, t := range trailers {
+		if !strings.EqualFold(t.Key, "Co-Authored-By") {
+			continue
+		}
+		domain := extractEmailDomain(t.Value)
+		if domain != "" && containsDomain(normalized, domain) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeDomains(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, d := range in {
+		d = strings.TrimSpace(strings.ToLower(d))
+		if d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func containsDomain(normalized []string, want string) bool {
+	for _, d := range normalized {
+		if d == want {
+			return true
+		}
+	}
+	return false
 }
 
 // extractEmailDomain returns the lowercased domain from the last <...@...>

@@ -95,6 +95,25 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
+	// Fail fast before calling the LLM: the model cannot be trusted to emit
+	// the trailer correctly (wrong casing, wrong placement). Caller must
+	// supply --co-author / --trailer explicitly.
+	if projCfg != nil && projCfg.RequireModelCoAuthor {
+		if skipCoAuthor {
+			return agentErrors.NewExitCodeError(1,
+				"error: require_model_co_author and no_model_co_author are both set — they contradict\nhint: unset one in your git-agent config")
+		}
+		domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
+		domains = append(domains, projCfg.ModelCoAuthorDomains...)
+		if !commit.HasModelCoAuthor(trailers, domains) {
+			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
+				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
+					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"",
+				strings.Join(domains, ", "),
+			))
+		}
+	}
+
 	llmClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
 
 	var scopeSvc *application.ScopeService

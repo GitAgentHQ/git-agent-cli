@@ -377,6 +377,103 @@ func TestValidateModelCoAuthor(t *testing.T) {
 	}
 }
 
+func TestHasModelCoAuthor(t *testing.T) {
+	defaults := []string{"anthropic.com", "openai.com", "google.com"}
+
+	cases := []struct {
+		name     string
+		trailers []commit.Trailer
+		domains  []string
+		want     bool
+	}{
+		{
+			name:     "matching anthropic trailer",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Claude Opus 4.7 <noreply@anthropic.com>"}},
+			domains:  defaults,
+			want:     true,
+		},
+		{
+			name: "git agent trailer alone is not enough",
+			trailers: []commit.Trailer{
+				{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"},
+			},
+			domains: defaults,
+			want:    false,
+		},
+		{
+			name: "matching trailer alongside git agent",
+			trailers: []commit.Trailer{
+				{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"},
+				{Key: "Co-Authored-By", Value: "Claude Opus 4.7 <noreply@anthropic.com>"},
+			},
+			domains: defaults,
+			want:    true,
+		},
+		{
+			name:     "case-insensitive Key (co-authored-by)",
+			trailers: []commit.Trailer{{Key: "co-authored-by", Value: "Claude <noreply@anthropic.com>"}},
+			domains:  defaults,
+			want:     true,
+		},
+		{
+			name:     "case-insensitive domain in value",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Claude <noreply@ANTHROPIC.COM>"}},
+			domains:  []string{"anthropic.com"},
+			want:     true,
+		},
+		{
+			name:     "user-extended domain",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Acme Bot <bot@acme.ai>"}},
+			domains:  append([]string{"acme.ai"}, defaults...),
+			want:     true,
+		},
+		{
+			name:     "non-allow-listed domain",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Alice <alice@example.com>"}},
+			domains:  defaults,
+			want:     false,
+		},
+		{
+			name:     "non-co-author trailer ignored",
+			trailers: []commit.Trailer{{Key: "Signed-off-by", Value: "Bob <bob@anthropic.com>"}},
+			domains:  defaults,
+			want:     false,
+		},
+		{
+			name:     "value missing email returns false",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Claude"}},
+			domains:  defaults,
+			want:     false,
+		},
+		{
+			name:     "empty trailers returns false",
+			trailers: nil,
+			domains:  defaults,
+			want:     false,
+		},
+		{
+			name:     "empty allow-list returns false even with matching trailer",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Claude <noreply@anthropic.com>"}},
+			domains:  nil,
+			want:     false,
+		},
+		{
+			name:     "subdomain does not satisfy parent entry",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Bot <bot@api.anthropic.com>"}},
+			domains:  []string{"anthropic.com"},
+			want:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commit.HasModelCoAuthor(tc.trailers, tc.domains); got != tc.want {
+				t.Errorf("HasModelCoAuthor = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateConventional_ScopeWhitelist(t *testing.T) {
 	allowed := []string{"app", "cli", "infra"}
 	base := "\n\n- add route handler\n\nThis adds the route."
