@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-11
+
+### Added
+- `--version` flag to display build version
+- Scope whitelist validation to enforce allowed scopes in commits
+- Pre-flight co-author validation to enforce model-specific attribution
+- Model-specific co-author trailer enforcement (Anthropic, OpenAI, Google)
+- Support for zero-commit repositories via filesystem walk
+- `AllChangedFiles` function to list staged, unstaged, and untracked files
+- CHANGELOG.md with Keep a Changelog format for version documentation
+
+### Changed
+- Replaced `AddAll` with `AllChangedFiles` to preserve staging intent
+- Scope generation instructions updated to prioritize description-based matching
+- Hook executor integrates co-author validation for all hooks
+
+### Fixed
+- Empty diff edge cases handled correctly in commit service
+- Verbose test output properly reflects unstaged files sequence
+
+### Docs
+- Model co-author requirements documented with examples and exit codes
+- User-level hook configuration (`--user` flag) documented
+- Code graph design expanded with action capture and session tracking
+- Design documentation restructured with standard headings
+- Graph feature design docs reorganized under code-graph-design folder
+- README updated with user, project, and local config scope flags
+
 ## [0.2.0] - 2026-04-02
 
 ### Added
@@ -62,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/FradSer/git-agent-cli/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/FradSer/git-agent-cli/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/FradSer/git-agent-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/FradSer/git-agent-cli/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/FradSer/git-agent-cli/releases/tag/v0.1.0
