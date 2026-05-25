@@ -44,6 +44,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	amend, _ := cmd.Flags().GetBool("amend")
 	maxDiffLinesFlag, _ := cmd.Flags().GetInt("max-diff-lines")
 	maxDiffLinesFlagChanged := cmd.Flags().Changed("max-diff-lines")
+	maxDiffBytesFlag, _ := cmd.Flags().GetInt("max-diff-bytes")
+	maxDiffBytesFlagChanged := cmd.Flags().Changed("max-diff-bytes")
 	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -141,6 +143,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		maxDiffLines = projCfg.MaxDiffLines
 	}
 
+	maxDiffBytes := maxDiffBytesFlag
+	if !maxDiffBytesFlagChanged && projCfg != nil && projCfg.MaxDiffBytes > 0 {
+		maxDiffBytes = projCfg.MaxDiffBytes
+	}
+
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:            intent,
 		Trailers:          trailers,
@@ -149,6 +156,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Amend:             amend,
 		Config:            projCfg,
 		MaxLines:          maxDiffLines,
+		MaxBytes:          maxDiffBytes,
 		Verbose:           verbose,
 		LogWriter:         logWriter,
 		OutWriter:         cmd.ErrOrStderr(),
@@ -207,7 +215,8 @@ func init() {
 	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
 	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
-	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no limit)")
+	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
+	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 = built-in default ~384 KiB)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
 
 	rootCmd.AddCommand(commitCmd)
