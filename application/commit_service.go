@@ -64,6 +64,7 @@ type CommitRequest struct {
 	Amend             bool
 	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
 	MaxLines          int
+	MaxBytes          int // 0 = DefaultMaxDiffBytes
 	Verbose           bool
 	LogWriter         io.Writer // verbose-only output
 	OutWriter         io.Writer // always-visible output (hook block context, retries)
@@ -115,6 +116,34 @@ func (s *CommitService) out(req CommitRequest, format string, args ...any) {
 const maxHookRetries = 3
 const maxRePlans = 2
 const maxCommitGroups = 5
+
+// DefaultMaxDiffBytes caps the byte size of the diff sent to the LLM when the
+// caller sets no explicit limit. git-agent-proxy rejects request bodies over
+// 512 KiB; 384 KiB of raw diff keeps the JSON-escaped body (plus system prompt
+// and envelope) under that gate, and comfortably under the AI Gateway's larger
+// limit too. Override with --max-diff-bytes / max_diff_bytes for endpoints that
+// allow more. Unlike the line cap, this guard is always applied — large
+// vendored or minified files have few lines but many bytes, so the line cap
+// alone cannot bound the request body.
+const DefaultMaxDiffBytes = 384 << 10
+
+// effectiveMaxBytes resolves the byte cap, falling back to the built-in default
+// when the caller passes 0 (unset) so the request body is always bounded.
+func effectiveMaxBytes(maxBytes int) int {
+	if maxBytes <= 0 {
+		return DefaultMaxDiffBytes
+	}
+	return maxBytes
+}
+
+// truncationLimitDesc renders the active caps for verbose logging, omitting the
+// line component when no line cap is in effect (so it never reads "max 0 lines").
+func truncationLimitDesc(maxLines, maxBytes int) string {
+	if maxLines > 0 {
+		return fmt.Sprintf("max %d lines / %d bytes", maxLines, maxBytes)
+	}
+	return fmt.Sprintf("max %d bytes", maxBytes)
+}
 
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *CommitResult, retErr error) {
 	if req.Amend {
@@ -351,13 +380,14 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				genDiff = fd
 			}
 		}
-		if s.truncator != nil && req.MaxLines > 0 {
-			truncated, didTruncate, terr := s.truncator.Truncate(ctx, genDiff, req.MaxLines)
+		if s.truncator != nil {
+			maxBytes := effectiveMaxBytes(req.MaxBytes)
+			truncated, didTruncate, terr := s.truncator.Truncate(ctx, genDiff, req.MaxLines, maxBytes)
 			if terr != nil {
 				return nil, fmt.Errorf("truncate group diff: %w", terr)
 			}
 			if didTruncate {
-				s.vlog(req, "group diff truncated to %d lines", req.MaxLines)
+				s.vlog(req, "group diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 			}
 			genDiff = truncated
 		}
@@ -512,14 +542,15 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 		}
 	}
 
-	if s.truncator != nil && req.MaxLines > 0 {
+	if s.truncator != nil {
+		maxBytes := effectiveMaxBytes(req.MaxBytes)
 		var truncated bool
-		amendDiff, truncated, err = s.truncator.Truncate(ctx, amendDiff, req.MaxLines)
+		amendDiff, truncated, err = s.truncator.Truncate(ctx, amendDiff, req.MaxLines, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("truncate diff: %w", err)
 		}
 		if truncated {
-			s.vlog(req, "diff truncated to %d lines", req.MaxLines)
+			s.vlog(req, "diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 		}
 	}
 

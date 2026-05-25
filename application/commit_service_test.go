@@ -6,22 +6,26 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
 	"github.com/gitagenthq/git-agent/domain/diff"
 	"github.com/gitagenthq/git-agent/domain/hook"
 	"github.com/gitagenthq/git-agent/domain/project"
+	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 )
 
 // --- mocks ---
 
 type mockCommitGenerator struct {
-	msg *commit.CommitMessage
-	err error
+	msg     *commit.CommitMessage
+	err     error
+	lastReq *commit.GenerateRequest
 }
 
-func (m *mockCommitGenerator) Generate(_ context.Context, _ commit.GenerateRequest) (*commit.CommitMessage, error) {
+func (m *mockCommitGenerator) Generate(_ context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
+	m.lastReq = &req
 	return m.msg, m.err
 }
 
@@ -160,6 +164,42 @@ func newSvc(gen *mockCommitGenerator, git *mockCommitGitClient, hookExec *mockHo
 }
 
 // --- tests ---
+
+func TestCommitService_ByteCapAppliedBeforeGenerate(t *testing.T) {
+	// A single-line vendored blob far over the request-body limit: the line
+	// cap cannot catch it, so the always-on byte cap must shrink the diff
+	// before it reaches the generator.
+	huge := strings.Repeat("x", application.DefaultMaxDiffBytes*2)
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiff: &diff.StagedDiff{Files: []string{"vendor.min.js"}, Content: huge, Lines: 1},
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"vendor.min.js"})}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator())
+
+	_, err := svc.Commit(context.Background(), application.CommitRequest{
+		NoStage: true,
+		Config:  &project.Config{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gen.lastReq == nil {
+		t.Fatal("generator was not called")
+	}
+	n := len(gen.lastReq.Diff.Content)
+	if n == 0 {
+		t.Fatal("byte cap truncated the diff to empty")
+	}
+	if n > application.DefaultMaxDiffBytes {
+		t.Fatalf("diff sent to LLM is %d bytes, exceeds cap %d", n, application.DefaultMaxDiffBytes)
+	}
+	// All-ASCII input: the cap should keep right up to the budget, not seek back
+	// to an earlier boundary and discard the bulk of the diff.
+	if n < application.DefaultMaxDiffBytes-utf8.UTFMax {
+		t.Fatalf("byte cap over-truncated: kept only %d of %d bytes", n, application.DefaultMaxDiffBytes)
+	}
+}
 
 func TestCommitService_GeneratesAndCommits(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
