@@ -23,7 +23,15 @@ Feature: Diff Truncation
     But whose byte size exceeds maxBytes
     When Truncate is called
     Then the content is cut to at most maxBytes bytes
+    And the content is kept up to the byte budget, not back to an earlier newline
     And truncation is reported
+
+  Scenario: Line and byte caps both apply
+    Given a diff whose line count exceeds maxLines
+    And whose remaining bytes still exceed maxBytes
+    When Truncate is called
+    Then the line cap is applied first, then the byte cap
+    And the content is at most maxBytes bytes
 
   Scenario: A single oversized line is cut on a UTF-8 boundary
     Given a diff that is one line larger than maxBytes

@@ -45,15 +45,20 @@ func (t *lineTruncator) Truncate(_ context.Context, d *domainDiff.StagedDiff, ma
 }
 
 // truncateBytes returns the largest prefix of s no longer than maxBytes,
-// preferring a line boundary so no partial line is emitted. When a single line
-// already exceeds maxBytes it backs off to a valid UTF-8 boundary instead.
+// dropping only a trailing partial multi-byte rune so the cut lands on a valid
+// UTF-8 boundary. It deliberately does not seek a line boundary: a single
+// oversized line (a minified or vendored blob) would otherwise be discarded
+// back to an early newline, starving the LLM of the actual change. Only the
+// last rune is inspected, so a mid-string invalid byte costs nothing — the
+// JSON encoder substitutes U+FFFD for it downstream.
 func truncateBytes(s string, maxBytes int) string {
 	cut := s[:maxBytes]
-	if idx := strings.LastIndexByte(cut, '\n'); idx >= 0 {
-		return cut[:idx]
-	}
-	for len(cut) > 0 && !utf8.ValidString(cut) {
-		cut = cut[:len(cut)-1]
+	for len(cut) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(cut); r == utf8.RuneError && size <= 1 {
+			cut = cut[:len(cut)-1]
+			continue
+		}
+		break
 	}
 	return cut
 }
