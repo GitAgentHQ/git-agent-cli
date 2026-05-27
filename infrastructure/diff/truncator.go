@@ -48,12 +48,16 @@ func (t *lineTruncator) Truncate(_ context.Context, d *domainDiff.StagedDiff, ma
 // dropping only a trailing partial multi-byte rune so the cut lands on a valid
 // UTF-8 boundary. It deliberately does not seek a line boundary: a single
 // oversized line (a minified or vendored blob) would otherwise be discarded
-// back to an early newline, starving the LLM of the actual change. Only the
-// last rune is inspected, so a mid-string invalid byte costs nothing — the
-// JSON encoder substitutes U+FFFD for it downstream.
+// back to an early newline, starving the LLM of the actual change. Mid-string
+// invalid bytes are left alone — the JSON encoder substitutes U+FFFD downstream.
+//
+// The trim loop is bounded by utf8.UTFMax because a partial rune is at most
+// 3 bytes long; on pathological input (e.g. unbroken continuation bytes) the
+// loop stops after that, leaving any remaining malformed bytes in place rather
+// than O(n) trimming back to the first lead byte.
 func truncateBytes(s string, maxBytes int) string {
 	cut := s[:maxBytes]
-	for len(cut) > 0 {
+	for i := 0; i < utf8.UTFMax && len(cut) > 0; i++ {
 		if r, size := utf8.DecodeLastRuneInString(cut); r == utf8.RuneError && size <= 1 {
 			cut = cut[:len(cut)-1]
 			continue

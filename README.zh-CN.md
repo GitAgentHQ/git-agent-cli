@@ -95,6 +95,7 @@ git-agent config set <key> <value> # 将配置值写入对应作用域
 git-agent config set --user api-key sk-xxx   # 写入用户作用域
 git-agent config set --project hook empty     # 写入项目作用域
 git-agent config set --local max-diff-lines 1000  # 写入本地作用域
+git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直连端点放宽到 512 KiB）
 ```
 
 `config set` 和 `config get` 同时支持 snake_case 和 kebab-case 键名（如 `api-key` 和 `api_key` 等价）。
@@ -177,7 +178,8 @@ hook:
 | `--co-author` | 添加 co-author trailer（可重复） |
 | `--trailer` | 添加任意 git trailer，格式为 `Key: Value`（可重复） |
 | `--no-attribution` | 省略默认的 Git Agent co-author trailer |
-| `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制） |
+| `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制行数；字节上限始终生效） |
+| `--max-diff-bytes` | 发送给模型的最大 diff 字节数（默认：0，使用内置约 384 KiB 上限；传正值可覆盖） |
 
 ### 全局
 

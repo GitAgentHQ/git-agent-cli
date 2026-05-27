@@ -119,6 +119,15 @@ func TestTruncate_SingleOversizedLine_ValidUTF8(t *testing.T) {
 	if !utf8.ValidString(out.Content) {
 		t.Fatalf("content is not valid UTF-8")
 	}
+	// "世" is 3 bytes; 2000/3 = 666 complete runes => 1998 bytes. Anything
+	// smaller signals over-truncation (the cut should keep right up to the
+	// last valid rune boundary, not seek back further).
+	if len(out.Content) != 1998 {
+		t.Fatalf("expected 1998 bytes (666 complete runes), got %d", len(out.Content))
+	}
+	if out.Content != content[:1998] {
+		t.Fatalf("expected the first 1998 bytes verbatim")
+	}
 }
 
 func TestTruncate_MidStringInvalidUTF8_NoHang(t *testing.T) {

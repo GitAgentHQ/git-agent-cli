@@ -144,8 +144,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	maxDiffBytes := maxDiffBytesFlag
-	if !maxDiffBytesFlagChanged && projCfg != nil && projCfg.MaxDiffBytes > 0 {
-		maxDiffBytes = projCfg.MaxDiffBytes
+	if !maxDiffBytesFlagChanged && projCfg != nil {
+		if projCfg.MaxDiffBytes > 0 {
+			maxDiffBytes = projCfg.MaxDiffBytes
+		} else if projCfg.MaxDiffBytes < 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"warning: max_diff_bytes %d in project config is non-positive; falling back to the built-in default\n",
+				projCfg.MaxDiffBytes)
+		}
 	}
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
@@ -216,7 +222,7 @@ func init() {
 	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
-	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 = built-in default ~384 KiB)")
+	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
 
 	rootCmd.AddCommand(commitCmd)

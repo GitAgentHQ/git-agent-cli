@@ -201,6 +201,46 @@ func TestCommitService_ByteCapAppliedBeforeGenerate(t *testing.T) {
 	}
 }
 
+func TestCommitService_AmendByteCap_MultibyteContent(t *testing.T) {
+	// Covers two gaps: the amend path's byte-cap branch (commitAmend uses
+	// LastCommitDiff, not StagedDiff) and the multi-byte rune-trim path (the
+	// other byte-cap test uses pure ASCII so the trim loop never fires).
+	huge := strings.Repeat("世", application.DefaultMaxDiffBytes) // 3*N bytes >> cap
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		lastCommitDiff: &diff.StagedDiff{Files: []string{"chinese.md"}, Content: huge, Lines: 1},
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"chinese.md"})}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator())
+
+	_, err := svc.Commit(context.Background(), application.CommitRequest{
+		Amend:  true,
+		Config: &project.Config{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gen.lastReq == nil {
+		t.Fatal("generator was not called")
+	}
+	n := len(gen.lastReq.Diff.Content)
+	if n == 0 {
+		t.Fatal("amend byte cap truncated the diff to empty")
+	}
+	if n > application.DefaultMaxDiffBytes {
+		t.Fatalf("amend diff sent to LLM is %d bytes, exceeds cap %d", n, application.DefaultMaxDiffBytes)
+	}
+	if !utf8.ValidString(gen.lastReq.Diff.Content) {
+		t.Fatal("truncated amend diff is not valid UTF-8 — mid-rune cut not repaired")
+	}
+	// "世" is 3 bytes, so the largest valid prefix under the cap is the
+	// nearest multiple of 3 to maxBytes.
+	want := (application.DefaultMaxDiffBytes / 3) * 3
+	if n != want {
+		t.Fatalf("expected %d bytes (largest multiple of 3 ≤ cap), got %d", want, n)
+	}
+}
+
 func TestCommitService_GeneratesAndCommits(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{

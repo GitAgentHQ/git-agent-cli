@@ -95,6 +95,7 @@ git-agent config set <key> <value> # write a config value to the appropriate sco
 git-agent config set --user api-key sk-xxx   # write to user scope
 git-agent config set --project hook empty     # write to project scope
 git-agent config set --local max-diff-lines 1000  # write to local scope
+git-agent config set --local max-diff-bytes 524288 # raise the byte cap (e.g., 512 KiB for direct endpoints)
 ```
 
 `config set` and `config get` accept both snake_case and kebab-case keys (e.g., `api-key` and `api_key` are equivalent).
@@ -177,7 +178,8 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | `--co-author` | Add a co-author trailer (repeatable) |
 | `--trailer` | Add an arbitrary git trailer, format `Key: Value` (repeatable) |
 | `--no-attribution` | Omit the default Git Agent co-author trailer |
-| `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no limit) |
+| `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no line limit; a byte cap always applies) |
+| `--max-diff-bytes` | Maximum diff bytes sent to the model (default: 0, falls back to the built-in ~384 KiB cap; pass a positive value to override) |
 
 ### Global
 

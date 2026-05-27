@@ -128,7 +128,11 @@ const maxCommitGroups = 5
 const DefaultMaxDiffBytes = 384 << 10
 
 // effectiveMaxBytes resolves the byte cap, falling back to the built-in default
-// when the caller passes 0 (unset) so the request body is always bounded.
+// when the caller passes 0 or a negative value. The request body is always
+// bounded — there is no "disable" path, because every supported endpoint
+// (proxy, AI Gateway, OpenAI) imposes a body-size limit smaller than typical
+// vendored diffs. To raise the cap, pass a positive value via --max-diff-bytes
+// or the max_diff_bytes config key.
 func effectiveMaxBytes(maxBytes int) int {
 	if maxBytes <= 0 {
 		return DefaultMaxDiffBytes
@@ -225,8 +229,15 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		allowed[f] = true
 	}
 
-	// Auto-scope when no config or no scopes provided.
-	if req.Config == nil || len(req.Config.Scopes) == 0 {
+	// Ensure req.Config is non-nil up front so auto-scope can mutate Scopes
+	// in place and the per-group loop can read Hooks / co-author policy.
+	if req.Config == nil {
+		req.Config = &project.Config{}
+	}
+
+	// Auto-scope when no scopes provided — assign Scopes in place so Hooks,
+	// MaxDiffLines, MaxDiffBytes, and co-author policy survive the refresh.
+	if len(req.Config.Scopes) == 0 {
 		if s.scopeSvc != nil {
 			s.vlog(req, "auto-generating scopes...")
 			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
@@ -240,13 +251,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				if err := s.scopeSvc.MergeAndSave(ctx, configPath, scopes); err != nil {
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
-				req.Config = &project.Config{Scopes: scopes}
+				req.Config.Scopes = scopes
 				s.vlog(req, "scopes: %v", req.Config.ScopeNames())
 			}
 		}
-	}
-	if req.Config == nil {
-		req.Config = &project.Config{}
 	}
 
 	var (
@@ -299,7 +307,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				if err := s.scopeSvc.MergeAndSave(ctx, configPath, newScopes); err != nil {
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
-				req.Config = &project.Config{Scopes: newScopes}
+				req.Config.Scopes = newScopes
 				s.vlog(req, "updated scopes: %v — re-planning...", req.Config.ScopeNames())
 				plan, err = s.planner.Plan(ctx, commit.PlanRequest{
 					StagedDiff:   staged,
