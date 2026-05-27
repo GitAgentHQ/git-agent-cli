@@ -36,9 +36,6 @@ func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 	if !strings.Contains(out, "unstaged files:") {
 		t.Errorf("verbose output missing 'unstaged files:', got:\n%s", out)
 	}
-	if !strings.Contains(out, "calling LLM") {
-		t.Errorf("verbose output missing 'calling LLM', got:\n%s", out)
-	}
 	if !strings.Contains(out, "LLM response received") {
 		t.Errorf("verbose output missing 'LLM response received', got:\n%s", out)
 	}

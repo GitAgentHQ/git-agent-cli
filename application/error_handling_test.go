@@ -44,7 +44,7 @@ func TestCommitService_PlannerReturnsEmptyPlan(t *testing.T) {
 			{Files: []string{"hallucinated.go"}},
 		}},
 	}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)

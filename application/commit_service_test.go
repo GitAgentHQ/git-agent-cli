@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -61,6 +62,12 @@ type mockCommitGitClient struct {
 	amendCalled           bool
 	amendMessage          string
 	amendErr              error
+	// Per-test overrides for the DIFF-SYNOPSIS fallback path. When stagedDiffStat
+	// is non-nil it is invoked instead of returning the default ("", nil); tests
+	// that exercise REQ-007 use this to supply canned stat output and count
+	// invocations.
+	stagedDiffStat      func(ctx context.Context) (string, error)
+	stagedDiffStatCalls int
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -73,6 +80,14 @@ func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, e
 		return &diff.StagedDiff{}, m.stagedErr
 	}
 	return m.stagedDiff, m.stagedErr
+}
+
+func (m *mockCommitGitClient) StagedDiffStat(ctx context.Context) (string, error) {
+	m.stagedDiffStatCalls++
+	if m.stagedDiffStat != nil {
+		return m.stagedDiffStat(ctx)
+	}
+	return "", nil
 }
 
 func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -130,11 +145,15 @@ func (m *mockCommitGitClient) AmendCommit(_ context.Context, message string) (st
 }
 
 type mockHookExecutor struct {
-	result *hook.HookResult
-	err    error
+	result    *hook.HookResult
+	err       error
+	lastInput hook.HookInput
+	inputs    []hook.HookInput
 }
 
-func (m *mockHookExecutor) Execute(_ context.Context, _ []string, _ hook.HookInput) (*hook.HookResult, error) {
+func (m *mockHookExecutor) Execute(_ context.Context, _ []string, input hook.HookInput) (*hook.HookResult, error) {
+	m.lastInput = input
+	m.inputs = append(m.inputs, input)
 	return m.result, m.err
 }
 
@@ -160,22 +179,23 @@ func singleGroupPlan(files []string) *commit.CommitPlan {
 
 func newSvc(gen *mockCommitGenerator, git *mockCommitGitClient, hookExec *mockHookExecutor) *application.CommitService {
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
-	return application.NewCommitService(gen, planner, git, hookExec, nil, nil, nil)
+	return application.NewCommitService(gen, planner, git, hookExec, nil, nil, nil, nil)
 }
 
 // --- tests ---
 
 func TestCommitService_ByteCapAppliedBeforeGenerate(t *testing.T) {
-	// A single-line vendored blob far over the request-body limit: the line
-	// cap cannot catch it, so the always-on byte cap must shrink the diff
-	// before it reaches the generator.
+	// A multi-file blob far over the request-body limit: the line cap cannot
+	// catch it, so the always-on byte cap must shrink the diff before it
+	// reaches the generator. Multi-file keeps the synopsis fallback (REQ-007)
+	// out of the picture so we exercise the truncator path specifically.
 	huge := strings.Repeat("x", application.DefaultMaxDiffBytes*2)
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
-		stagedDiff: &diff.StagedDiff{Files: []string{"vendor.min.js"}, Content: huge, Lines: 1},
+		stagedDiff: &diff.StagedDiff{Files: []string{"vendor.min.js", "vendor.min.css"}, Content: huge, Lines: 1},
 	}
-	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"vendor.min.js"})}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator())
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"vendor.min.js", "vendor.min.css"})}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator(), nil)
 
 	_, err := svc.Commit(context.Background(), application.CommitRequest{
 		NoStage: true,
@@ -211,7 +231,7 @@ func TestCommitService_AmendByteCap_MultibyteContent(t *testing.T) {
 		lastCommitDiff: &diff.StagedDiff{Files: []string{"chinese.md"}, Content: huge, Lines: 1},
 	}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"chinese.md"})}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator())
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator(), nil)
 
 	_, err := svc.Commit(context.Background(), application.CommitRequest{
 		Amend:  true,
@@ -360,7 +380,7 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	}
 	blockingHook := &mockHookExecutor{result: &hook.HookResult{ExitCode: 1, Stderr: "blocked"}}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
-	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, blockingHook, nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{Hooks: []string{"conventional"}}}
 	_, err := svc.Commit(context.Background(), req)
@@ -395,7 +415,7 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 			{Files: []string{"b.go", "c.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -440,7 +460,7 @@ func TestCommitService_AllPreStaged_UnstagedEmpty(t *testing.T) {
 		allChangedFiles: []string{"a.go", "b.go"},
 	}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"a.go", "b.go"})}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
@@ -476,7 +496,7 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 			{Files: []string{"b.go", "new.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -545,7 +565,7 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 			{Files: []string{"b.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
@@ -646,7 +666,7 @@ func TestCommitService_CapCommitGroups(t *testing.T) {
 		groups[i] = commit.CommitGroup{Files: []string{fmt.Sprintf("file%d.go", i)}}
 	}
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: groups}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -735,7 +755,7 @@ func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
 		{ExitCode: 0},
 	}}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
-	svc := application.NewCommitService(gen, planner, git, hookSeq, nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, hookSeq, nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{Hooks: []string{"conventional"}}}
 	if _, err := svc.Commit(context.Background(), req); err != nil {
@@ -772,7 +792,7 @@ func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
 			{Files: []string{"stale.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{NoStage: true, Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -786,6 +806,187 @@ func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
 	if git.commitCount != 1 {
 		t.Errorf("expected git.Commit called once, got %d", git.commitCount)
 	}
+}
+
+func TestCommitService_AlwaysOnPhaseLines(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check: nothing pre-staged
+			{Files: []string{"a.go"}, Content: "+a // sentinel-diff-content", Lines: 1}, // group 1
+			{Files: []string{"b.go"}, Content: "+b // sentinel-diff-content", Lines: 1}, // group 2
+		},
+		allChangedFiles: []string{"a.go", "b.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{"a.go"}},
+			{Files: []string{"b.go"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Config:    &project.Config{},
+		Verbose:   false,
+		OutWriter: &out,
+	}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"planning commits...",
+		"planned 2 commit(s)",
+		"commit 1/2: drafting message (attempt 1/3)",
+		"commit 2/2: drafting message (attempt 1/3)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("always-on stderr missing %q\ngot:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "sentinel-diff-content") {
+		t.Errorf("always-on stderr leaked diff content:\n%s", got)
+	}
+}
+
+// TestCommitService_PhaseLinesNoSecretLeakage locks in REQ-011 for the
+// application layer: the always-on phase stream (OutWriter) emits only
+// progress metadata. Even when both the user intent and the diff content
+// contain a sentinel string, the captured always-on buffer must contain
+// zero occurrences of it. Verbose-only output (LogWriter) is excluded from
+// this guard — REQ-011 covers the always-on stream only.
+func TestCommitService_PhaseLinesNoSecretLeakage(t *testing.T) {
+	const sentinel = "SECRET-DIFF-CONTENT-NEVER-LOG"
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check: nothing pre-staged
+			{Files: []string{"a.go"}, Content: "+a // " + sentinel, Lines: 1}, // group 1
+			{Files: []string{"b.go"}, Content: "+b // " + sentinel, Lines: 1}, // group 2
+		},
+		allChangedFiles: []string{"a.go", "b.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{"a.go"}},
+			{Files: []string{"b.go"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Intent:    sentinel,
+		Config:    &project.Config{},
+		OutWriter: &out,
+	}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(out.String(), sentinel) {
+		t.Errorf("always-on (OutWriter) leaked sentinel %q:\n%s", sentinel, out.String())
+	}
+}
+
+func TestCommitService_VerboseIsSuperset(t *testing.T) {
+	run := func(verbose bool) string {
+		gen := &mockCommitGenerator{msg: defaultMsg()}
+		git := &mockCommitGitClient{
+			stagedDiffSeq: []*diff.StagedDiff{
+				{}, // pre-staged check
+				{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1
+				{Files: []string{"b.go"}, Content: "+b", Lines: 1}, // group 2
+			},
+			allChangedFiles: []string{"a.go", "b.go"},
+		}
+		planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+			Groups: []commit.CommitGroup{
+				{Files: []string{"a.go"}},
+				{Files: []string{"b.go"}},
+			},
+		}}
+		svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+		var buf bytes.Buffer
+		req := application.CommitRequest{
+			Config:    &project.Config{},
+			Verbose:   verbose,
+			LogWriter: &buf,
+			OutWriter: &buf,
+		}
+		if _, err := svc.Commit(context.Background(), req); err != nil {
+			t.Fatalf("unexpected error (verbose=%v): %v", verbose, err)
+		}
+		return buf.String()
+	}
+
+	always := run(false)
+	verbose := run(true)
+
+	// Every line in always-on appears exactly once in verbose, and exactly
+	// once in always (no duplication within either stream).
+	alwaysLines := splitNonEmptyLines(always)
+	verboseLines := splitNonEmptyLines(verbose)
+
+	alwaysCount := countLines(alwaysLines)
+	verboseCount := countLines(verboseLines)
+	// Always-on stream: every line is unique (phase markers, not per-group
+	// chatter). Per-group lines vary by index so they remain unique here.
+	for line, n := range alwaysCount {
+		if n != 1 {
+			t.Errorf("always-on stream duplicated line %q (n=%d)", line, n)
+		}
+	}
+	// Verbose stream is a superset: every always-on line appears exactly
+	// once (same uniqueness as above — verbose adds debug lines, not
+	// duplicates of the phase markers).
+	for _, line := range alwaysLines {
+		if verboseCount[line] != 1 {
+			t.Errorf("verbose stream missing always-on line %q (count=%d)\nverbose:\n%s",
+				line, verboseCount[line], verbose)
+		}
+	}
+
+	// Verbose stream contributes additional verbose-only lines, including
+	// the file lists.
+	hasStaged := false
+	hasUnstaged := false
+	for _, line := range verboseLines {
+		if strings.HasPrefix(line, "staged files:") {
+			hasStaged = true
+		}
+		if strings.HasPrefix(line, "unstaged files:") {
+			hasUnstaged = true
+		}
+	}
+	if !hasStaged {
+		t.Errorf("verbose stream missing 'staged files:'\n%s", verbose)
+	}
+	if !hasUnstaged {
+		t.Errorf("verbose stream missing 'unstaged files:'\n%s", verbose)
+	}
+}
+
+func splitNonEmptyLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func countLines(lines []string) map[string]int {
+	out := make(map[string]int, len(lines))
+	for _, line := range lines {
+		out[line]++
+	}
+	return out
 }
 
 func TestCommitService_RestagesOnCommitError(t *testing.T) {
@@ -806,7 +1007,7 @@ func TestCommitService_RestagesOnCommitError(t *testing.T) {
 			{Files: []string{"b.go"}},
 		},
 	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -826,5 +1027,199 @@ func TestCommitService_RestagesOnCommitError(t *testing.T) {
 	}
 	if !recoveryFiles["a.go"] || !recoveryFiles["b.go"] {
 		t.Errorf("expected recovery to re-stage [a.go, b.go], got %v", git.stagedFiles[git.stageFilesCalls-1])
+	}
+}
+
+// TestCommitService_SynopsisFallbackOneFile exercises REQ-007: when a single
+// staged file's diff saturates the byte cap, the LLM prompt is replaced with a
+// compact DIFF-SYNOPSIS block. The hook still receives the full unstripped
+// diff so its validation surface is unchanged.
+func TestCommitService_SynopsisFallbackOneFile(t *testing.T) {
+	const maxBytes = 393216
+	const actualBytes = 1048576
+	huge := strings.Repeat("x", actualBytes)
+	statLine := " vendored/bundle.min.js | 12345 +++++++++++++++++++++++++++++++++++"
+
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check: nothing pre-staged
+			{Files: []string{"vendored/bundle.min.js"}, Content: huge, Lines: 1}, // per-group execution
+		},
+		allChangedFiles: []string{"vendored/bundle.min.js"},
+		stagedDiffStat: func(_ context.Context) (string, error) {
+			return statLine, nil
+		},
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"vendored/bundle.min.js"})}
+	hookExec := &mockHookExecutor{result: &hook.HookResult{ExitCode: 0}}
+	svc := application.NewCommitService(gen, planner, git, hookExec, nil, nil, infraDiff.NewLineTruncator(), nil)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Config:    &project.Config{Hooks: []string{"conventional"}},
+		MaxBytes:  maxBytes,
+		OutWriter: &out,
+	}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gen.lastReq == nil {
+		t.Fatal("generator was not called")
+	}
+	content := gen.lastReq.Diff.Content
+	if !strings.HasPrefix(content, "DIFF-SYNOPSIS") {
+		t.Fatalf("expected synopsis prefix, got: %q", content[:min(64, len(content))])
+	}
+	for _, want := range []string{
+		"file: vendored/bundle.min.js",
+		"changes: +12345 / -0 (stat)",
+		"note: full diff elided (1048576 bytes exceeded 393216-byte cap)",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("synopsis missing line %q\ngot:\n%s", want, content)
+		}
+	}
+	if len(content) >= 4096 {
+		t.Errorf("synopsis is %d bytes, expected under 4096", len(content))
+	}
+
+	wantPhase := "commit 1/1: DIFF-SYNOPSIS fallback (vendored/bundle.min.js)"
+	if !strings.Contains(out.String(), wantPhase) {
+		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+	}
+
+	if hookExec.lastInput.Diff != huge {
+		t.Errorf("hook diff was %d bytes, expected full %d-byte raw diff", len(hookExec.lastInput.Diff), actualBytes)
+	}
+
+	if !git.commitCalled {
+		t.Fatal("expected commit to succeed")
+	}
+}
+
+// TestCommitService_TruncatorPathMultiFile asserts the synopsis is NOT used
+// when the saturated diff spans more than one file: the truncator path stays
+// in force and StagedDiffStat is not called for that group.
+func TestCommitService_TruncatorPathMultiFile(t *testing.T) {
+	const maxBytes = 393216
+	const totalBytes = 500000
+	groupContent := strings.Repeat("y", totalBytes)
+	files := []string{"a.go", "b.go", "c.go", "d.go"}
+
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check
+			{Files: files, Content: groupContent, Lines: 4},
+		},
+		allChangedFiles: files,
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan(files)}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, infraDiff.NewLineTruncator(), nil)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Config:    &project.Config{},
+		MaxBytes:  maxBytes,
+		OutWriter: &out,
+	}
+	if _, err := svc.Commit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gen.lastReq == nil {
+		t.Fatal("generator was not called")
+	}
+	if strings.HasPrefix(gen.lastReq.Diff.Content, "DIFF-SYNOPSIS") {
+		t.Error("multi-file path must NOT emit DIFF-SYNOPSIS")
+	}
+
+	wantPhase := fmt.Sprintf("commit 1/1: truncating group diff (%d bytes)", maxBytes)
+	if !strings.Contains(out.String(), wantPhase) {
+		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+	}
+
+	if git.stagedDiffStatCalls != 0 {
+		t.Errorf("StagedDiffStat must not be called for multi-file groups, got %d calls", git.stagedDiffStatCalls)
+	}
+}
+
+// spyHeuristicPlanner records every Plan invocation and returns a canned plan.
+type spyHeuristicPlanner struct {
+	calls int
+	plan  *commit.CommitPlan
+}
+
+func (s *spyHeuristicPlanner) Plan(_ context.Context, _ commit.PlanRequest) (*commit.CommitPlan, error) {
+	s.calls++
+	return s.plan, nil
+}
+
+// TestCommitService_HeuristicFallback_OptIn exercises REQ-008: when the LLM
+// planner returns ErrPlannerBudgetExhausted and PlanFallback=="heuristic",
+// the heuristic planner is invoked and the per-group loop proceeds as normal.
+func TestCommitService_HeuristicFallback_OptIn(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check
+			{Files: []string{"cmd/a.go"}, Content: "+a", Lines: 1},
+			{Files: []string{"application/b.go"}, Content: "+b", Lines: 1},
+		},
+		allChangedFiles: []string{"cmd/a.go", "application/b.go"},
+	}
+	planner := &mockCommitPlanner{err: &commit.PlannerBudgetExhaustedError{Model: "test-model", Ceiling: 16384}}
+	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
+		{Files: []string{"cmd/a.go"}, Message: commit.CommitMessage{Title: "chore(cli): update cmd/"}},
+		{Files: []string{"application/b.go"}, Message: commit.CommitMessage{Title: "chore(app): update application/"}},
+	}}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Config:    &project.Config{PlanFallback: project.PlanFallbackHeuristic},
+		OutWriter: &out,
+	}
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if heuristic.calls != 1 {
+		t.Errorf("expected heuristic planner called once, got %d", heuristic.calls)
+	}
+	if len(result.Commits) != 2 {
+		t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
+	}
+	wantPhase := "planner exhausted budget — falling back to directoryBucketer"
+	if !strings.Contains(out.String(), wantPhase) {
+		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+	}
+}
+
+// TestCommitService_HeuristicFallback_OptOut exercises the default opt-out
+// behaviour: when PlanFallback is unset the budget-exhausted error propagates
+// unchanged and the heuristic planner is never consulted.
+func TestCommitService_HeuristicFallback_OptOut(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq:   []*diff.StagedDiff{{}},
+		allChangedFiles: []string{"cmd/a.go", "application/b.go"},
+	}
+	planner := &mockCommitPlanner{err: &commit.PlannerBudgetExhaustedError{Model: "test-model", Ceiling: 16384}}
+	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"cmd/a.go"}}}}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
+
+	req := application.CommitRequest{Config: &project.Config{}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error to propagate when PlanFallback is unset")
+	}
+	if heuristic.calls != 0 {
+		t.Errorf("expected heuristic planner NOT called, got %d", heuristic.calls)
+	}
+	if !errors.Is(err, commit.ErrPlannerBudgetExhausted) {
+		t.Errorf("expected wrapped ErrPlannerBudgetExhausted, got: %v", err)
 	}
 }
