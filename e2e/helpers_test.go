@@ -2,10 +2,14 @@ package e2e_test
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 var agentBin string
@@ -77,6 +81,65 @@ func newGitRepo(t *testing.T) string {
 	run("config", "user.email", "test@example.com")
 	run("config", "user.name", "Test")
 	return dir
+}
+
+// newStallServer returns an httptest server that hijacks every connection and
+// blocks until the client closes its end of the socket. The returned hit
+// channel receives a value when the first request lands, letting callers gate
+// follow-up actions (e.g. SIGINT) on the subprocess actually reaching the
+// LLM call instead of relying on a wall-clock sleep.
+func newStallServer(t *testing.T) (*httptest.Server, <-chan struct{}) {
+	t.Helper()
+	hit := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case hit <- struct{}{}:
+		default:
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("http.ResponseWriter does not support hijacking")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(io.Discard, conn)
+	}))
+	return srv, hit
+}
+
+// newFastLLMServer returns an httptest server that responds to every
+// chat-completion request with a canned message-generation payload. The
+// configurable delay defaults to 0 — used by the small-diff happy path to
+// ensure no heartbeat ticks fire. The server's content is fixed because the
+// regression test cares only about turn-around time and exit code, not the
+// commit text itself.
+func newFastLLMServer(t *testing.T, delay time.Duration) *httptest.Server {
+	t.Helper()
+	const body = `{
+  "id": "chatcmpl-fast",
+  "object": "chat.completion",
+  "created": 0,
+  "model": "test-model",
+  "choices": [
+    {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "{\"title\":\"feat(cli): add a line\",\"bullets\":[\"Add a new line to readme\"],\"explanation\":\"Adds one line of content for the regression fixture.\"}"}}
+  ]
+}`
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
 }
 
 // writeFile writes content to path (creating parent dirs as needed).
