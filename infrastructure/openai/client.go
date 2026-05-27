@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	goopenai "github.com/sashabaranov/go-openai"
 
@@ -16,19 +18,90 @@ import (
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
+// Default transport-level bounds applied when the caller passes a non-positive
+// value. Mirror the constants in infrastructure/config/resolver.go so a
+// zero-config client behaves identically to a fully-resolved one.
+const (
+	defaultRequestTimeout    = 90 * time.Second
+	defaultHeartbeatInterval = 15 * time.Second
+)
+
+// Per-endpoint upper bounds on MaxCompletionTokens. callLLM doubles the budget
+// on every finish_reason=length retry; once the next double would exceed the
+// matching ceiling, callLLM returns a *commit.PlannerBudgetExhaustedError
+// instead of pinging the endpoint a third time. Keeping ceilings as constants
+// (per endpoint, not per client) makes the upper bound visible in code review
+// and avoids a config knob nobody would tune.
+const (
+	planMaxTokensCeiling     = 16384
+	generateMaxTokensCeiling = 16384
+	scopesMaxTokensCeiling   = 16384
+	detectMaxTokensCeiling   = 4096
+)
+
 type Client struct {
-	inner *goopenai.Client
-	model string
+	inner             *goopenai.Client
+	model             string
+	requestTimeout    time.Duration
+	heartbeatInterval time.Duration
+	out               io.Writer
 }
 
-func NewClient(apiKey, baseURL, model string) *Client {
+func NewClient(
+	apiKey, baseURL, model string,
+	requestTimeout, heartbeatInterval time.Duration,
+	out io.Writer,
+) *Client {
 	cfg := goopenai.DefaultConfig(apiKey)
 	if baseURL != "" {
 		cfg.BaseURL = baseURL
 	}
+	if requestTimeout <= 0 {
+		requestTimeout = defaultRequestTimeout
+	}
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = defaultHeartbeatInterval
+	}
+	cfg.HTTPClient = &http.Client{Timeout: requestTimeout}
 	return &Client{
-		inner: goopenai.NewClientWithConfig(cfg),
-		model: model,
+		inner:             goopenai.NewClientWithConfig(cfg),
+		model:             model,
+		requestTimeout:    requestTimeout,
+		heartbeatInterval: heartbeatInterval,
+		out:               out,
+	}
+}
+
+// RequestTimeout reports the per-attempt HTTP timeout this client applies to
+// outbound LLM requests. Exposed so cmd-layer wiring tests can confirm config
+// values reach the transport.
+func (c *Client) RequestTimeout() time.Duration { return c.requestTimeout }
+
+// HeartbeatInterval reports the cadence at which heartbeat lines are emitted
+// while an LLM call is in flight.
+func (c *Client) HeartbeatInterval() time.Duration { return c.heartbeatInterval }
+
+// heartbeat emits a single "still waiting on LLM..." line per tick while an
+// LLM request is in flight. The goroutine exits within one tick of either the
+// done channel closing or the context being cancelled. When out is nil it
+// returns immediately, making it a no-op for tests and headless contexts.
+func (c *Client) heartbeat(ctx context.Context, done <-chan struct{}) {
+	if c.out == nil {
+		return
+	}
+	t := time.NewTicker(c.heartbeatInterval)
+	defer t.Stop()
+	start := time.Now()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fmt.Fprintf(c.out, "still waiting on LLM... (%ds elapsed, model=%s)\n",
+				int(time.Since(start).Seconds()), c.model)
+		}
 	}
 }
 
@@ -194,7 +267,7 @@ Rules (STRICTLY enforce):
 - When "Existing scopes" are provided, treat them as historical context for naming conventions only — do NOT blindly preserve them. Drop any existing scope that violates the rules above`
 
 // callLLM sends a chat completion request with retry logic for transient failures and empty responses.
-func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int) (string, error) {
+func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, maxTokensCeiling int) (string, error) {
 	const maxAttempts = 3
 
 	msgs := []goopenai.ChatCompletionMessage{
@@ -216,8 +289,27 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		resp, err := c.inner.CreateChatCompletion(ctx, req)
+		attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+		done := make(chan struct{})
+		go c.heartbeat(attemptCtx, done)
+
+		resp, err := c.inner.CreateChatCompletion(attemptCtx, req)
+		close(done)
+		cancel()
+
 		if err != nil {
+			// Caller cancelled (SIGINT) — propagate without retry so the
+			// process exits promptly.
+			if stderrors.Is(ctx.Err(), context.Canceled) || stderrors.Is(err, context.Canceled) {
+				return "", err
+			}
+			// Per-attempt deadline elapsed: format an actionable message
+			// without leaking the raw sentinel, then continue retrying.
+			if stderrors.Is(err, context.DeadlineExceeded) {
+				lastErr = fmt.Errorf("request timed out after %s (model=%s, attempt=%d/%d)",
+					c.requestTimeout, c.model, attempt+1, maxAttempts)
+				continue
+			}
 			// Check for non-transient API errors that should not be retried.
 			if apiErr := classifyAPIError(err); apiErr != nil {
 				return "", apiErr
@@ -231,9 +323,16 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens int
 		// Empty: reasoning models may spend all tokens on chain-of-thought.
 		// Partial: output is likely truncated (e.g. incomplete JSON).
 		if len(resp.Choices) > 0 && resp.Choices[0].FinishReason == goopenai.FinishReasonLength {
-			req.MaxCompletionTokens *= 2
-			lastErr = fmt.Errorf("LLM exhausted token limit (model=%s, max_tokens=%d, attempt=%d/%d)",
-				c.model, req.MaxCompletionTokens/2, attempt+1, maxAttempts)
+			next := req.MaxCompletionTokens * 2
+			if next > maxTokensCeiling {
+				return "", &commit.PlannerBudgetExhaustedError{
+					Model:   c.model,
+					Ceiling: maxTokensCeiling,
+				}
+			}
+			req.MaxCompletionTokens = next
+			lastErr = fmt.Errorf("LLM exhausted token limit at %d (model=%s, attempt=%d/%d)",
+				req.MaxCompletionTokens/2, c.model, attempt+1, maxAttempts)
 			continue
 		}
 
@@ -360,7 +459,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 4096)
+		raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 4096, generateMaxTokensCeiling)
 		if err != nil {
 			return nil, err
 		}
@@ -417,7 +516,7 @@ func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.Comm
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
-	raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 8192)
+	raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 8192, planMaxTokensCeiling)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +557,7 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 		strings.Join(req.Files, "\n"),
 	)
 
-	raw, err := c.callLLM(ctx, detectTechSystemPrompt, userPrompt, 1024)
+	raw, err := c.callLLM(ctx, detectTechSystemPrompt, userPrompt, 1024, detectMaxTokensCeiling)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +587,7 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 		userPrompt += "\n\nExisting scopes:\n- " + cfg.FormatScopesForLLM()
 	}
 
-	raw, err := c.callLLM(ctx, generateScopesSystemPrompt, userPrompt, 8192)
+	raw, err := c.callLLM(ctx, generateScopesSystemPrompt, userPrompt, 8192, scopesMaxTokensCeiling)
 	if err != nil {
 		return nil, "", err
 	}

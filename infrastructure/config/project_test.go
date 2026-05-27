@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gitagenthq/git-agent/domain/project"
 	"github.com/gitagenthq/git-agent/infrastructure/config"
 )
 
@@ -115,6 +116,74 @@ func TestKeyRegistry_ModelCoAuthorDomains_AllScopes(t *testing.T) {
 	if !def.AllowUser || !def.AllowProject || !def.AllowLocal {
 		t.Errorf("expected all three scopes allowed, got user=%v project=%v local=%v",
 			def.AllowUser, def.AllowProject, def.AllowLocal)
+	}
+}
+
+func TestLoadProjectConfig_PlanFallback_Heuristic(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "plan_fallback: heuristic\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config when plan_fallback is set")
+	}
+	if cfg.PlanFallback != "heuristic" {
+		t.Errorf("expected PlanFallback %q, got %q", "heuristic", cfg.PlanFallback)
+	}
+}
+
+func TestLoadProjectConfig_PlanFallback_None(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "plan_fallback: none\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config when plan_fallback is set")
+	}
+	if cfg.PlanFallback != "none" {
+		t.Errorf("expected PlanFallback %q, got %q", "none", cfg.PlanFallback)
+	}
+}
+
+func TestLoadProjectConfig_PlanFallback_AbsentIsZero(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "scopes:\n  - app\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.PlanFallback != "" {
+		t.Errorf("expected empty PlanFallback when absent, got %q", cfg.PlanFallback)
+	}
+}
+
+func TestLoadProjectConfig_PlanFallback_LocalOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "plan_fallback: none\n")
+	if err := os.WriteFile(
+		filepath.Join(dir, ".git-agent", "config.local.yml"),
+		[]byte("plan_fallback: heuristic\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write local: %v", err)
+	}
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.PlanFallback != "heuristic" {
+		t.Errorf("expected local override 'heuristic', got %q", cfg.PlanFallback)
+	}
+}
+
+func TestProjectConfig_PlanFallbackConstants(t *testing.T) {
+	if project.PlanFallbackNone != "none" {
+		t.Errorf("expected PlanFallbackNone %q, got %q", "none", project.PlanFallbackNone)
+	}
+	if project.PlanFallbackHeuristic != "heuristic" {
+		t.Errorf("expected PlanFallbackHeuristic %q, got %q", "heuristic", project.PlanFallbackHeuristic)
 	}
 }
 

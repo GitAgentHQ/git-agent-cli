@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gitagenthq/git-agent/infrastructure/config"
 )
@@ -146,5 +147,133 @@ func TestResolve_FlagBaseURLOverridesFile(t *testing.T) {
 	}
 	if got.BaseURL != "https://custom.api.com/v1" {
 		t.Errorf("expected BaseURL %q, got %q", "https://custom.api.com/v1", got.BaseURL)
+	}
+}
+
+func TestKeyRegistry_RequestTimeout_UserScopeOnly(t *testing.T) {
+	def, ok := config.KeyRegistry["request_timeout"]
+	if !ok {
+		t.Fatal("expected request_timeout in KeyRegistry")
+	}
+	if def.Type != "duration" {
+		t.Errorf("expected duration type, got %q", def.Type)
+	}
+	if !def.AllowUser {
+		t.Errorf("expected AllowUser=true")
+	}
+	if def.AllowProject || def.AllowLocal {
+		t.Errorf("expected user-scope only, got project=%v local=%v", def.AllowProject, def.AllowLocal)
+	}
+}
+
+func TestKeyRegistry_HeartbeatInterval_UserScopeOnly(t *testing.T) {
+	def, ok := config.KeyRegistry["heartbeat_interval"]
+	if !ok {
+		t.Fatal("expected heartbeat_interval in KeyRegistry")
+	}
+	if def.Type != "duration" {
+		t.Errorf("expected duration type, got %q", def.Type)
+	}
+	if !def.AllowUser {
+		t.Errorf("expected AllowUser=true")
+	}
+	if def.AllowProject || def.AllowLocal {
+		t.Errorf("expected user-scope only, got project=%v local=%v", def.AllowProject, def.AllowLocal)
+	}
+}
+
+func TestKeyRegistry_PlanFallback_ProjectAndLocal(t *testing.T) {
+	def, ok := config.KeyRegistry["plan_fallback"]
+	if !ok {
+		t.Fatal("expected plan_fallback in KeyRegistry")
+	}
+	if def.Type != "string" {
+		t.Errorf("expected string type, got %q", def.Type)
+	}
+	if !def.AllowProject || !def.AllowLocal {
+		t.Errorf("expected project+local scopes, got project=%v local=%v", def.AllowProject, def.AllowLocal)
+	}
+}
+
+func TestResolveKey_NewKebabAliases(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"request-timeout", "request_timeout"},
+		{"heartbeat-interval", "heartbeat_interval"},
+		{"plan-fallback", "plan_fallback"},
+	}
+	for _, tc := range cases {
+		got, err := config.ResolveKey(tc.in)
+		if err != nil {
+			t.Errorf("ResolveKey(%q) failed: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ResolveKey(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestResolve_RequestTimeoutAndHeartbeatFromFile(t *testing.T) {
+	path := writeTempConfig(t, "api_key: \"k\"\nrequest_timeout: \"45s\"\nheartbeat_interval: \"7s\"\n")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.RequestTimeout != 45*time.Second {
+		t.Errorf("expected RequestTimeout 45s, got %v", got.RequestTimeout)
+	}
+	if got.HeartbeatInterval != 7*time.Second {
+		t.Errorf("expected HeartbeatInterval 7s, got %v", got.HeartbeatInterval)
+	}
+}
+
+func TestResolve_RequestTimeoutAndHeartbeatDefaults(t *testing.T) {
+	path := writeTempConfig(t, "api_key: \"k\"\n")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.RequestTimeout != config.DefaultRequestTimeout {
+		t.Errorf("expected RequestTimeout default %v, got %v", config.DefaultRequestTimeout, got.RequestTimeout)
+	}
+	if got.HeartbeatInterval != config.DefaultHeartbeatInterval {
+		t.Errorf("expected HeartbeatInterval default %v, got %v", config.DefaultHeartbeatInterval, got.HeartbeatInterval)
+	}
+}
+
+func TestResolve_FlagOverridesFileForTimeoutAndHeartbeat(t *testing.T) {
+	path := writeTempConfig(t, "api_key: \"k\"\nrequest_timeout: \"45s\"\nheartbeat_interval: \"7s\"\n")
+
+	flags := config.ProviderConfig{
+		RequestTimeout:    120 * time.Second,
+		HeartbeatInterval: 30 * time.Second,
+	}
+	got, err := config.Resolve(context.Background(), flags, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.RequestTimeout != 120*time.Second {
+		t.Errorf("expected RequestTimeout 120s (flag), got %v", got.RequestTimeout)
+	}
+	if got.HeartbeatInterval != 30*time.Second {
+		t.Errorf("expected HeartbeatInterval 30s (flag), got %v", got.HeartbeatInterval)
+	}
+}
+
+func TestResolve_DefaultsWhenZeroConfig(t *testing.T) {
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.RequestTimeout != config.DefaultRequestTimeout {
+		t.Errorf("expected RequestTimeout default %v, got %v", config.DefaultRequestTimeout, got.RequestTimeout)
+	}
+	if got.HeartbeatInterval != config.DefaultHeartbeatInterval {
+		t.Errorf("expected HeartbeatInterval default %v, got %v", config.DefaultHeartbeatInterval, got.HeartbeatInterval)
 	}
 }

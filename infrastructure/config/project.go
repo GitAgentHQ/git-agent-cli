@@ -60,6 +60,7 @@ type rawProjectConfig struct {
 	HookTypeLegacy       string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
 	MaxDiffLines         *int       `yaml:"max_diff_lines,omitempty"`
 	MaxDiffBytes         *int       `yaml:"max_diff_bytes,omitempty"`
+	PlanFallback         string     `yaml:"plan_fallback,omitempty"`
 	NoGitAgentCoAuthor   *bool      `yaml:"no_git_agent_co_author,omitempty"`
 	NoModelCoAuthor      *bool      `yaml:"no_model_co_author,omitempty"`
 	RequireModelCoAuthor *bool      `yaml:"require_model_co_author,omitempty"`
@@ -120,6 +121,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.MaxDiffBytes != nil {
 		merged.MaxDiffBytes = local.MaxDiffBytes
 	}
+	if local.PlanFallback != "" {
+		merged.PlanFallback = local.PlanFallback
+	}
 	if local.NoGitAgentCoAuthor != nil {
 		merged.NoGitAgentCoAuthor = local.NoGitAgentCoAuthor
 	}
@@ -134,8 +138,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
-		merged.MaxDiffBytes == nil && merged.NoGitAgentCoAuthor == nil && merged.NoModelCoAuthor == nil &&
-		merged.RequireModelCoAuthor == nil && len(merged.ModelCoAuthorDomains) == 0 {
+		merged.MaxDiffBytes == nil && merged.PlanFallback == "" && merged.NoGitAgentCoAuthor == nil &&
+		merged.NoModelCoAuthor == nil && merged.RequireModelCoAuthor == nil &&
+		len(merged.ModelCoAuthorDomains) == 0 {
 		return nil
 	}
 
@@ -145,8 +150,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 
 	cfg := &project.Config{
-		Scopes: scopes,
-		Hooks:  merged.Hooks,
+		Scopes:       scopes,
+		Hooks:        merged.Hooks,
+		PlanFallback: merged.PlanFallback,
 	}
 	if merged.MaxDiffLines != nil {
 		cfg.MaxDiffLines = *merged.MaxDiffLines
