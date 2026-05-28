@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	goopenai "github.com/sashabaranov/go-openai"
@@ -291,10 +292,16 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 		done := make(chan struct{})
-		go c.heartbeat(attemptCtx, done)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.heartbeat(attemptCtx, done)
+		}()
 
 		resp, err := c.inner.CreateChatCompletion(attemptCtx, req)
 		close(done)
+		wg.Wait()
 		cancel()
 
 		if err != nil {
