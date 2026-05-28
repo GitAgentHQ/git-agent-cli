@@ -127,7 +127,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Phase output ("planning commits...", "commit N/M: drafting message")
+	// Phase output ("Planning commits...", "Drafting message: N/M...")
 	// is shown when a human is watching the terminal or --verbose is set.
 	// When stderr is redirected — agent subprocesses, CI runners, pipelines
 	// — those lines are noise that pollutes captured logs and confuses
