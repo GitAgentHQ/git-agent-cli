@@ -501,7 +501,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
 			if attempt == 1 {
-				s.out(req, "Drafting message: %d/%d", groupIdx, totalGroups)
+				s.out(req, "Drafting message: %d/%d...", groupIdx, totalGroups)
 			}
 
 			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{

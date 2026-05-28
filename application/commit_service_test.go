@@ -855,8 +855,8 @@ func TestCommitService_AlwaysOnPhaseLines(t *testing.T) {
 		for _, want := range []string{
 			"Planning commits...",
 			"Planning commits: 2/2, done.",
-			"Drafting message: 1/2",
-			"Drafting message: 2/2",
+			"Drafting message: 1/2...",
+			"Drafting message: 2/2...",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("always-on stderr missing %q\ngot:\n%s", want, got)
