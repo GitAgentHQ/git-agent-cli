@@ -63,12 +63,12 @@ type mockCommitGitClient struct {
 	amendCalled           bool
 	amendMessage          string
 	amendErr              error
-	// Per-test overrides for the DIFF-SYNOPSIS fallback path. When stagedDiffStat
+	// Per-test overrides for the DIFF-SYNOPSIS fallback path. When stagedDiffNumStat
 	// is non-nil it is invoked instead of returning the default ("", nil); tests
 	// that exercise REQ-007 use this to supply canned stat output and count
 	// invocations.
-	stagedDiffStat      func(ctx context.Context) (string, error)
-	stagedDiffStatCalls int
+	stagedDiffNumStat      func(ctx context.Context) (string, error)
+	stagedDiffNumStatCalls int
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -83,10 +83,10 @@ func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, e
 	return m.stagedDiff, m.stagedErr
 }
 
-func (m *mockCommitGitClient) StagedDiffStat(ctx context.Context) (string, error) {
-	m.stagedDiffStatCalls++
-	if m.stagedDiffStat != nil {
-		return m.stagedDiffStat(ctx)
+func (m *mockCommitGitClient) StagedDiffNumStat(ctx context.Context) (string, error) {
+	m.stagedDiffNumStatCalls++
+	if m.stagedDiffNumStat != nil {
+		return m.stagedDiffNumStat(ctx)
 	}
 	return "", nil
 }
@@ -1077,7 +1077,7 @@ func TestCommitService_SynopsisFallbackOneFile(t *testing.T) {
 	const maxBytes = 393216
 	const actualBytes = 1048576
 	huge := strings.Repeat("x", actualBytes)
-	statLine := " vendored/bundle.min.js | 12345 +++++++++++++++++++++++++++++++++++"
+	statLine := "12345\t0\tvendored/bundle.min.js"
 
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
@@ -1086,7 +1086,7 @@ func TestCommitService_SynopsisFallbackOneFile(t *testing.T) {
 			{Files: []string{"vendored/bundle.min.js"}, Content: huge, Lines: 1}, // per-group execution
 		},
 		allChangedFiles: []string{"vendored/bundle.min.js"},
-		stagedDiffStat: func(_ context.Context) (string, error) {
+		stagedDiffNumStat: func(_ context.Context) (string, error) {
 			return statLine, nil
 		},
 	}
@@ -1140,7 +1140,7 @@ func TestCommitService_SynopsisFallbackOneFile(t *testing.T) {
 
 // TestCommitService_TruncatorPathMultiFile asserts the synopsis is NOT used
 // when the saturated diff spans more than one file: the truncator path stays
-// in force and StagedDiffStat is not called for that group.
+// in force and StagedDiffNumStat is not called for that group.
 func TestCommitService_TruncatorPathMultiFile(t *testing.T) {
 	const maxBytes = 393216
 	const totalBytes = 500000
@@ -1180,8 +1180,8 @@ func TestCommitService_TruncatorPathMultiFile(t *testing.T) {
 		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
 	}
 
-	if git.stagedDiffStatCalls != 0 {
-		t.Errorf("StagedDiffStat must not be called for multi-file groups, got %d calls", git.stagedDiffStatCalls)
+	if git.stagedDiffNumStatCalls != 0 {
+		t.Errorf("StagedDiffNumStat must not be called for multi-file groups, got %d calls", git.stagedDiffNumStatCalls)
 	}
 }
 

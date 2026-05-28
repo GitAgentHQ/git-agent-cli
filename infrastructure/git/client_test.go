@@ -84,7 +84,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestClient_StagedDiffStat(t *testing.T) {
+func TestClient_StagedDiffNumStat(t *testing.T) {
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q")
 	runGit(t, dir, "config", "user.email", "test@example.com")
@@ -115,20 +115,16 @@ func TestClient_StagedDiffStat(t *testing.T) {
 	}
 
 	c := NewClient()
-	got, err := c.StagedDiffStat(context.Background())
+	got, err := c.StagedDiffNumStat(context.Background())
 	if err != nil {
-		t.Fatalf("StagedDiffStat: %v", err)
+		t.Fatalf("StagedDiffNumStat: %v", err)
 	}
 	if !strings.Contains(got, "big.txt") {
 		t.Errorf("expected output to contain filename 'big.txt', got: %q", got)
 	}
-	if !strings.Contains(got, "+") {
-		t.Errorf("expected output to contain '+' insertion marker, got: %q", got)
-	}
-	// git diff --stat closes with a summary line like
-	// " 1 file changed, 65536 insertions(+)".
-	if !strings.Contains(got, "1 file changed,") {
-		t.Errorf("expected output to contain '1 file changed,' summary, got: %q", got)
+	// git diff --numstat outputs <adds>\t<dels>\t<path>
+	if !strings.Contains(got, "65536\t0\tbig.txt") {
+		t.Errorf("expected output to contain '65536\\t0\\tbig.txt', got: %q", got)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/commit"
@@ -46,7 +45,7 @@ type CommitResult struct {
 
 type CommitGitClient interface {
 	StagedDiff(ctx context.Context) (*diff.StagedDiff, error)
-	StagedDiffStat(ctx context.Context) (string, error)
+	StagedDiffNumStat(ctx context.Context) (string, error)
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	AllChangedFiles(ctx context.Context) ([]string, error)
 	StageFiles(ctx context.Context, files []string) error
@@ -132,7 +131,10 @@ func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq 
 	if !isPlannerFallbackError(err) {
 		return nil, err
 	}
-	if s.heuristicPlanner == nil || req.Config == nil || req.Config.PlanFallback == project.PlanFallbackNone {
+	if s.heuristicPlanner == nil {
+		return nil, err
+	}
+	if req.Config != nil && req.Config.PlanFallback == project.PlanFallbackNone {
 		return nil, err
 	}
 	s.out(req, "planner unavailable (%s) — falling back to directoryBucketer", plannerFallbackReason(err))
@@ -467,7 +469,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			// groupDiff.Content is untouched so the hook continues to see the
 			// full payload.
 			if didTruncate && len(genDiff.Files) == 1 && len(genDiff.Content) == maxBytes {
-				stat, statErr := s.git.StagedDiffStat(ctx)
+				stat, statErr := s.git.StagedDiffNumStat(ctx)
 				if statErr == nil {
 					synopsis := buildSynopsis(genDiff.Files[0], stat, len(groupDiff.Content), maxBytes)
 					genDiff = &diff.StagedDiff{
@@ -750,66 +752,32 @@ func hasUnscopedGroups(plan *commit.CommitPlan) bool {
 
 // buildSynopsis renders the DIFF-SYNOPSIS block used when a single-file diff
 // saturates the byte cap. The stat-line is expected in the shape
-// " <path> | <total> +++--" produced by `git diff --staged --stat`; when the
+// "<adds>\t<dels>\t<path>" produced by `git diff --staged --numstat`; when the
 // add/delete counters cannot be parsed they default to zero so the prompt
 // stays well-formed.
 func buildSynopsis(file, statLine string, actualBytes, capBytes int) string {
-	adds, dels := parseStatCounts(statLine, file)
+	adds, dels := parseNumStat(statLine, file)
 	return fmt.Sprintf(
 		"DIFF-SYNOPSIS\nfile: %s\nchanges: +%d / -%d (stat)\nnote: full diff elided (%d bytes exceeded %d-byte cap)\n",
 		file, adds, dels, actualBytes, capBytes,
 	)
 }
 
-// parseStatCounts extracts the `+adds` / `-dels` counts from a single
-// `git diff --staged --stat` line whose path matches file. Lines have the
-// shape " path | N <markers>" where markers is a mix of `+` and `-` runes;
-// when the markers are absent (large diffs collapse the counter row to a
-// total) the counter `N` is split proportionally between adds and dels.
-func parseStatCounts(statLine, file string) (adds, dels int) {
-	for _, raw := range strings.Split(statLine, "\n") {
+// parseNumStat extracts the `+adds` / `-dels` counts from a single
+// `git diff --staged --numstat` line whose path matches file. Lines have the
+// shape "<adds>\t<dels>\t<path>". Binary files report "-" for counts.
+func parseNumStat(numstat, file string) (adds, dels int) {
+	for _, raw := range strings.Split(numstat, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
-		barIdx := strings.Index(line, "|")
-		if barIdx < 0 {
-			continue
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[2] == file {
+			fmt.Sscanf(fields[0], "%d", &adds)
+			fmt.Sscanf(fields[1], "%d", &dels)
+			return adds, dels
 		}
-		path := strings.TrimSpace(line[:barIdx])
-		if path != file {
-			continue
-		}
-		rest := strings.TrimSpace(line[barIdx+1:])
-		// rest is "<total> <markers>" or just "<total>" or "Bin ...".
-		fields := strings.Fields(rest)
-		if len(fields) == 0 {
-			return 0, 0
-		}
-		total, err := strconv.Atoi(fields[0])
-		if err != nil {
-			return 0, 0
-		}
-		if len(fields) < 2 {
-			return total, 0
-		}
-		marks := fields[1]
-		nAdd := strings.Count(marks, "+")
-		nDel := strings.Count(marks, "-")
-		if nAdd == 0 && nDel == 0 {
-			return total, 0
-		}
-		if nDel == 0 {
-			return total, 0
-		}
-		if nAdd == 0 {
-			return 0, total
-		}
-		// git's stat line shows marker counts proportional to the total,
-		// so allocate the total across the +/- ratio.
-		adds = total * nAdd / (nAdd + nDel)
-		dels = total - adds
-		return adds, dels
 	}
 	return 0, 0
 }
