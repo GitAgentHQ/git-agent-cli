@@ -251,14 +251,14 @@ func RenderCommitError(w io.Writer, err error) error {
 		var hbe *application.HookBlockedError
 		if errors.As(err, &hbe) {
 			if hbe.Reason != "" {
-				fmt.Fprintf(w, "\nhook rejected: %s\n", hbe.Reason)
+				fmt.Fprintf(w, "\nreason: %s\n", hbe.Reason)
 			}
 			if hbe.LastMessage != "" {
 				fmt.Fprintf(w, "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
 			}
 		}
-		fmt.Fprintf(w, "hint: use --intent \"<description>\" to guide the next attempt\n\n")
-		return agentErrors.NewExitCodeError(2, "error: commit blocked after retries")
+		fmt.Fprintf(w, "hint: use --intent \"<description>\" to guide the LLM on the next attempt\n\n")
+		return agentErrors.NewExitCodeError(2, "error: commit message rejected by hook")
 	}
 	return err
 }
