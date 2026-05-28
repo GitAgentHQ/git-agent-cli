@@ -43,9 +43,15 @@ type Config struct {
 }
 
 // PlanFallback values accepted by Config.PlanFallback.
+//
+// Default (empty string) behaves as PlanFallbackAuto: the application falls
+// back to the heuristic planner when the LLM planner reports budget
+// exhaustion or per-attempt timeout. Set PlanFallbackNone explicitly to opt
+// out and surface those errors instead.
 const (
 	PlanFallbackNone      = "none"
 	PlanFallbackHeuristic = "heuristic"
+	PlanFallbackAuto      = "auto"
 )
 
 // DefaultModelCoAuthorDomains is the built-in allow-list of email domains
