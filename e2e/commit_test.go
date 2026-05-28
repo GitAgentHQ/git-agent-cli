@@ -288,7 +288,7 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	// Non-TTY subprocess stderr: the hotfix routes always-on phase output to
 	// io.Discard equivalent (nil writer), so the e2e subprocess sees an
 	// empty phase stream regardless of how many groups the planner produces.
-	phaseRe := regexp.MustCompile(`(?m)^(Planning commits\.\.\.|Planning commits: \d+/\d+, done\.|Drafting message: \d+/\d+.*)$`)
+	phaseRe := regexp.MustCompile(`(?m)^(Planning commits\.\.\.|Planning commits: done \(\d+ commits?\)\.|Drafting message: \d+/\d+.*)$`)
 	phaseLines := phaseRe.FindAllString(stderrStr, -1)
 	if len(phaseLines) != 0 {
 		t.Errorf("expected zero always-on phase lines on non-TTY stderr, got %d:\n%v\nfull stderr:\n%s",
