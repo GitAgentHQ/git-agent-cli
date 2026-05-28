@@ -137,7 +137,7 @@ func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq 
 	if req.Config != nil && req.Config.PlanFallback == project.PlanFallbackNone {
 		return nil, err
 	}
-	s.out(req, "Warning: planner unavailable (%s), falling back to directoryBucketer", plannerFallbackReason(err))
+	s.out(req, "Warning: LLM planner unavailable (%s), falling back to directory bucketer", plannerFallbackReason(err))
 	return s.heuristicPlanner.Plan(ctx, planReq)
 }
 
@@ -299,10 +299,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 	// MaxDiffLines, MaxDiffBytes, and co-author policy survive the refresh.
 	if len(req.Config.Scopes) == 0 {
 		if s.scopeSvc != nil {
-			s.out(req, "Auto-generating scopes...")
+			s.out(req, "Generating scopes...")
 			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
 			if err != nil {
-				s.out(req, "Warning: scope generation failed (continuing without scopes): %v", err)
+				s.out(req, "Warning: failed to generate scopes, continuing without scopes (%v)", err)
 			} else {
 				configPath := req.ProjectConfigPath
 				if configPath == "" {
@@ -348,14 +348,14 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
 		}
 		if len(plan.Groups) > maxCommitGroups {
-			s.out(req, "Warning: plan has %d groups, capping to %d", len(plan.Groups), maxCommitGroups)
+			s.out(req, "Warning: commit plan exceeds group limit (%d > %d), capping", len(plan.Groups), maxCommitGroups)
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
 		appendPassthroughFiles(plan, allowed)
 
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
-			s.out(req, "Refreshing project scopes...")
+			s.out(req, "Refreshing scopes...")
 			newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
 			if err != nil {
 				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
@@ -368,7 +368,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
 				req.Config.Scopes = newScopes
-				s.out(req, "Updated scopes: %v, re-planning...", req.Config.ScopeNames())
+				s.out(req, "Scopes updated: %v, re-planning...", req.Config.ScopeNames())
 				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
 					StagedDiff:   staged,
 					UnstagedDiff: unstaged,
@@ -477,13 +477,13 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 						Content: synopsis,
 						Lines:   strings.Count(synopsis, "\n"),
 					}
-					s.out(req, "Warning: commit %d/%d: DIFF-SYNOPSIS fallback (%s)", groupIdx, totalGroups, genDiff.Files[0])
+					s.out(req, "Warning: commit %d/%d: falling back to diff synopsis for %s", groupIdx, totalGroups, genDiff.Files[0])
 				} else {
 					s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
-					s.out(req, "Warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
+					s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
 				}
 			} else if didTruncate {
-				s.out(req, "Warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
+				s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
 			}
 		}
 

@@ -1124,7 +1124,7 @@ func TestCommitService_SynopsisFallbackOneFile(t *testing.T) {
 		t.Errorf("synopsis is %d bytes, expected under 4096", len(content))
 	}
 
-	wantPhase := "commit 1/1: DIFF-SYNOPSIS fallback (vendored/bundle.min.js)"
+	wantPhase := "Warning: commit 1/1: falling back to diff synopsis for vendored/bundle.min.js"
 	if !strings.Contains(out.String(), wantPhase) {
 		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
 	}
@@ -1175,7 +1175,7 @@ func TestCommitService_TruncatorPathMultiFile(t *testing.T) {
 		t.Error("multi-file path must NOT emit DIFF-SYNOPSIS")
 	}
 
-	wantPhase := fmt.Sprintf("commit 1/1: truncating group diff (%d bytes)", maxBytes)
+	wantPhase := fmt.Sprintf("Warning: commit 1/1: diff exceeds limit, truncating to %d bytes", maxBytes)
 	if !strings.Contains(out.String(), wantPhase) {
 		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
 	}
@@ -1241,8 +1241,8 @@ func TestCommitService_HeuristicFallback_OptIn(t *testing.T) {
 			if len(result.Commits) != 2 {
 				t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
 			}
-			if !strings.Contains(out.String(), "Warning: planner unavailable (budget exhausted), falling back to directoryBucketer") {
-				t.Errorf("phase output missing \"Warning: planner unavailable (budget exhausted), falling back to directoryBucketer\"\ngot:\n%s", out.String())
+			if !strings.Contains(out.String(), "Warning: LLM planner unavailable (budget exhausted), falling back to directory bucketer") {
+				t.Errorf("phase output missing \"Warning: LLM planner unavailable (budget exhausted), falling back to directory bucketer\"\ngot:\n%s", out.String())
 			}
 		})
 	}
@@ -1311,8 +1311,8 @@ func TestCommitService_AutoFallbackOnTimeout(t *testing.T) {
 	if len(result.Commits) != 2 {
 		t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
 	}
-	if !strings.Contains(out.String(), "Warning: planner unavailable (timed out), falling back to directoryBucketer") {
-		t.Errorf("phase output missing \"Warning: planner unavailable (timed out), falling back to directoryBucketer\"\ngot:\n%s", out.String())
+	if !strings.Contains(out.String(), "Warning: LLM planner unavailable (timed out), falling back to directory bucketer") {
+		t.Errorf("phase output missing \"Warning: LLM planner unavailable (timed out), falling back to directory bucketer\"\ngot:\n%s", out.String())
 	}
 }
 
