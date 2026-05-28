@@ -1,4 +1,0 @@
-zsh:1: command not found: golangci-lint
-# github.com/gitagenthq/git-agent
-# [github.com/gitagenthq/git-agent]
-vet: ./test_sort.go:13:6: main redeclared in this block
