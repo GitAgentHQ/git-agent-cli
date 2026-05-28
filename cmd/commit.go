@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
@@ -19,6 +21,14 @@ import (
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
+
+// stderrIsTerminal reports whether os.Stderr is connected to an interactive
+// terminal. Agents, pipes, and CI runners get false and therefore receive no
+// phase / heartbeat output unless --verbose is set. golang.org/x/term abstracts
+// over the platform-specific ioctl so this works on macOS, Linux, and Windows.
+var stderrIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stderr.Fd()))
+}
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
@@ -117,7 +127,18 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, cmd.ErrOrStderr())
+	// Always-on phase output and the LLM heartbeat only make sense when a
+	// human is watching the terminal. When stderr is redirected — agent
+	// subprocesses, CI runners, pipelines — those lines are noise that
+	// pollutes captured logs and confuses downstream parsers. --verbose
+	// remains the explicit override for users who want the chatter back on
+	// non-TTY paths (e.g. while debugging an agent harness).
+	var outWriter io.Writer
+	if verbose || stderrIsTerminal() {
+		outWriter = cmd.ErrOrStderr()
+	}
+
+	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, outWriter)
 
 	var logWriter io.Writer
 	if verbose {
@@ -151,7 +172,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		MaxBytes:          maxDiffBytes,
 		Verbose:           verbose,
 		LogWriter:         logWriter,
-		OutWriter:         cmd.ErrOrStderr(),
+		OutWriter:         outWriter,
 		ProjectConfigPath: projCfgPath,
 	})
 	if err != nil {
@@ -196,6 +217,15 @@ func runCommit(cmd *cobra.Command, args []string) error {
 // needs the live cobra context; everything else routes through here so the
 // rendering logic is testable in isolation.
 func RenderCommitError(w io.Writer, err error) error {
+	var timeoutErr *commit.PlannerTimedOutError
+	if errors.As(err, &timeoutErr) {
+		fmt.Fprintf(w,
+			"error: LLM planner timed out (model=%s, after %s); "+
+				"try a more capable model, raise --request-timeout, "+
+				"narrow scope with --intent, or split with --max-diff-lines / smaller batches\n",
+			timeoutErr.Model, timeoutErr.Timeout)
+		return agentErrors.NewExitCodeError(1, "")
+	}
 	var budgetErr *commit.PlannerBudgetExhaustedError
 	if errors.As(err, &budgetErr) {
 		fmt.Fprintf(w,
@@ -246,8 +276,12 @@ func buildCommitDeps(
 		scopeSvc = application.NewScopeService(llmClient, gitClient)
 	}
 
+	// Heuristic planner is wired unless the project explicitly opts out via
+	// plan_fallback=none. The application layer guards the fallback path on
+	// the same config — the bucketer is always available as a collaborator,
+	// and the policy decision lives in one place (CommitService.runPlan).
 	var heuristicPlanner commit.HeuristicPlanner
-	if projCfg != nil && projCfg.PlanFallback == project.PlanFallbackHeuristic {
+	if projCfg == nil || projCfg.PlanFallback != project.PlanFallbackNone {
 		heuristicPlanner = application.NewDirectoryBucketer()
 	}
 

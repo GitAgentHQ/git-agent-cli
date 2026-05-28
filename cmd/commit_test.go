@@ -121,10 +121,75 @@ func TestCommit_WiresConfigToConstructors(t *testing.T) {
 		t.Errorf("plan_fallback=heuristic must produce a non-nil heuristicPlanner on the service")
 	}
 
+	// Hotfix: the heuristic planner is now the default. Empty config and
+	// nil config both wire the bucketer; only plan_fallback=none opts out.
+	for _, tc := range []struct {
+		name string
+		cfg  *project.Config
+	}{
+		{name: "empty_config", cfg: &project.Config{}},
+		{name: "nil_config", cfg: nil},
+		{name: "explicit_auto", cfg: &project.Config{PlanFallback: project.PlanFallbackAuto}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, svc := cmd.BuildCommitDepsForTest(resolved, tc.cfg)
+			if cmd.CommitServiceHeuristicPlannerForTest(svc) == nil {
+				t.Errorf("default fallback must produce a non-nil heuristicPlanner on the service")
+			}
+		})
+	}
+
 	noneCfg := &project.Config{PlanFallback: project.PlanFallbackNone}
 	_, svcN := cmd.BuildCommitDepsForTest(resolved, noneCfg)
 	if cmd.CommitServiceHeuristicPlannerForTest(svcN) != nil {
 		t.Errorf("plan_fallback=none must leave heuristicPlanner nil on the service")
+	}
+}
+
+// TestCommit_RenderTimedOut covers the hotfix render path: when the
+// application surfaces a wrapped *commit.PlannerTimedOutError, the cmd
+// layer renders an actionable diagnostic that names the model, the elapsed
+// timeout, and at least two concrete remediations, then exits with code 1.
+func TestCommit_RenderTimedOut(t *testing.T) {
+	var stderr bytes.Buffer
+	err := fmt.Errorf("plan: %w", &commit.PlannerTimedOutError{
+		Model:   "qwen3.6-flash",
+		Timeout: 90 * time.Second,
+	})
+
+	rendered := cmd.RenderCommitError(&stderr, err)
+
+	stderrStr := stderr.String()
+	if !strings.Contains(stderrStr, "model=qwen3.6-flash") {
+		t.Errorf("stderr missing model identity, got: %q", stderrStr)
+	}
+	if !strings.Contains(stderrStr, "after 1m30s") {
+		t.Errorf("stderr missing elapsed timeout '1m30s', got: %q", stderrStr)
+	}
+	remediations := []string{
+		"--max-diff-lines",
+		"--request-timeout",
+		"--intent",
+		"try a more capable model",
+		"smaller batches",
+	}
+	hits := 0
+	for _, r := range remediations {
+		if strings.Contains(stderrStr, r) {
+			hits++
+		}
+	}
+	if hits < 2 {
+		t.Errorf("expected at least 2 of %v in stderr, got %d hits in: %q",
+			remediations, hits, stderrStr)
+	}
+
+	var exitErr *agentErrors.ExitCodeError
+	if !errors.As(rendered, &exitErr) {
+		t.Fatalf("expected *agentErrors.ExitCodeError, got %T: %v", rendered, rendered)
+	}
+	if exitErr.Code != 1 {
+		t.Errorf("expected exit code 1, got %d", exitErr.Code)
 	}
 }
 
