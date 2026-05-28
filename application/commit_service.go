@@ -114,22 +114,49 @@ func (s *CommitService) HeuristicPlanner() commit.HeuristicPlanner {
 	return s.heuristicPlanner
 }
 
-// runPlan invokes the configured planner and, on REQ-008 budget exhaustion,
-// falls back to the heuristic planner when the project has opted in via
-// plan_fallback=heuristic. Other plan errors propagate unchanged.
+// runPlan invokes the configured planner and, when the LLM planner cannot
+// produce a plan (budget exhausted OR per-attempt timeout), falls back to the
+// heuristic planner unless the project has explicitly opted out via
+// plan_fallback=none. Other plan errors propagate unchanged.
+//
+// Default (PlanFallback unset, empty string, or "auto"): fallback enabled.
+// Default exists because the LLM planner is the dominant failure mode for
+// large diffs and agent-driven workflows; surfacing a hard error there
+// wastes the agent's time on a path the heuristic bucketer can handle
+// deterministically.
 func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq commit.PlanRequest) (*commit.CommitPlan, error) {
 	plan, err := s.planner.Plan(ctx, planReq)
 	if err == nil {
 		return plan, nil
 	}
-	if !errors.Is(err, commit.ErrPlannerBudgetExhausted) {
+	if !isPlannerFallbackError(err) {
 		return nil, err
 	}
-	if s.heuristicPlanner == nil || req.Config == nil || req.Config.PlanFallback != project.PlanFallbackHeuristic {
+	if s.heuristicPlanner == nil || req.Config == nil || req.Config.PlanFallback == project.PlanFallbackNone {
 		return nil, err
 	}
-	s.out(req, "planner exhausted budget — falling back to directoryBucketer")
+	s.out(req, "planner unavailable (%s) — falling back to directoryBucketer", plannerFallbackReason(err))
 	return s.heuristicPlanner.Plan(ctx, planReq)
+}
+
+// isPlannerFallbackError reports whether err is one of the LLM-planner
+// failures the heuristic bucketer can substitute for.
+func isPlannerFallbackError(err error) bool {
+	return errors.Is(err, commit.ErrPlannerBudgetExhausted) ||
+		errors.Is(err, commit.ErrPlannerTimedOut)
+}
+
+// plannerFallbackReason renders a short tag identifying which planner failure
+// triggered the fallback, for the always-on phase line.
+func plannerFallbackReason(err error) string {
+	switch {
+	case errors.Is(err, commit.ErrPlannerTimedOut):
+		return "timed out"
+	case errors.Is(err, commit.ErrPlannerBudgetExhausted):
+		return "budget exhausted"
+	default:
+		return "error"
+	}
 }
 
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {

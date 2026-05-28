@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gitagenthq/git-agent/application"
@@ -808,48 +809,86 @@ func TestCommitService_SkipsGroupWithEmptyDiff(t *testing.T) {
 	}
 }
 
+// TestCommitService_AlwaysOnPhaseLines covers both halves of the hotfix
+// contract for OutWriter:
+//
+//  1. With a non-nil writer (interactive terminal or --verbose), phase lines
+//     are emitted and never leak diff content into the always-on stream.
+//  2. With a nil writer (the post-hotfix non-TTY default that the cmd layer
+//     passes), no phase line reaches stderr at all — agent / pipe consumers
+//     get a quiet stream unless they opt in.
 func TestCommitService_AlwaysOnPhaseLines(t *testing.T) {
-	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{
-		stagedDiffSeq: []*diff.StagedDiff{
-			{}, // pre-staged check: nothing pre-staged
-			{Files: []string{"a.go"}, Content: "+a // sentinel-diff-content", Lines: 1}, // group 1
-			{Files: []string{"b.go"}, Content: "+b // sentinel-diff-content", Lines: 1}, // group 2
-		},
-		allChangedFiles: []string{"a.go", "b.go"},
-	}
-	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
-		Groups: []commit.CommitGroup{
-			{Files: []string{"a.go"}},
-			{Files: []string{"b.go"}},
-		},
-	}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
-
-	var out bytes.Buffer
-	req := application.CommitRequest{
-		Config:    &project.Config{},
-		Verbose:   false,
-		OutWriter: &out,
-	}
-	if _, err := svc.Commit(context.Background(), req); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	got := out.String()
-	for _, want := range []string{
-		"planning commits...",
-		"planned 2 commit(s)",
-		"commit 1/2: drafting message (attempt 1/3)",
-		"commit 2/2: drafting message (attempt 1/3)",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("always-on stderr missing %q\ngot:\n%s", want, got)
+	build := func() (*mockCommitGenerator, *mockCommitGitClient, *mockCommitPlanner) {
+		gen := &mockCommitGenerator{msg: defaultMsg()}
+		git := &mockCommitGitClient{
+			stagedDiffSeq: []*diff.StagedDiff{
+				{}, // pre-staged check: nothing pre-staged
+				{Files: []string{"a.go"}, Content: "+a // sentinel-diff-content", Lines: 1}, // group 1
+				{Files: []string{"b.go"}, Content: "+b // sentinel-diff-content", Lines: 1}, // group 2
+			},
+			allChangedFiles: []string{"a.go", "b.go"},
 		}
+		planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+			Groups: []commit.CommitGroup{
+				{Files: []string{"a.go"}},
+				{Files: []string{"b.go"}},
+			},
+		}}
+		return gen, git, planner
 	}
-	if strings.Contains(got, "sentinel-diff-content") {
-		t.Errorf("always-on stderr leaked diff content:\n%s", got)
-	}
+
+	t.Run("non_nil_writer_emits_phase_lines", func(t *testing.T) {
+		gen, git, planner := build()
+		svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+		var out bytes.Buffer
+		req := application.CommitRequest{
+			Config:    &project.Config{},
+			Verbose:   false,
+			OutWriter: &out,
+		}
+		if _, err := svc.Commit(context.Background(), req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		got := out.String()
+		for _, want := range []string{
+			"planning commits...",
+			"planned 2 commit(s)",
+			"commit 1/2: drafting message (attempt 1/3)",
+			"commit 2/2: drafting message (attempt 1/3)",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("always-on stderr missing %q\ngot:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "sentinel-diff-content") {
+			t.Errorf("always-on stderr leaked diff content:\n%s", got)
+		}
+	})
+
+	t.Run("nil_writer_emits_nothing", func(t *testing.T) {
+		gen, git, planner := build()
+		svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+		// Nil OutWriter: the cmd layer passes nil on non-TTY paths so
+		// agents and pipes get a quiet stderr. The service must not panic
+		// AND must not attempt to write phase lines anywhere.
+		req := application.CommitRequest{
+			Config:    &project.Config{},
+			Verbose:   false,
+			OutWriter: nil,
+		}
+		if _, err := svc.Commit(context.Background(), req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Sanity: commit still happened. (Lack of panic above is the
+		// primary assertion; if s.out grew a regression that dereferenced
+		// nil, the run would already have failed.)
+		if !git.commitCalled {
+			t.Fatal("expected git.Commit to be called even with nil OutWriter")
+		}
+	})
 }
 
 // TestCommitService_PhaseLinesNoSecretLeakage locks in REQ-011 for the
@@ -1157,50 +1196,63 @@ func (s *spyHeuristicPlanner) Plan(_ context.Context, _ commit.PlanRequest) (*co
 	return s.plan, nil
 }
 
-// TestCommitService_HeuristicFallback_OptIn exercises REQ-008: when the LLM
-// planner returns ErrPlannerBudgetExhausted and PlanFallback=="heuristic",
-// the heuristic planner is invoked and the per-group loop proceeds as normal.
+// TestCommitService_HeuristicFallback_OptIn exercises the explicit opt-in:
+// when the LLM planner returns ErrPlannerBudgetExhausted and PlanFallback is
+// either "heuristic" (legacy keyword) OR unset (post-hotfix default), the
+// heuristic planner is invoked and the per-group loop proceeds as normal.
 func TestCommitService_HeuristicFallback_OptIn(t *testing.T) {
-	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{
-		stagedDiffSeq: []*diff.StagedDiff{
-			{}, // pre-staged check
-			{Files: []string{"cmd/a.go"}, Content: "+a", Lines: 1},
-			{Files: []string{"application/b.go"}, Content: "+b", Lines: 1},
-		},
-		allChangedFiles: []string{"cmd/a.go", "application/b.go"},
-	}
-	planner := &mockCommitPlanner{err: &commit.PlannerBudgetExhaustedError{Model: "test-model", Ceiling: 16384}}
-	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
-		{Files: []string{"cmd/a.go"}, Message: commit.CommitMessage{Title: "chore(cli): update cmd/"}},
-		{Files: []string{"application/b.go"}, Message: commit.CommitMessage{Title: "chore(app): update application/"}},
-	}}}
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
+	for _, tc := range []struct {
+		name     string
+		fallback string
+	}{
+		{name: "explicit_heuristic", fallback: project.PlanFallbackHeuristic},
+		{name: "default_empty", fallback: ""},
+		{name: "explicit_auto", fallback: project.PlanFallbackAuto},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gen := &mockCommitGenerator{msg: defaultMsg()}
+			git := &mockCommitGitClient{
+				stagedDiffSeq: []*diff.StagedDiff{
+					{}, // pre-staged check
+					{Files: []string{"cmd/a.go"}, Content: "+a", Lines: 1},
+					{Files: []string{"application/b.go"}, Content: "+b", Lines: 1},
+				},
+				allChangedFiles: []string{"cmd/a.go", "application/b.go"},
+			}
+			planner := &mockCommitPlanner{err: &commit.PlannerBudgetExhaustedError{Model: "test-model", Ceiling: 16384}}
+			heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
+				{Files: []string{"cmd/a.go"}, Message: commit.CommitMessage{Title: "chore(cli): update cmd/"}},
+				{Files: []string{"application/b.go"}, Message: commit.CommitMessage{Title: "chore(app): update application/"}},
+			}}}
+			svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
 
-	var out bytes.Buffer
-	req := application.CommitRequest{
-		Config:    &project.Config{PlanFallback: project.PlanFallbackHeuristic},
-		OutWriter: &out,
-	}
-	result, err := svc.Commit(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if heuristic.calls != 1 {
-		t.Errorf("expected heuristic planner called once, got %d", heuristic.calls)
-	}
-	if len(result.Commits) != 2 {
-		t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
-	}
-	wantPhase := "planner exhausted budget — falling back to directoryBucketer"
-	if !strings.Contains(out.String(), wantPhase) {
-		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+			var out bytes.Buffer
+			req := application.CommitRequest{
+				Config:    &project.Config{PlanFallback: tc.fallback},
+				OutWriter: &out,
+			}
+			result, err := svc.Commit(context.Background(), req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if heuristic.calls != 1 {
+				t.Errorf("expected heuristic planner called once, got %d", heuristic.calls)
+			}
+			if len(result.Commits) != 2 {
+				t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
+			}
+			wantPhase := "planner unavailable (budget exhausted) — falling back to directoryBucketer"
+			if !strings.Contains(out.String(), wantPhase) {
+				t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+			}
+		})
 	}
 }
 
-// TestCommitService_HeuristicFallback_OptOut exercises the default opt-out
-// behaviour: when PlanFallback is unset the budget-exhausted error propagates
-// unchanged and the heuristic planner is never consulted.
+// TestCommitService_HeuristicFallback_OptOut exercises the explicit opt-out:
+// when PlanFallback is "none" the budget-exhausted error propagates unchanged
+// and the heuristic planner is never consulted, preserving the loud-failure
+// path for advanced users.
 func TestCommitService_HeuristicFallback_OptOut(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
@@ -1211,15 +1263,83 @@ func TestCommitService_HeuristicFallback_OptOut(t *testing.T) {
 	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"cmd/a.go"}}}}}
 	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
 
-	req := application.CommitRequest{Config: &project.Config{}}
+	req := application.CommitRequest{Config: &project.Config{PlanFallback: project.PlanFallbackNone}}
 	_, err := svc.Commit(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected error to propagate when PlanFallback is unset")
+		t.Fatal("expected error to propagate when PlanFallback=none")
 	}
 	if heuristic.calls != 0 {
 		t.Errorf("expected heuristic planner NOT called, got %d", heuristic.calls)
 	}
 	if !errors.Is(err, commit.ErrPlannerBudgetExhausted) {
 		t.Errorf("expected wrapped ErrPlannerBudgetExhausted, got: %v", err)
+	}
+}
+
+// TestCommitService_AutoFallbackOnTimeout covers the hotfix: when the LLM
+// planner returns a *commit.PlannerTimedOutError, the default (or "auto")
+// fallback behaviour routes the request through the heuristic planner
+// instead of bubbling the timeout up.
+func TestCommitService_AutoFallbackOnTimeout(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // pre-staged check
+			{Files: []string{"cmd/a.go"}, Content: "+a", Lines: 1},
+			{Files: []string{"application/b.go"}, Content: "+b", Lines: 1},
+		},
+		allChangedFiles: []string{"cmd/a.go", "application/b.go"},
+	}
+	planner := &mockCommitPlanner{err: &commit.PlannerTimedOutError{Model: "qwen3.6-flash", Timeout: 90 * time.Second}}
+	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
+		{Files: []string{"cmd/a.go"}, Message: commit.CommitMessage{Title: "chore(cli): update cmd/"}},
+		{Files: []string{"application/b.go"}, Message: commit.CommitMessage{Title: "chore(app): update application/"}},
+	}}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
+
+	var out bytes.Buffer
+	req := application.CommitRequest{
+		Config:    &project.Config{}, // default = auto-fallback enabled
+		OutWriter: &out,
+	}
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if heuristic.calls != 1 {
+		t.Errorf("expected heuristic planner called once on timeout, got %d", heuristic.calls)
+	}
+	if len(result.Commits) != 2 {
+		t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
+	}
+	wantPhase := "planner unavailable (timed out) — falling back to directoryBucketer"
+	if !strings.Contains(out.String(), wantPhase) {
+		t.Errorf("phase output missing %q\ngot:\n%s", wantPhase, out.String())
+	}
+}
+
+// TestCommitService_TimeoutPropagatesWhenOptedOut confirms that the loud-
+// failure path still works for the timeout error type when the project has
+// explicitly opted out via plan_fallback=none.
+func TestCommitService_TimeoutPropagatesWhenOptedOut(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq:   []*diff.StagedDiff{{}},
+		allChangedFiles: []string{"cmd/a.go", "application/b.go"},
+	}
+	planner := &mockCommitPlanner{err: &commit.PlannerTimedOutError{Model: "qwen3.6-flash", Timeout: 90 * time.Second}}
+	heuristic := &spyHeuristicPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"cmd/a.go"}}}}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, heuristic)
+
+	req := application.CommitRequest{Config: &project.Config{PlanFallback: project.PlanFallbackNone}}
+	_, err := svc.Commit(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected timeout error to propagate when PlanFallback=none")
+	}
+	if heuristic.calls != 0 {
+		t.Errorf("expected heuristic planner NOT called, got %d", heuristic.calls)
+	}
+	if !errors.Is(err, commit.ErrPlannerTimedOut) {
+		t.Errorf("expected wrapped ErrPlannerTimedOut, got: %v", err)
 	}
 }
