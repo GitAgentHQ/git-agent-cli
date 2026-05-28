@@ -854,7 +854,7 @@ func TestCommitService_AlwaysOnPhaseLines(t *testing.T) {
 		got := out.String()
 		for _, want := range []string{
 			"Planning commits...",
-			"Planning commits: 100% (2/2), done.",
+			"Planning commits: 2/2, done.",
 			"Drafting message: 1/2",
 			"Drafting message: 2/2",
 		} {

@@ -395,7 +395,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 	remaining := make([]commit.CommitGroup, len(plan.Groups))
 	copy(remaining, plan.Groups)
-	s.out(req, "Planning commits: 100%% (%d/%d), done.", len(remaining), len(remaining))
+	s.out(req, "Planning commits: %d/%d, done.", len(remaining), len(remaining))
 	totalGroups := len(plan.Groups)
 
 	var committed []SingleCommitResult
