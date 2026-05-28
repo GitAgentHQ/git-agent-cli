@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-29
+
 ### Added
 - `--max-diff-bytes` flag and `max_diff_bytes` config key (project/local scopes) to cap the byte size of the diff sent to the LLM
 - Always-on byte cap (default ~384 KiB) so vendored or minified diffs no longer exceed the provider's request-body limit
+- Fallback planner with timeout and retry logic to handle large-diff edge cases
+- Planner timeout configuration with automatic fallback behavior
+
+### Changed
+- Commit progress output messaging improved for clarity
+- Planning progress messages clarified and standardized
+- Commit status output simplified for consistency
+- LLM heartbeat messages silenced in CLI output
+- Diff truncation now uses byte-cap UTF-8 safe truncation strategy
 
 ### Fixed
+- Large-diff stuck symptoms fully resolved with fallback and timeout handling
 - Auto-scope and scope-refresh no longer wipe `hook`, co-author policy, or the new byte cap from the in-memory config when generating scopes mid-commit
 - UTF-8-safe byte truncation: a trailing partial multi-byte rune is dropped on a rune boundary; mid-string invalid bytes are preserved so a hang previously caused by whole-string validation is gone
+- Line calculation and heartbeat sync issues corrected
+- Commit rejection output message improved
+- Plan config fallback and numstat truncation issues resolved
+- TTY output gating and planner fallback fixed
+- Timeout retries capped to one attempt
+- Signal routing and timeout configuration wired correctly
+- Config preservation when bound to UTF-8 truncation
+
+### Docs
+- Completion command documentation added
+- Large-diff stuck remediation design and plan documented
 
 ## [0.3.0] - 2026-05-11
 
