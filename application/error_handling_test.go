@@ -35,7 +35,7 @@ func TestCommitService_PlannerReturnsEmptyPlan(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
+			{}, // nothing pre-staged
 		},
 		allChangedFiles: []string{"main.go", "b.go"},
 	}
@@ -62,8 +62,8 @@ func TestCommitService_LLMError(t *testing.T) {
 	gen := &mockCommitGenerator{err: llmErr}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -85,8 +85,8 @@ func TestCommitService_GitCommitError(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 		commitErr:       commitErr,

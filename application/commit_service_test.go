@@ -266,8 +266,8 @@ func TestCommitService_GeneratesAndCommits(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // pre-staged check: nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // pre-staged check: nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -290,8 +290,8 @@ func TestCommitService_DryRun(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -318,8 +318,8 @@ func TestCommitService_CoAuthor(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -342,8 +342,8 @@ func TestCommitService_MixedTrailers(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -372,10 +372,10 @@ func TestCommitService_HookBlocks(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution (hook retry 1)
-			defaultDiff(),      // per-group execution (hook retry 2)
-			defaultDiff(),      // per-group execution (hook retry 3)
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution (hook retry 1)
+			defaultDiff(), // per-group execution (hook retry 2)
+			defaultDiff(), // per-group execution (hook retry 3)
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -404,8 +404,8 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
 			preStagedDiff, // pre-staged check: user has main.go staged
-			&diff.StagedDiff{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1}, // group 1 (main.go)
-			&diff.StagedDiff{Files: []string{"b.go", "c.go"}, Content: "+b+c", Lines: 2},      // group 2 (b.go, c.go)
+			{Files: []string{"main.go"}, Content: "+func main(){}", Lines: 1}, // group 1 (main.go)
+			{Files: []string{"b.go", "c.go"}, Content: "+b+c", Lines: 2},      // group 2 (b.go, c.go)
 		},
 		allChangedFiles: []string{"main.go", "b.go", "c.go"},
 	}
@@ -456,7 +456,7 @@ func TestCommitService_AllPreStaged_UnstagedEmpty(t *testing.T) {
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
 			preStaged, // pre-staged check: user has both files staged
-			&diff.StagedDiff{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // group execution
+			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // group execution
 		},
 		allChangedFiles: []string{"a.go", "b.go"},
 	}
@@ -485,8 +485,8 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
 			preStaged, // user pre-staged a.go
-			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},             // group 1 (a.go)
-			&diff.StagedDiff{Files: []string{"b.go", "new.go"}, Content: "+b+n", Lines: 2}, // group 2 (b.go modified + new.go untracked)
+			{Files: []string{"a.go"}, Content: "+a", Lines: 1},             // group 1 (a.go)
+			{Files: []string{"b.go", "new.go"}, Content: "+b+n", Lines: 2}, // group 2 (b.go modified + new.go untracked)
 		},
 		// AllChangedFiles returns staged + unstaged + untracked, deduplicated.
 		allChangedFiles: []string{"a.go", "b.go", "new.go"},
@@ -532,8 +532,8 @@ func TestCommitService_AllChangedFiles_ListsUntracked(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			&diff.StagedDiff{Files: []string{"main.go", "new_file.go"}, Content: "+main+new", Lines: 2}, // per-group execution
+			{}, // nothing pre-staged
+			{Files: []string{"main.go", "new_file.go"}, Content: "+main+new", Lines: 2}, // per-group execution
 		},
 		allChangedFiles: []string{"main.go", "new_file.go"},
 	}
@@ -553,9 +553,9 @@ func TestCommitService_StagesFilesPerGroup(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1
-			&diff.StagedDiff{Files: []string{"b.go"}, Content: "+b", Lines: 1}, // group 2
+			{}, // nothing pre-staged
+			{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1
+			{Files: []string{"b.go"}, Content: "+b", Lines: 1}, // group 2
 		},
 		allChangedFiles: []string{"a.go", "b.go"},
 	}
@@ -647,7 +647,7 @@ func TestCommitService_CapCommitGroups(t *testing.T) {
 
 	// Build stagedDiffSeq: pre-staged check (empty) + 5 per-group diffs (capped to 5 groups).
 	groupDiffSeq := []*diff.StagedDiff{
-		&diff.StagedDiff{}, // nothing pre-staged
+		{}, // nothing pre-staged
 	}
 	for i := 0; i < 5; i++ {
 		groupDiffSeq = append(groupDiffSeq, &diff.StagedDiff{
@@ -746,8 +746,8 @@ func TestCommitService_HookRetry_SendsPreviousMessage(t *testing.T) {
 	gen := &recordingGenerator{msgs: []*commit.CommitMessage{msg1, msg2}}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -1033,8 +1033,8 @@ func TestCommitService_RestagesOnCommitError(t *testing.T) {
 
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			&diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1 execution
+			{}, // nothing pre-staged
+			{Files: []string{"a.go"}, Content: "+a", Lines: 1}, // group 1 execution
 		},
 		allChangedFiles: []string{"a.go", "b.go"},
 		commitErr:       fmt.Errorf("simulated commit failure"),

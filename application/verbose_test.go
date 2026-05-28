@@ -15,8 +15,8 @@ func TestCommitService_Verbose_WritesDebugToLogWriter(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -45,8 +45,8 @@ func TestCommitService_Verbose_False_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}
@@ -71,8 +71,8 @@ func TestCommitService_Verbose_NilLogWriter_NoOutput(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
 		stagedDiffSeq: []*diff.StagedDiff{
-			&diff.StagedDiff{}, // nothing pre-staged
-			defaultDiff(),      // per-group execution
+			{},            // nothing pre-staged
+			defaultDiff(), // per-group execution
 		},
 		allChangedFiles: []string{"main.go"},
 	}

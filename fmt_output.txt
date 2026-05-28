@@ -1,0 +1,3 @@
+application/commit_service_test.go
+application/error_handling_test.go
+application/verbose_test.go

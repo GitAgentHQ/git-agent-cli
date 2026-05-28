@@ -63,11 +63,11 @@ func (b *directoryBucketer) Plan(_ context.Context, req commit.PlanRequest) (*co
 	// already-last bucket so its file list stays cohesive when sorted by
 	// the original top-level dir.
 	if len(buckets) > maxCommitGroups {
-		// Sort surplus buckets by size ascending; smallest gets merged first.
+		// Sort surplus buckets by size descending; largest gets merged first and keeps its dir.
 		sort.SliceStable(buckets[maxCommitGroups-1:], func(i, j int) bool {
 			a := buckets[maxCommitGroups-1+i]
 			c := buckets[maxCommitGroups-1+j]
-			return len(a.files) < len(c.files)
+			return len(a.files) > len(c.files)
 		})
 		mergeTarget := &buckets[maxCommitGroups-1]
 		surplus := buckets[maxCommitGroups:]

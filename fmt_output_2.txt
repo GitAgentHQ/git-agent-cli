@@ -1,0 +1,5 @@
+application/commit_service_test.go
+application/error_handling_test.go
+application/verbose_test.go
+test_sort.go
+test_trunc.go
