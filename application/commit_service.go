@@ -137,7 +137,7 @@ func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq 
 	if req.Config != nil && req.Config.PlanFallback == project.PlanFallbackNone {
 		return nil, err
 	}
-	s.out(req, "warning: planner unavailable (%s), falling back to directoryBucketer", plannerFallbackReason(err))
+	s.out(req, "Warning: planner unavailable (%s), falling back to directoryBucketer", plannerFallbackReason(err))
 	return s.heuristicPlanner.Plan(ctx, planReq)
 }
 
@@ -302,7 +302,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			s.out(req, "Auto-generating scopes...")
 			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
 			if err != nil {
-				s.out(req, "warning: scope generation failed (continuing without scopes): %v", err)
+				s.out(req, "Warning: scope generation failed (continuing without scopes): %v", err)
 			} else {
 				configPath := req.ProjectConfigPath
 				if configPath == "" {
@@ -348,7 +348,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
 		}
 		if len(plan.Groups) > maxCommitGroups {
-			s.out(req, "warning: plan has %d groups, capping to %d", len(plan.Groups), maxCommitGroups)
+			s.out(req, "Warning: plan has %d groups, capping to %d", len(plan.Groups), maxCommitGroups)
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
 		appendPassthroughFiles(plan, allowed)
@@ -477,13 +477,13 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 						Content: synopsis,
 						Lines:   strings.Count(synopsis, "\n"),
 					}
-					s.out(req, "warning: commit %d/%d: DIFF-SYNOPSIS fallback (%s)", groupIdx, totalGroups, genDiff.Files[0])
+					s.out(req, "Warning: commit %d/%d: DIFF-SYNOPSIS fallback (%s)", groupIdx, totalGroups, genDiff.Files[0])
 				} else {
 					s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
-					s.out(req, "warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
+					s.out(req, "Warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
 				}
 			} else if didTruncate {
-				s.out(req, "warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
+				s.out(req, "Warning: commit %d/%d: truncating group diff (%d bytes)", groupIdx, totalGroups, maxBytes)
 			}
 		}
 
@@ -500,7 +500,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		var preTrailer string // assembled before trailers — used for HookBlockedError
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
-			s.out(req, "Drafting message: %d/%d (attempt %d/%d)", groupIdx, totalGroups, attempt, maxHookRetries)
+			if attempt == 1 {
+				s.out(req, "Drafting message: %d/%d", groupIdx, totalGroups)
+			}
 
 			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{
 				Diff:            genDiff,
@@ -548,6 +550,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				break
 			}
 
+			if attempt < maxHookRetries {
+				s.out(req, "Warning: hook rejected message, retrying... (attempt %d/%d)", attempt+1, maxHookRetries)
+			}
 			hookFeedback = hookResult.Stderr
 			previousMessage = preTrailer
 		}
@@ -645,7 +650,7 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 			return nil, fmt.Errorf("truncate diff: %w", err)
 		}
 		if truncated {
-			s.out(req, "warning: diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
+			s.out(req, "Warning: diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 		}
 	}
 

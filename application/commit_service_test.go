@@ -855,8 +855,8 @@ func TestCommitService_AlwaysOnPhaseLines(t *testing.T) {
 		for _, want := range []string{
 			"Planning commits...",
 			"Planning commits: 100% (2/2), done.",
-			"Drafting message: 1/2 (attempt 1/3)",
-			"Drafting message: 2/2 (attempt 1/3)",
+			"Drafting message: 1/2",
+			"Drafting message: 2/2",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("always-on stderr missing %q\ngot:\n%s", want, got)
@@ -1241,8 +1241,8 @@ func TestCommitService_HeuristicFallback_OptIn(t *testing.T) {
 			if len(result.Commits) != 2 {
 				t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
 			}
-			if !strings.Contains(out.String(), "warning: planner unavailable (budget exhausted), falling back to directoryBucketer") {
-				t.Errorf("phase output missing \"warning: planner unavailable (budget exhausted), falling back to directoryBucketer\"\ngot:\n%s", out.String())
+			if !strings.Contains(out.String(), "Warning: planner unavailable (budget exhausted), falling back to directoryBucketer") {
+				t.Errorf("phase output missing \"Warning: planner unavailable (budget exhausted), falling back to directoryBucketer\"\ngot:\n%s", out.String())
 			}
 		})
 	}
@@ -1311,8 +1311,8 @@ func TestCommitService_AutoFallbackOnTimeout(t *testing.T) {
 	if len(result.Commits) != 2 {
 		t.Errorf("expected 2 commits via heuristic plan, got %d", len(result.Commits))
 	}
-	if !strings.Contains(out.String(), "warning: planner unavailable (timed out), falling back to directoryBucketer") {
-		t.Errorf("phase output missing \"warning: planner unavailable (timed out), falling back to directoryBucketer\"\ngot:\n%s", out.String())
+	if !strings.Contains(out.String(), "Warning: planner unavailable (timed out), falling back to directoryBucketer") {
+		t.Errorf("phase output missing \"Warning: planner unavailable (timed out), falling back to directoryBucketer\"\ngot:\n%s", out.String())
 	}
 }
 
