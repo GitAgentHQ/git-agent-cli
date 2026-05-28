@@ -223,13 +223,10 @@ func TestCommitCmd_SIGINTCancels(t *testing.T) {
 	}
 }
 
-// TestCommitCmd_SmallDiffRegression locks in REQ-009: the always-on output
-// discipline added by the large-diff redesign must not bloat the small-diff
-// happy path. With a 1-file fixture the planner is skipped (see the
-// len(allFiles) == 1 early-return in application/commit_service.go), so only
-// the planned-count line and the per-group "drafting" line fire — at most two
-// always-on lines, and no heartbeat ticks because the fake server replies
-// faster than the heartbeat cadence.
+// TestCommitCmd_SmallDiffRegression locks in REQ-009 plus the hotfix non-TTY
+// discipline. The subprocess inherits non-TTY stderr (os/exec pipes are
+// not terminals), so the cmd layer suppresses phase output and heartbeats
+// entirely. Result: zero always-on phase lines, zero heartbeats.
 func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	server := newFastLLMServer(t, 0)
 	defer server.Close()
@@ -281,20 +278,20 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	stderrStr := stderr.String()
 	stdoutStr := stdout.String()
 
-	// Heartbeat must be silent on the small-diff path.
+	// Heartbeat must be silent on the small-diff path — and on every non-TTY
+	// path generally, because the cmd layer suppresses the heartbeat writer.
 	heartbeatRe := regexp.MustCompile(`(?m)^still waiting on LLM`)
 	if matches := heartbeatRe.FindAllString(stderrStr, -1); len(matches) > 0 {
 		t.Errorf("expected zero heartbeat lines, got %d:\n%s", len(matches), stderrStr)
 	}
 
-	// Single-file path emits at most two always-on phase lines: the
-	// "planned 1 commit(s)" summary and the "commit 1/1: drafting ..." marker.
-	// Anything more means a new always-on line was added without updating
-	// this guard.
+	// Non-TTY subprocess stderr: the hotfix routes always-on phase output to
+	// io.Discard equivalent (nil writer), so the e2e subprocess sees an
+	// empty phase stream regardless of how many groups the planner produces.
 	phaseRe := regexp.MustCompile(`(?m)^(planning commits\.\.\.|planned \d+ commit\(s\)|commit \d+/\d+:.*)$`)
 	phaseLines := phaseRe.FindAllString(stderrStr, -1)
-	if len(phaseLines) > 2 {
-		t.Errorf("expected at most 2 always-on phase lines, got %d:\n%v\nfull stderr:\n%s",
+	if len(phaseLines) != 0 {
+		t.Errorf("expected zero always-on phase lines on non-TTY stderr, got %d:\n%v\nfull stderr:\n%s",
 			len(phaseLines), phaseLines, stderrStr)
 	}
 
