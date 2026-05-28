@@ -127,18 +127,26 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Always-on phase output and the LLM heartbeat only make sense when a
-	// human is watching the terminal. When stderr is redirected — agent
-	// subprocesses, CI runners, pipelines — those lines are noise that
-	// pollutes captured logs and confuses downstream parsers. --verbose
-	// remains the explicit override for users who want the chatter back on
-	// non-TTY paths (e.g. while debugging an agent harness).
+	// Phase output ("planning commits...", "commit N/M: drafting message")
+	// is shown when a human is watching the terminal or --verbose is set.
+	// When stderr is redirected — agent subprocesses, CI runners, pipelines
+	// — those lines are noise that pollutes captured logs and confuses
+	// downstream parsers.
 	var outWriter io.Writer
 	if verbose || stderrIsTerminal() {
 		outWriter = cmd.ErrOrStderr()
 	}
 
-	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, outWriter)
+	// The LLM heartbeat ("still waiting on LLM... (Xs elapsed)") is only
+	// shown with --verbose. On a normal interactive terminal the phase
+	// lines provide enough feedback; the per-tick elapsed counters add
+	// clutter without actionable information.
+	var heartbeatWriter io.Writer
+	if verbose {
+		heartbeatWriter = cmd.ErrOrStderr()
+	}
+
+	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
 
 	var logWriter io.Writer
 	if verbose {
