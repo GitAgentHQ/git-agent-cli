@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
@@ -18,6 +21,14 @@ import (
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
+
+// stderrIsTerminal reports whether os.Stderr is connected to an interactive
+// terminal. Agents, pipes, and CI runners get false and therefore receive no
+// phase / heartbeat output unless --verbose is set. golang.org/x/term abstracts
+// over the platform-specific ioctl so this works on macOS, Linux, and Windows.
+var stderrIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stderr.Fd()))
+}
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
@@ -116,22 +127,26 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	llmClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
-
-	var scopeSvc *application.ScopeService
-	if projCfg == nil || len(projCfg.Scopes) == 0 {
-		scopeSvc = application.NewScopeService(llmClient, gitClient)
+	// Phase output ("Planning commits...", "Drafting message: N/M...")
+	// is shown when a human is watching the terminal or --verbose is set.
+	// When stderr is redirected — agent subprocesses, CI runners, pipelines
+	// — those lines are noise that pollutes captured logs and confuses
+	// downstream parsers.
+	var outWriter io.Writer
+	if verbose || stderrIsTerminal() {
+		outWriter = cmd.ErrOrStderr()
 	}
 
-	svc := application.NewCommitService(
-		llmClient,
-		llmClient,
-		gitClient,
-		infraHook.NewCompositeHookExecutor(),
-		scopeSvc,
-		infraDiff.NewPatternFilter(),
-		infraDiff.NewLineTruncator(),
-	)
+	// The LLM heartbeat ("still waiting on LLM... (Xs elapsed)") is only
+	// shown with --verbose. On a normal interactive terminal the phase
+	// lines provide enough feedback; the per-tick elapsed counters add
+	// clutter without actionable information.
+	var heartbeatWriter io.Writer
+	if verbose {
+		heartbeatWriter = cmd.ErrOrStderr()
+	}
+
+	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
 
 	var logWriter io.Writer
 	if verbose {
@@ -165,28 +180,21 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		MaxBytes:          maxDiffBytes,
 		Verbose:           verbose,
 		LogWriter:         logWriter,
-		OutWriter:         cmd.ErrOrStderr(),
+		OutWriter:         outWriter,
 		ProjectConfigPath: projCfgPath,
 	})
 	if err != nil {
-		var apiErr *agentErrors.APIError
-		if errors.As(err, &apiErr) {
-			return agentErrors.NewExitCodeError(1, apiErr.Message)
+		// Honour SIGINT/SIGTERM cancellation before any other classification —
+		// callers expect a clean "cancelled" line, not a stack of wrapped
+		// error messages, when they Ctrl-C an in-flight LLM call. Check
+		// cmd.Context().Err() too because net/http surfaces signal-driven
+		// cancellation as an opaque signal sentinel (not context.Canceled),
+		// so errors.Is alone misses the SIGINT case.
+		if errors.Is(err, context.Canceled) || cmd.Context().Err() != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+			return agentErrors.NewExitCodeError(1, "")
 		}
-		if errors.Is(err, application.ErrHookBlocked) {
-			var hbe *application.HookBlockedError
-			if errors.As(err, &hbe) {
-				if hbe.Reason != "" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "\nhook rejected: %s\n", hbe.Reason)
-				}
-				if hbe.LastMessage != "" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
-				}
-			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: use --intent \"<description>\" to guide the next attempt\n\n")
-			return agentErrors.NewExitCodeError(2, "error: commit blocked after retries")
-		}
-		return err
+		return RenderCommitError(cmd.ErrOrStderr(), err)
 	}
 
 	out := cmd.OutOrStdout()
@@ -209,6 +217,93 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// RenderCommitError maps an error returned by application.CommitService.Commit
+// into an exit-code-bearing error, writing any human-readable diagnostic to w.
+// Cancellation (SIGINT/SIGTERM) is handled inline in runCommit because it also
+// needs the live cobra context; everything else routes through here so the
+// rendering logic is testable in isolation.
+func RenderCommitError(w io.Writer, err error) error {
+	var timeoutErr *commit.PlannerTimedOutError
+	if errors.As(err, &timeoutErr) {
+		fmt.Fprintf(w,
+			"error: LLM planner timed out (model=%s, after %s); "+
+				"try a more capable model, raise --request-timeout, "+
+				"narrow scope with --intent, or split with --max-diff-lines / smaller batches\n",
+			timeoutErr.Model, timeoutErr.Timeout)
+		return agentErrors.NewExitCodeError(1, "")
+	}
+	var budgetErr *commit.PlannerBudgetExhaustedError
+	if errors.As(err, &budgetErr) {
+		fmt.Fprintf(w,
+			"error: LLM kept producing oversized output (model=%s, ceiling=%d tokens); "+
+				"try a more capable model, narrow scope with --intent, or split with "+
+				"--max-diff-lines / smaller batches\n",
+			budgetErr.Model, budgetErr.Ceiling)
+		return agentErrors.NewExitCodeError(1, "")
+	}
+	var apiErr *agentErrors.APIError
+	if errors.As(err, &apiErr) {
+		return agentErrors.NewExitCodeError(1, apiErr.Message)
+	}
+	if errors.Is(err, application.ErrHookBlocked) {
+		var hbe *application.HookBlockedError
+		if errors.As(err, &hbe) {
+			if hbe.Reason != "" {
+				fmt.Fprintf(w, "\nreason: %s\n", hbe.Reason)
+			}
+			if hbe.LastMessage != "" {
+				fmt.Fprintf(w, "\nrejected message:\n\n%s\n\n", hbe.LastMessage)
+			}
+		}
+		fmt.Fprintf(w, "hint: use --intent \"<description>\" to guide the LLM on the next attempt\n\n")
+		return agentErrors.NewExitCodeError(2, "error: commit message rejected by hook")
+	}
+	return err
+}
+
+// buildCommitDeps constructs the LLM client and CommitService from resolved
+// config. Returning both lets callers wire scopeSvc once (it shares the same
+// client) and lets tests verify that request_timeout, heartbeat_interval, and
+// plan_fallback all thread through to the right collaborators.
+func buildCommitDeps(
+	providerCfg *infraConfig.ProviderConfig,
+	projCfg *project.Config,
+	gitClient *infraGit.Client,
+	heartbeatOut io.Writer,
+) (*infraOpenAI.Client, *application.CommitService) {
+	llmClient := infraOpenAI.NewClient(
+		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
+		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
+		heartbeatOut,
+	)
+
+	var scopeSvc *application.ScopeService
+	if projCfg == nil || len(projCfg.Scopes) == 0 {
+		scopeSvc = application.NewScopeService(llmClient, gitClient)
+	}
+
+	// Heuristic planner is wired unless the project explicitly opts out via
+	// plan_fallback=none. The application layer guards the fallback path on
+	// the same config — the bucketer is always available as a collaborator,
+	// and the policy decision lives in one place (CommitService.runPlan).
+	var heuristicPlanner commit.HeuristicPlanner
+	if projCfg == nil || projCfg.PlanFallback != project.PlanFallbackNone {
+		heuristicPlanner = application.NewDirectoryBucketer()
+	}
+
+	svc := application.NewCommitService(
+		llmClient,
+		llmClient,
+		gitClient,
+		infraHook.NewCompositeHookExecutor(),
+		scopeSvc,
+		infraDiff.NewPatternFilter(),
+		infraDiff.NewLineTruncator(),
+		heuristicPlanner,
+	)
+	return llmClient, svc
 }
 
 func init() {

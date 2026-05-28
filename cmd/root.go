@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,13 +22,28 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		var exitErr *agentErrors.ExitCodeError
-		if errors.As(err, &exitErr) {
-			os.Exit(exitErr.Code)
-		}
-		os.Exit(1)
+	exitFromError(rootCmd.Execute())
+}
+
+// ExecuteContext is the signal-aware entry point used by main(). The supplied
+// context is wired through to every cmd.Context() consumer (RunE handlers,
+// PersistentPreRunE, etc.) so a SIGINT/SIGTERM propagates as ctx.Done()
+// throughout the application and infrastructure layers.
+func ExecuteContext(ctx context.Context) {
+	exitFromError(rootCmd.ExecuteContext(ctx))
+}
+
+// exitFromError centralises the exit-code mapping so Execute and ExecuteContext
+// agree on how errors translate to process exit codes.
+func exitFromError(err error) {
+	if err == nil {
+		return
 	}
+	var exitErr *agentErrors.ExitCodeError
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.Code)
+	}
+	os.Exit(1)
 }
 
 func ExecuteArgs(args []string) error {

@@ -22,6 +22,17 @@ func NewClient() *Client {
 	return &Client{}
 }
 
+// StagedDiffNumStat returns the output of `git diff --staged --numstat`. The summary
+// is small (one line per file) regardless of diff size, so
+// it is safe to inline into LLM prompts when the raw diff is too large.
+func (c *Client) StagedDiffNumStat(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--numstat", "--ignore-submodules=all").Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	var contentOut, namesOut []byte
 	var contentErr, namesErr error

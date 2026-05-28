@@ -4,12 +4,22 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 const DefaultBaseURL = "https://api.anthropic.com/v1"
 const DefaultModel = "claude-3-5-haiku-20241022"
+
+// DefaultRequestTimeout bounds the per-HTTP-request deadline given to the LLM
+// client, including streamed completions. Chosen to comfortably exceed a slow
+// 10 KB/s response while still cutting the wire if the upstream stalls.
+const DefaultRequestTimeout = 90 * time.Second
+
+// DefaultHeartbeatInterval is the cadence at which the CLI emits "still
+// waiting" progress lines while an LLM call is in flight.
+const DefaultHeartbeatInterval = 15 * time.Second
 
 // Build-time defaults injected via -ldflags "-X github.com/gitagenthq/git-agent/infrastructure/config.BuildAPIKey=..."
 var (
@@ -22,17 +32,21 @@ type ProviderConfig struct {
 	APIKey               string
 	BaseURL              string
 	Model                string
-	FreeMode             bool     // When true, use only build-time proxy credentials; all user config sources are ignored
-	NoGitAgentCoAuthor   bool     // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor      bool     // When true, ignore all --co-author trailers
-	RequireModelCoAuthor bool     // When true, every commit must carry a Co-Authored-By from an AI-provider domain
-	ModelCoAuthorDomains []string // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
+	RequestTimeout       time.Duration // 0 = use DefaultRequestTimeout
+	HeartbeatInterval    time.Duration // 0 = use DefaultHeartbeatInterval
+	FreeMode             bool          // When true, use only build-time proxy credentials; all user config sources are ignored
+	NoGitAgentCoAuthor   bool          // When true, omit the default Co-Authored-By: Git Agent trailer
+	NoModelCoAuthor      bool          // When true, ignore all --co-author trailers
+	RequireModelCoAuthor bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	ModelCoAuthorDomains []string      // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
 }
 
 type fileConfig struct {
 	APIKey               string   `yaml:"api_key"`
 	BaseURL              string   `yaml:"base_url"`
 	Model                string   `yaml:"model"`
+	RequestTimeout       string   `yaml:"request_timeout"`
+	HeartbeatInterval    string   `yaml:"heartbeat_interval"`
 	NoGitAgentCoAuthor   bool     `yaml:"no_git_agent_co_author"`
 	NoModelCoAuthor      bool     `yaml:"no_model_co_author"`
 	RequireModelCoAuthor bool     `yaml:"require_model_co_author"`
@@ -45,15 +59,23 @@ type fileConfig struct {
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	if flags.FreeMode {
 		result := &ProviderConfig{
-			APIKey:  BuildAPIKey,
-			BaseURL: BuildBaseURL,
-			Model:   BuildModel,
+			APIKey:            BuildAPIKey,
+			BaseURL:           BuildBaseURL,
+			Model:             BuildModel,
+			RequestTimeout:    flags.RequestTimeout,
+			HeartbeatInterval: flags.HeartbeatInterval,
 		}
 		if result.BaseURL == "" {
 			result.BaseURL = DefaultBaseURL
 		}
 		if result.Model == "" {
 			result.Model = DefaultModel
+		}
+		if result.RequestTimeout <= 0 {
+			result.RequestTimeout = DefaultRequestTimeout
+		}
+		if result.HeartbeatInterval <= 0 {
+			result.HeartbeatInterval = DefaultHeartbeatInterval
 		}
 		return result, nil
 	}
@@ -122,7 +144,24 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.ModelCoAuthorDomains = append(result.ModelCoAuthorDomains, file.ModelCoAuthorDomains...)
 	}
 
+	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
+	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
+
 	return result, nil
+}
+
+// resolveDuration applies the precedence chain flag > file YAML > default,
+// silently falling back to the default when the file value is unparseable.
+func resolveDuration(flag time.Duration, fileValue string, def time.Duration) time.Duration {
+	if flag > 0 {
+		return flag
+	}
+	if fileValue != "" {
+		if d, err := time.ParseDuration(fileValue); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 // ResolveField resolves a single config key across all scopes and reports which

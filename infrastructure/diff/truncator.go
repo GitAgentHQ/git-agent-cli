@@ -19,7 +19,11 @@ func (t *lineTruncator) Truncate(_ context.Context, d *domainDiff.StagedDiff, ma
 	truncated := false
 
 	// Line cap first — the soft, user-tunable limit.
-	if maxLines > 0 && d.Lines > maxLines {
+	actualLines := d.Lines
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		actualLines++
+	}
+	if maxLines > 0 && actualLines > maxLines {
 		lines := strings.SplitN(content, "\n", maxLines+1)
 		content = strings.Join(lines[:maxLines], "\n")
 		truncated = true

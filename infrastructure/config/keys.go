@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -15,7 +16,7 @@ const (
 // KeyDef describes a config key's type and which scopes allow it.
 type KeyDef struct {
 	Name         string
-	Type         string // "string", "bool", "stringslice", "int"
+	Type         string // "string", "bool", "stringslice", "int", "duration"
 	AllowUser    bool
 	AllowProject bool
 	AllowLocal   bool
@@ -26,10 +27,13 @@ var KeyRegistry = map[string]KeyDef{
 	"api_key":                 {Name: "api_key", Type: "string", AllowUser: true},
 	"base_url":                {Name: "base_url", Type: "string", AllowUser: true},
 	"model":                   {Name: "model", Type: "string", AllowUser: true},
+	"request_timeout":         {Name: "request_timeout", Type: "duration", AllowUser: true},
+	"heartbeat_interval":      {Name: "heartbeat_interval", Type: "duration", AllowUser: true},
 	"scopes":                  {Name: "scopes", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"hook":                    {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"max_diff_lines":          {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
 	"max_diff_bytes":          {Name: "max_diff_bytes", Type: "int", AllowProject: true, AllowLocal: true},
+	"plan_fallback":           {Name: "plan_fallback", Type: "string", AllowProject: true, AllowLocal: true},
 	"no_git_agent_co_author":  {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"no_model_co_author":      {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_model_co_author": {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
@@ -40,8 +44,11 @@ var KeyRegistry = map[string]KeyDef{
 var KeyAliases = map[string]string{
 	"api-key":                 "api_key",
 	"base-url":                "base_url",
+	"request-timeout":         "request_timeout",
+	"heartbeat-interval":      "heartbeat_interval",
 	"max-diff-lines":          "max_diff_lines",
 	"max-diff-bytes":          "max_diff_bytes",
+	"plan-fallback":           "plan_fallback",
 	"no-git-agent-co-author":  "no_git_agent_co_author",
 	"no-model-co-author":      "no_model_co_author",
 	"require-model-co-author": "require_model_co_author",
@@ -68,6 +75,10 @@ func coerceForWrite(key, value string) any {
 			}
 		}
 		return trimmed
+	case "duration":
+		// Preserve the canonical Go duration string so the YAML file
+		// reads back identically (e.g. "45s" stays "45s").
+		return value
 	default:
 		return value
 	}
@@ -154,6 +165,12 @@ func NormalizeValue(key, raw string) (string, error) {
 			return "", fmt.Errorf("empty value for key %q", key)
 		}
 		return strings.Join(normalized, ","), nil
+	case "duration":
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid duration value %q for %q: %w", raw, key, err)
+		}
+		return d.String(), nil
 	default:
 		if raw == "" {
 			return "", fmt.Errorf("empty value for key %q", key)

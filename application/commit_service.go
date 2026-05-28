@@ -45,6 +45,7 @@ type CommitResult struct {
 
 type CommitGitClient interface {
 	StagedDiff(ctx context.Context) (*diff.StagedDiff, error)
+	StagedDiffNumStat(ctx context.Context) (string, error)
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	AllChangedFiles(ctx context.Context) ([]string, error)
 	StageFiles(ctx context.Context, files []string) error
@@ -72,13 +73,14 @@ type CommitRequest struct {
 }
 
 type CommitService struct {
-	gen       commit.CommitMessageGenerator
-	planner   commit.CommitPlanner
-	git       CommitGitClient
-	hookExec  hook.HookExecutor
-	scopeSvc  *ScopeService      // nil = no auto-scope
-	filter    diff.DiffFilter    // nil = no filtering
-	truncator diff.DiffTruncator // nil = no truncation
+	gen              commit.CommitMessageGenerator
+	planner          commit.CommitPlanner
+	git              CommitGitClient
+	hookExec         hook.HookExecutor
+	scopeSvc         *ScopeService           // nil = no auto-scope
+	filter           diff.DiffFilter         // nil = no filtering
+	truncator        diff.DiffTruncator      // nil = no truncation
+	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
 }
 
 func NewCommitService(
@@ -89,15 +91,73 @@ func NewCommitService(
 	scopeSvc *ScopeService,
 	filter diff.DiffFilter,
 	truncator diff.DiffTruncator,
+	heuristicPlanner commit.HeuristicPlanner,
 ) *CommitService {
 	return &CommitService{
-		gen:       gen,
-		planner:   planner,
-		git:       git,
-		hookExec:  hookExec,
-		scopeSvc:  scopeSvc,
-		filter:    filter,
-		truncator: truncator,
+		gen:              gen,
+		planner:          planner,
+		git:              git,
+		hookExec:         hookExec,
+		scopeSvc:         scopeSvc,
+		filter:           filter,
+		truncator:        truncator,
+		heuristicPlanner: heuristicPlanner,
+	}
+}
+
+// HeuristicPlanner reports the fallback planner this service uses when the
+// primary LLM planner exhausts its token budget. Returns nil when REQ-008
+// fallback is disabled. Exposed so cmd-layer wiring tests can confirm
+// plan_fallback=heuristic actually constructs the fallback collaborator.
+func (s *CommitService) HeuristicPlanner() commit.HeuristicPlanner {
+	return s.heuristicPlanner
+}
+
+// runPlan invokes the configured planner and, when the LLM planner cannot
+// produce a plan (budget exhausted OR per-attempt timeout), falls back to the
+// heuristic planner unless the project has explicitly opted out via
+// plan_fallback=none. Other plan errors propagate unchanged.
+//
+// Default (PlanFallback unset, empty string, or "auto"): fallback enabled.
+// Default exists because the LLM planner is the dominant failure mode for
+// large diffs and agent-driven workflows; surfacing a hard error there
+// wastes the agent's time on a path the heuristic bucketer can handle
+// deterministically.
+func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq commit.PlanRequest) (*commit.CommitPlan, error) {
+	plan, err := s.planner.Plan(ctx, planReq)
+	if err == nil {
+		return plan, nil
+	}
+	if !isPlannerFallbackError(err) {
+		return nil, err
+	}
+	if s.heuristicPlanner == nil {
+		return nil, err
+	}
+	if req.Config != nil && req.Config.PlanFallback == project.PlanFallbackNone {
+		return nil, err
+	}
+	s.out(req, "Warning: LLM planner unavailable (%s), falling back to directory bucketer", plannerFallbackReason(err))
+	return s.heuristicPlanner.Plan(ctx, planReq)
+}
+
+// isPlannerFallbackError reports whether err is one of the LLM-planner
+// failures the heuristic bucketer can substitute for.
+func isPlannerFallbackError(err error) bool {
+	return errors.Is(err, commit.ErrPlannerBudgetExhausted) ||
+		errors.Is(err, commit.ErrPlannerTimedOut)
+}
+
+// plannerFallbackReason renders a short tag identifying which planner failure
+// triggered the fallback, for the always-on phase line.
+func plannerFallbackReason(err error) string {
+	switch {
+	case errors.Is(err, commit.ErrPlannerTimedOut):
+		return "timed out"
+	case errors.Is(err, commit.ErrPlannerBudgetExhausted):
+		return "budget exhausted"
+	default:
+		return "error"
 	}
 }
 
@@ -239,10 +299,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 	// MaxDiffLines, MaxDiffBytes, and co-author policy survive the refresh.
 	if len(req.Config.Scopes) == 0 {
 		if s.scopeSvc != nil {
-			s.vlog(req, "auto-generating scopes...")
+			s.out(req, "Generating scopes...")
 			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
 			if err != nil {
-				s.vlog(req, "scope generation failed (continuing without scopes): %v", err)
+				s.out(req, "Warning: failed to generate scopes, continuing without scopes (%v)", err)
 			} else {
 				configPath := req.ProjectConfigPath
 				if configPath == "" {
@@ -271,8 +331,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		s.vlog(req, "single file — skipping planning phase")
 		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
 	} else {
-		s.vlog(req, "planning commits...")
-		plan, err = s.planner.Plan(ctx, commit.PlanRequest{
+		s.out(req, "Planning commits...")
+		plan, err = s.runPlan(ctx, req, commit.PlanRequest{
 			StagedDiff:   staged,
 			UnstagedDiff: unstaged,
 			Intent:       req.Intent,
@@ -288,14 +348,14 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
 		}
 		if len(plan.Groups) > maxCommitGroups {
-			s.vlog(req, "plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
+			s.out(req, "Warning: commit plan exceeds group limit (%d > %d), capping", len(plan.Groups), maxCommitGroups)
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
 		appendPassthroughFiles(plan, allowed)
 
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
-			s.vlog(req, "unscoped groups detected — refreshing project scopes...")
+			s.out(req, "Refreshing scopes...")
 			newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
 			if err != nil {
 				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
@@ -308,8 +368,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					s.vlog(req, "save scopes (non-fatal): %v", err)
 				}
 				req.Config.Scopes = newScopes
-				s.vlog(req, "updated scopes: %v — re-planning...", req.Config.ScopeNames())
-				plan, err = s.planner.Plan(ctx, commit.PlanRequest{
+				s.out(req, "Scopes updated: %v, re-planning...", req.Config.ScopeNames())
+				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
 					StagedDiff:   staged,
 					UnstagedDiff: unstaged,
 					Intent:       req.Intent,
@@ -335,7 +395,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 	remaining := make([]commit.CommitGroup, len(plan.Groups))
 	copy(remaining, plan.Groups)
-	s.vlog(req, "planned %d commit(s)", len(remaining))
+	totalGroups := len(plan.Groups)
+	commitWord := "commits"
+	if totalGroups == 1 {
+		commitWord = "commit"
+	}
+	s.out(req, "Planning commits: done (%d %s).", totalGroups, commitWord)
 
 	var committed []SingleCommitResult
 	committedFiles := make(map[string]bool)
@@ -360,9 +425,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		}
 	}()
 
+	groupIdx := 0
 	for len(remaining) > 0 {
 		group := remaining[0]
 		remaining = remaining[1:]
+		groupIdx++
 
 		if err := s.git.UnstageAll(ctx); err != nil {
 			return nil, fmt.Errorf("unstage all: %w", err)
@@ -398,6 +465,30 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				s.vlog(req, "group diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 			}
 			genDiff = truncated
+
+			// REQ-007 — saturation fallback. When a single-file diff saturates the
+			// byte cap, head-truncation produces a useless prompt (typically the
+			// file header repeated). Replace it with a compact DIFF-SYNOPSIS so
+			// the LLM still receives a meaningful commit context. The raw diff on
+			// groupDiff.Content is untouched so the hook continues to see the
+			// full payload.
+			if didTruncate && len(genDiff.Files) == 1 && len(genDiff.Content) == maxBytes {
+				stat, statErr := s.git.StagedDiffNumStat(ctx)
+				if statErr == nil {
+					synopsis := buildSynopsis(genDiff.Files[0], stat, len(groupDiff.Content), maxBytes)
+					genDiff = &diff.StagedDiff{
+						Files:   genDiff.Files,
+						Content: synopsis,
+						Lines:   strings.Count(synopsis, "\n"),
+					}
+					s.out(req, "Warning: commit %d/%d: falling back to diff synopsis for %s", groupIdx, totalGroups, genDiff.Files[0])
+				} else {
+					s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
+					s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+				}
+			} else if didTruncate {
+				s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+			}
 		}
 
 		// Seed hook feedback from previous re-plan failure so the first Generate
@@ -413,7 +504,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		var preTrailer string // assembled before trailers — used for HookBlockedError
 
 		for attempt := 1; attempt <= maxHookRetries; attempt++ {
-			s.vlog(req, "calling LLM... (attempt %d/%d)", attempt, maxHookRetries)
+			if attempt == 1 {
+				s.out(req, "Drafting message: %d/%d...", groupIdx, totalGroups)
+			}
 
 			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{
 				Diff:            genDiff,
@@ -461,6 +554,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				break
 			}
 
+			if attempt < maxHookRetries {
+				s.out(req, "Warning: hook rejected message, retrying... (attempt %d/%d)", attempt+1, maxHookRetries)
+			}
 			hookFeedback = hookResult.Stderr
 			previousMessage = preTrailer
 		}
@@ -558,7 +654,7 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 			return nil, fmt.Errorf("truncate diff: %w", err)
 		}
 		if truncated {
-			s.vlog(req, "diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
+			s.out(req, "Warning: diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 		}
 	}
 
@@ -661,4 +757,36 @@ func hasUnscopedGroups(plan *commit.CommitPlan) bool {
 		}
 	}
 	return false
+}
+
+// buildSynopsis renders the DIFF-SYNOPSIS block used when a single-file diff
+// saturates the byte cap. The stat-line is expected in the shape
+// "<adds>\t<dels>\t<path>" produced by `git diff --staged --numstat`; when the
+// add/delete counters cannot be parsed they default to zero so the prompt
+// stays well-formed.
+func buildSynopsis(file, statLine string, actualBytes, capBytes int) string {
+	adds, dels := parseNumStat(statLine, file)
+	return fmt.Sprintf(
+		"DIFF-SYNOPSIS\nfile: %s\nchanges: +%d / -%d (stat)\nnote: full diff elided (%d bytes exceeded %d-byte cap)\n",
+		file, adds, dels, actualBytes, capBytes,
+	)
+}
+
+// parseNumStat extracts the `+adds` / `-dels` counts from a single
+// `git diff --staged --numstat` line whose path matches file. Lines have the
+// shape "<adds>\t<dels>\t<path>". Binary files report "-" for counts.
+func parseNumStat(numstat, file string) (adds, dels int) {
+	for _, raw := range strings.Split(numstat, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[2] == file {
+			fmt.Sscanf(fields[0], "%d", &adds)
+			fmt.Sscanf(fields[1], "%d", &dels)
+			return adds, dels
+		}
+	}
+	return 0, 0
 }

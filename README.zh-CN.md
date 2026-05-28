@@ -108,6 +108,30 @@ git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直
 
 未指定作用域参数时，提供商密钥默认写入 `--user`，其他配置项默认写入 `--project`。
 
+### `git-agent completion`
+
+生成 shell 自动补全脚本。
+
+```bash
+git-agent completion bash         # bash 补全
+git-agent completion zsh          # zsh 补全
+git-agent completion fish         # fish 补全
+git-agent completion powershell   # PowerShell 补全
+```
+
+持久化加载（运行一次即可）：
+
+```bash
+# bash (macOS)
+git-agent completion bash > $(brew --prefix)/etc/bash_completion.d/git-agent
+
+# zsh
+git-agent completion zsh > "${fpath[1]}/_git-agent"
+
+# fish
+git-agent completion fish > ~/.config/fish/completions/git-agent.fish
+```
+
 ### `git-agent version`
 
 打印构建版本。

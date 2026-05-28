@@ -156,7 +156,7 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 	gitClient := infraGit.NewClient()
 
 	scopeSvc := application.NewScopeService(
-		infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model),
+		infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model, 0, 0, nil),
 		gitClient,
 	)
 

@@ -23,7 +23,7 @@ func runGitignore(cmd *cobra.Command, out io.Writer) error {
 	}
 
 	gitClient := infraGit.NewClient()
-	openaiClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model)
+	openaiClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model, 0, 0, nil)
 	toptalClient := infraGitignore.NewToptalClient()
 	svc := application.NewGitignoreService(openaiClient, toptalClient, gitClient)
 
