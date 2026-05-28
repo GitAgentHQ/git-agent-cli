@@ -395,8 +395,12 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 	remaining := make([]commit.CommitGroup, len(plan.Groups))
 	copy(remaining, plan.Groups)
-	s.out(req, "Planning commits: %d/%d, done.", len(remaining), len(remaining))
 	totalGroups := len(plan.Groups)
+	commitWord := "commits"
+	if totalGroups == 1 {
+		commitWord = "commit"
+	}
+	s.out(req, "Planning commits: done (%d %s).", totalGroups, commitWord)
 
 	var committed []SingleCommitResult
 	committedFiles := make(map[string]bool)
