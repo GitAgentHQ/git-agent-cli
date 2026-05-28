@@ -51,7 +51,22 @@ func stallHandler(t *testing.T) http.HandlerFunc {
 }
 
 func TestClient_PerAttemptTimeout(t *testing.T) {
-	server := httptest.NewServer(stallHandler(t))
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("http.ResponseWriter does not support hijacking")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(io.Discard, conn)
+	}))
 	defer server.Close()
 
 	var buf bytes.Buffer
@@ -66,24 +81,67 @@ func TestClient_PerAttemptTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	// Upper bound: 3 attempts × 1s + scheduling jitter. Allow generous slack
-	// for slow CI machines.
-	if elapsed > 5*time.Second {
-		t.Errorf("Generate took %s, expected ≤ 5s (3 attempts × 1s)", elapsed)
+	// Hotfix: the first timeout returns a typed error immediately. No retries
+	// happen at the openai-client layer, so exactly one HTTP request reaches
+	// the server and the call returns within a small multiple of the per-
+	// attempt timeout.
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("expected exactly 1 HTTP request, got %d", got)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("Generate took %s, expected close to the 1s per-attempt timeout", elapsed)
+	}
+
+	var target *commit.PlannerTimedOutError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *commit.PlannerTimedOutError, got %T: %v", err, err)
+	}
+	if target.Model != "test-model" {
+		t.Errorf("expected Model=test-model, got %q", target.Model)
+	}
+	if target.Timeout != 1*time.Second {
+		t.Errorf("expected Timeout=1s, got %s", target.Timeout)
+	}
+	if !errors.Is(err, commit.ErrPlannerTimedOut) {
+		t.Errorf("expected errors.Is(err, commit.ErrPlannerTimedOut) = true")
 	}
 
 	msg := err.Error()
-	if !strings.Contains(msg, "request timed out after 1s") {
-		t.Errorf("error missing 'request timed out after 1s', got: %q", msg)
-	}
-	if !strings.Contains(msg, "model=test-model") {
-		t.Errorf("error missing 'model=test-model', got: %q", msg)
-	}
 	if strings.Contains(msg, "context.DeadlineExceeded") {
 		t.Errorf("error leaks raw 'context.DeadlineExceeded', got: %q", msg)
 	}
 	if strings.Contains(msg, "panic") {
 		t.Errorf("error contains 'panic', got: %q", msg)
+	}
+}
+
+// TestClient_TimeoutReturnsTypedError locks in the hotfix contract: the per-
+// attempt deadline elapsing surfaces as a *commit.PlannerTimedOutError
+// populated with the configured model and timeout. Used by the cmd layer to
+// render an actionable diagnostic naming both fields.
+func TestClient_TimeoutReturnsTypedError(t *testing.T) {
+	server := httptest.NewServer(stallHandler(t))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "qwen3.6-flash", 750*time.Millisecond, 0, nil)
+
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		StagedDiff:   &diff.StagedDiff{Files: []string{"main.go"}},
+		UnstagedDiff: &diff.StagedDiff{},
+	})
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+
+	var target *commit.PlannerTimedOutError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *commit.PlannerTimedOutError, got %T: %v", err, err)
+	}
+	if target.Model != "qwen3.6-flash" {
+		t.Errorf("expected Model=qwen3.6-flash, got %q", target.Model)
+	}
+	if target.Timeout != 750*time.Millisecond {
+		t.Errorf("expected Timeout=750ms, got %s", target.Timeout)
 	}
 }
 

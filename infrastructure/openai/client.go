@@ -303,12 +303,19 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 			if stderrors.Is(ctx.Err(), context.Canceled) || stderrors.Is(err, context.Canceled) {
 				return "", err
 			}
-			// Per-attempt deadline elapsed: format an actionable message
-			// without leaking the raw sentinel, then continue retrying.
+			// Per-attempt deadline elapsed: return a typed error on the
+			// FIRST timeout, with no retry. Retrying with the same per-
+			// attempt timeout produces the same outcome — the model
+			// genuinely needed >timeout to respond — and the prior
+			// behaviour of three serial timeouts (4.5 min at the default
+			// 90s) wastes the caller's wall-clock for zero new signal.
+			// The cmd-layer translates the typed error into an actionable
+			// diagnostic.
 			if stderrors.Is(err, context.DeadlineExceeded) {
-				lastErr = fmt.Errorf("request timed out after %s (model=%s, attempt=%d/%d)",
-					c.requestTimeout, c.model, attempt+1, maxAttempts)
-				continue
+				return "", &commit.PlannerTimedOutError{
+					Model:   c.model,
+					Timeout: c.requestTimeout,
+				}
 			}
 			// Check for non-transient API errors that should not be retried.
 			if apiErr := classifyAPIError(err); apiErr != nil {
