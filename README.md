@@ -108,6 +108,30 @@ git-agent config set --local max-diff-bytes 524288 # raise the byte cap (e.g., 5
 
 When no scope flag is given, provider keys default to `--user` and all others to `--project`.
 
+### `git-agent completion`
+
+Generate shell completion scripts for git-agent.
+
+```bash
+git-agent completion bash         # bash completions
+git-agent completion zsh          # zsh completions
+git-agent completion fish         # fish completions
+git-agent completion powershell   # PowerShell completions
+```
+
+To load completions for each session, run once:
+
+```bash
+# bash (macOS)
+git-agent completion bash > $(brew --prefix)/etc/bash_completion.d/git-agent
+
+# zsh
+git-agent completion zsh > "${fpath[1]}/_git-agent"
+
+# fish
+git-agent completion fish > ~/.config/fish/completions/git-agent.fish
+```
+
 ### `git-agent version`
 
 Print the build version.
