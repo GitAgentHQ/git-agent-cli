@@ -613,8 +613,8 @@ func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []st
 	if err := unmarshalLLMJSON(raw, "scopes", &result); err != nil {
 		return nil, "", err
 	}
-	if len(result.Scopes) == 0 {
-		return nil, "", fmt.Errorf("LLM returned empty scopes\nraw: %s", extractJSON(raw))
-	}
+	// An empty scope list is a legitimate result for a fresh repository with
+	// no commit history or tracked files to derive scopes from. Init should
+	// still succeed and write an empty scopes list (which permits any scope).
 	return result.Scopes, result.Reasoning, nil
 }

@@ -349,3 +349,36 @@ func TestStallHandler_DoesStall(t *testing.T) {
 		t.Fatalf("expected timeout net.Error, got %v", err)
 	}
 }
+
+// A fresh repository with no history or tracked files legitimately yields no
+// scopes. GenerateScopes must return the empty list without error so that
+// `git agent init --scope` succeeds instead of bailing out.
+func TestClient_GenerateScopes_EmptyIsNotAnError(t *testing.T) {
+	body := `{
+  "id": "chatcmpl-test",
+  "object": "chat.completion",
+  "created": 0,
+  "model": "test-model",
+  "choices": [
+    {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "{\"scopes\": [], \"reasoning\": \"no history\"}"}}
+  ]
+}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	scopes, reasoning, err := c.GenerateScopes(context.Background(), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("expected no error for empty scopes, got %v", err)
+	}
+	if len(scopes) != 0 {
+		t.Errorf("expected empty scopes, got %d: %v", len(scopes), scopes)
+	}
+	if reasoning != "no history" {
+		t.Errorf("expected reasoning preserved, got %q", reasoning)
+	}
+}
