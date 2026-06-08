@@ -44,6 +44,20 @@ func TestScopeService_Generate_LLMError(t *testing.T) {
 	}
 }
 
+func TestScopeService_Generate_EmptyScopes(t *testing.T) {
+	llm := &mockLLMClient{scopes: []project.Scope{}, reasoning: "fresh repo"}
+	git := &mockGitReader{isGitRepo: true}
+	svc := application.NewScopeService(llm, git)
+
+	scopes, err := svc.Generate(context.Background(), 20, nil)
+	if err != nil {
+		t.Fatalf("expected no error for empty scopes, got %v", err)
+	}
+	if len(scopes) != 0 {
+		t.Errorf("expected empty scopes, got %d: %v", len(scopes), scopes)
+	}
+}
+
 func TestScopeService_MergeAndSave_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "project.yml")
