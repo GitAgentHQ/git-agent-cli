@@ -146,18 +146,31 @@ func TestClient_TimeoutReturnsTypedError(t *testing.T) {
 	}
 }
 
+// chatCompletionBody renders a canned chat-completion response whose single
+// choice carries content as the assistant message. Marshalling the content
+// through encoding/json keeps embedded quotes correctly escaped.
+func chatCompletionBody(t *testing.T, content string) []byte {
+	t.Helper()
+	body := map[string]any{
+		"id":      "chatcmpl-test",
+		"object":  "chat.completion",
+		"created": 0,
+		"model":   "test-model",
+		"choices": []map[string]any{
+			{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content}},
+		},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal chat completion body: %v", err)
+	}
+	return b
+}
+
 // slowResponseHandler sleeps before responding with a canned chat-completion
 // payload. Used to count heartbeat ticks fired while the request is in flight.
-func slowResponseHandler(sleep time.Duration) http.HandlerFunc {
-	body := `{
-  "id": "chatcmpl-test",
-  "object": "chat.completion",
-  "created": 0,
-  "model": "test-model",
-  "choices": [
-    {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "{\"title\":\"feat: x\",\"bullets\":[\"X\"],\"explanation\":\"E.\"}"}}
-  ]
-}`
+func slowResponseHandler(t *testing.T, sleep time.Duration) http.HandlerFunc {
+	body := chatCompletionBody(t, `{"title":"feat: x","bullets":["X"],"explanation":"E."}`)
 	return func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-time.After(sleep):
@@ -165,12 +178,12 @@ func slowResponseHandler(sleep time.Duration) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
+		_, _ = w.Write(body)
 	}
 }
 
 func TestClient_HeartbeatTicks(t *testing.T) {
-	server := httptest.NewServer(slowResponseHandler(350 * time.Millisecond))
+	server := httptest.NewServer(slowResponseHandler(t, 350*time.Millisecond))
 	defer server.Close()
 
 	var buf bytes.Buffer
@@ -207,7 +220,7 @@ func TestClient_HeartbeatNoSecretLeakage(t *testing.T) {
 		baseHost  = "proxy.example.com"
 		modelName = "gpt-x"
 	)
-	server := httptest.NewServer(slowResponseHandler(200 * time.Millisecond))
+	server := httptest.NewServer(slowResponseHandler(t, 200*time.Millisecond))
 	defer server.Close()
 
 	var buf bytes.Buffer
@@ -239,7 +252,7 @@ func TestClient_HeartbeatNoSecretLeakage(t *testing.T) {
 }
 
 func TestClient_HeartbeatNoOpWhenOutNil(t *testing.T) {
-	server := httptest.NewServer(slowResponseHandler(50 * time.Millisecond))
+	server := httptest.NewServer(slowResponseHandler(t, 50*time.Millisecond))
 	defer server.Close()
 
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 10*time.Millisecond, nil)
@@ -351,27 +364,6 @@ func TestStallHandler_DoesStall(t *testing.T) {
 	}
 }
 
-// chatCompletionBody renders a canned chat-completion response whose single
-// choice carries content as the assistant message. Marshalling the content
-// through encoding/json keeps embedded quotes correctly escaped.
-func chatCompletionBody(t *testing.T, content string) []byte {
-	t.Helper()
-	body := map[string]any{
-		"id":      "chatcmpl-test",
-		"object":  "chat.completion",
-		"created": 0,
-		"model":   "test-model",
-		"choices": []map[string]any{
-			{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content}},
-		},
-	}
-	b, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal chat completion body: %v", err)
-	}
-	return b
-}
-
 // planRequestMessages decodes the system and user prompts from an inbound
 // chat-completion request.
 func planRequestMessages(t *testing.T, r *http.Request) (system, user string) {
@@ -447,16 +439,24 @@ func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
 	}
 }
 
-// When even the unscoped retry yields no groups, Plan surfaces the empty-plan
-// error rather than retrying further.
-func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
-	var count int32
+// emptyPlanServer serves {"groups": []} for every plan request and counts
+// inbound requests.
+func emptyPlanServer(t *testing.T) (*httptest.Server, *int32) {
+	t.Helper()
+	count := new(int32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&count, 1)
+		atomic.AddInt32(count, 1)
 		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(chatCompletionBody(t, `{"groups": []}`))
 	}))
+	return server, count
+}
+
+// When even the unscoped retry yields no groups, Plan surfaces the empty-plan
+// error rather than retrying further.
+func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
+	server, count := emptyPlanServer(t)
 	defer server.Close()
 
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
@@ -473,7 +473,7 @@ func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "empty plan") {
 		t.Errorf("expected empty-plan error, got: %v", err)
 	}
-	if got := atomic.LoadInt32(&count); got != 2 {
+	if got := atomic.LoadInt32(count); got != 2 {
 		t.Errorf("expected exactly 2 plan requests (scoped + unscoped retry), got %d", got)
 	}
 }
@@ -481,13 +481,7 @@ func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
 // Without configured scopes there is no scope constraint to relax, so an
 // empty plan fails after a single request.
 func TestClient_Plan_UnscopedEmptyPlanFailsWithoutRetry(t *testing.T) {
-	var count int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&count, 1)
-		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(chatCompletionBody(t, `{"groups": []}`))
-	}))
+	server, count := emptyPlanServer(t)
 	defer server.Close()
 
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
@@ -501,7 +495,7 @@ func TestClient_Plan_UnscopedEmptyPlanFailsWithoutRetry(t *testing.T) {
 	if !strings.Contains(err.Error(), "empty plan") {
 		t.Errorf("expected empty-plan error, got: %v", err)
 	}
-	if got := atomic.LoadInt32(&count); got != 1 {
+	if got := atomic.LoadInt32(count); got != 1 {
 		t.Errorf("expected exactly 1 plan request, got %d", got)
 	}
 }
