@@ -20,6 +20,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/domain/commit"
 	"github.com/gitagenthq/git-agent/domain/diff"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 func TestMain(m *testing.M) {
@@ -347,6 +348,161 @@ func TestStallHandler_DoesStall(t *testing.T) {
 	var nerr net.Error
 	if !errors.As(err, &nerr) || !nerr.Timeout() {
 		t.Fatalf("expected timeout net.Error, got %v", err)
+	}
+}
+
+// chatCompletionBody renders a canned chat-completion response whose single
+// choice carries content as the assistant message. Marshalling the content
+// through encoding/json keeps embedded quotes correctly escaped.
+func chatCompletionBody(t *testing.T, content string) []byte {
+	t.Helper()
+	body := map[string]any{
+		"id":      "chatcmpl-test",
+		"object":  "chat.completion",
+		"created": 0,
+		"model":   "test-model",
+		"choices": []map[string]any{
+			{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content}},
+		},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal chat completion body: %v", err)
+	}
+	return b
+}
+
+// planRequestMessages decodes the system and user prompts from an inbound
+// chat-completion request.
+func planRequestMessages(t *testing.T, r *http.Request) (system, user string) {
+	t.Helper()
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Errorf("decode request: %v", err)
+		return "", ""
+	}
+	if len(req.Messages) < 2 {
+		t.Errorf("expected system+user messages, got %d", len(req.Messages))
+		return "", ""
+	}
+	return req.Messages[0].Content, req.Messages[1].Content
+}
+
+// A scoped plan can come back as {"groups": []} when no configured scope
+// covers the changed files — the scoped prompt forbids unlisted scopes and
+// scope generation deliberately skips docs/asset directories, so a docs-only
+// changeset has no legal scope. Plan must retry once with the unscoped
+// prompt instead of surfacing a fatal "empty plan" error.
+func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
+	var systems, users []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user := planRequestMessages(t, r)
+		systems = append(systems, system)
+		users = append(users, user)
+		content := `{"groups": []}`
+		if system == planSystemPrompt {
+			content = `{"groups": [{"files": ["docs/retros/log.jsonl"], "title": "docs: update retro log", "bullets": ["Add entry"], "explanation": "Records the retro."}]}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, content))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	plan, err := c.Plan(context.Background(), commit.PlanRequest{
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+		Config: &project.Config{Scopes: []project.Scope{
+			{Name: "app", Description: "application logic in src/"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("expected unscoped retry to recover, got error: %v", err)
+	}
+	if len(plan.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(plan.Groups))
+	}
+	if plan.Groups[0].Message.Title != "docs: update retro log" {
+		t.Errorf("expected retry plan title, got %q", plan.Groups[0].Message.Title)
+	}
+	if len(systems) != 2 {
+		t.Fatalf("expected exactly 2 plan requests, got %d", len(systems))
+	}
+	if systems[0] != planSystemPromptScoped {
+		t.Errorf("first request must use the scoped system prompt")
+	}
+	if systems[1] != planSystemPrompt {
+		t.Errorf("retry must use the unscoped system prompt")
+	}
+	if !strings.Contains(users[0], "REQUIRED scopes") {
+		t.Errorf("scoped request must list the configured scopes, got %q", users[0])
+	}
+	if strings.Contains(users[1], "REQUIRED scopes") {
+		t.Errorf("retry must not resend the scope list the LLM could not satisfy, got %q", users[1])
+	}
+}
+
+// When even the unscoped retry yields no groups, Plan surfaces the empty-plan
+// error rather than retrying further.
+func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups": []}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+		Config: &project.Config{Scopes: []project.Scope{
+			{Name: "app", Description: "application logic in src/"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected empty-plan error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty plan") {
+		t.Errorf("expected empty-plan error, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&count); got != 2 {
+		t.Errorf("expected exactly 2 plan requests (scoped + unscoped retry), got %d", got)
+	}
+}
+
+// Without configured scopes there is no scope constraint to relax, so an
+// empty plan fails after a single request.
+func TestClient_Plan_UnscopedEmptyPlanFailsWithoutRetry(t *testing.T) {
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups": []}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+	})
+	if err == nil {
+		t.Fatal("expected empty-plan error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty plan") {
+		t.Errorf("expected empty-plan error, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&count); got != 1 {
+		t.Errorf("expected exactly 1 plan request, got %d", got)
 	}
 }
 
