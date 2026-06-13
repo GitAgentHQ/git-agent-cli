@@ -128,6 +128,49 @@ func TestClient_StagedDiffNumStat(t *testing.T) {
 	}
 }
 
+func TestClient_AllChangedFiles_NonASCIIPath(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	const name = "项目复盘.md"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	c := NewClient()
+	files, err := c.AllChangedFiles(context.Background())
+	if err != nil {
+		t.Fatalf("AllChangedFiles: %v", err)
+	}
+
+	var found bool
+	for _, f := range files {
+		if f == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected verbatim path %q in %v", name, files)
+	}
+
+	// The verbatim path must round-trip back into a pathspec for staging.
+	if err := c.StageFiles(context.Background(), files); err != nil {
+		t.Fatalf("StageFiles(%v): %v", files, err)
+	}
+}
+
 func TestParseNameStatus(t *testing.T) {
 	tests := []struct {
 		name  string
