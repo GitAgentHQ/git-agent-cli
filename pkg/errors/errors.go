@@ -1,5 +1,12 @@
 package errors
 
+import "errors"
+
+// ErrNothingToCommit signals that `git commit` found no staged changes. Git
+// reports this on stdout (not stderr) with exit code 1; callers match it to skip
+// an empty commit group instead of aborting the whole run.
+var ErrNothingToCommit = errors.New("nothing to commit")
+
 // ExitCodeError carries an exit code alongside the error message.
 type ExitCodeError struct {
 	Code    int
