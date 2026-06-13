@@ -3,11 +3,14 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 func TestGitUnquote(t *testing.T) {
@@ -168,6 +171,29 @@ func TestClient_AllChangedFiles_NonASCIIPath(t *testing.T) {
 	// The verbatim path must round-trip back into a pathspec for staging.
 	if err := c.StageFiles(context.Background(), files); err != nil {
 		t.Fatalf("StageFiles(%v): %v", files, err)
+	}
+}
+
+func TestClient_Commit_NothingToCommit(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	// Nothing staged: git prints "nothing to commit" to stdout and exits 1.
+	_, err = NewClient().Commit(context.Background(), "feat(cli): noop")
+	if !errors.Is(err, pkgerrors.ErrNothingToCommit) {
+		t.Fatalf("expected ErrNothingToCommit, got %v", err)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/domain/commit"
 	"github.com/gitagenthq/git-agent/domain/diff"
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 type Client struct{}
@@ -72,14 +73,25 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) Commit(ctx context.Context, message string) (string, error) {
-	cmd := gitCmd(ctx, "commit", "-m", message)
+	return runCommit(ctx, "commit", "-m", message)
+}
+
+// runCommit executes a `git commit` variant and normalizes failures. Git reports
+// an empty index ("nothing to commit") on stdout — not stderr — with exit 1, so
+// combined output is captured: that case maps to ErrNothingToCommit (callers skip
+// the group), and any other failure surfaces the real git output instead of a
+// bare "exit status 1".
+func runCommit(ctx context.Context, args ...string) (string, error) {
+	cmd := gitCmd(ctx, args...)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
+		if bytes.Contains(out, []byte("nothing to commit")) ||
+			bytes.Contains(out, []byte("nothing added to commit")) ||
+			bytes.Contains(out, []byte("no changes added to commit")) {
+			return "", pkgerrors.ErrNothingToCommit
 		}
-		return "", err
+		return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 	}
 	return strings.TrimRight(string(out), "\n"), nil
 }
@@ -380,16 +392,7 @@ func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) AmendCommit(ctx context.Context, message string) (string, error) {
-	cmd := gitCmd(ctx, "commit", "--amend", "-m", message)
-	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
-		}
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\n"), nil
+	return runCommit(ctx, "commit", "--amend", "-m", message)
 }
 
 // FormatTrailers pipes message into `git interpret-trailers` and returns the
