@@ -12,6 +12,7 @@ import (
 	"github.com/gitagenthq/git-agent/domain/diff"
 	"github.com/gitagenthq/git-agent/domain/hook"
 	"github.com/gitagenthq/git-agent/domain/project"
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 var ErrHookBlocked = errors.New("hook blocked commit")
@@ -614,6 +615,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		}
 		gitOut, err := s.git.Commit(ctx, assembled)
 		if err != nil {
+			if errors.Is(err, pkgerrors.ErrNothingToCommit) {
+				s.vlog(req, "skipping group (nothing to commit at commit time): %v", group.Files)
+				continue
+			}
 			return nil, err
 		}
 		result.GitOutput = gitOut
