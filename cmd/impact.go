@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,11 +18,15 @@ import (
 )
 
 var impactCmd = &cobra.Command{
-	Use:   "impact <path>",
-	Short: "Show files affected by changing a target path",
-	Long:  "Analyze co-change patterns to show which files are typically modified together with the target. Auto-indexes git history on first run.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runImpact,
+	Use:   "impact [path...]",
+	Short: "Show files likely to change with a feature",
+	Long: `Analyze co-change patterns to show which files are typically modified
+together with the given seeds. Seeds may be one or more files or directories;
+with no arguments, the current working-tree changes are used as seeds — "given
+what I've edited, what else usually changes?". Files coupled to several seeds
+rank highest. Auto-indexes git history on first run.`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runImpact,
 }
 
 func runImpact(cmd *cobra.Command, args []string) error {
@@ -39,15 +44,27 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
-
-	// The graph stores repo-relative paths. Accept whatever form the caller
-	// passes — absolute, ./-prefixed, or relative to a subdirectory — and
-	// resolve it the way git resolves a pathspec: against the current dir.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	targetPath := normalizeRepoPath(root, cwd, args[0])
+
+	graphGit := infraGit.NewGraphClient(root)
+
+	// Resolve the seed set: explicit paths/dirs, or — with no args — the files
+	// the user is currently changing ("what else moves with my edits?").
+	seeds, err := resolveSeeds(ctx, args, root, cwd, graphGit)
+	if err != nil {
+		return err
+	}
+	if len(seeds) == 0 {
+		if len(args) == 0 {
+			fmt.Fprintln(cmd.ErrOrStderr(), "No working-tree changes to analyze. Pass one or more files or directories.")
+		} else {
+			fmt.Fprintln(cmd.ErrOrStderr(), "No graph-tracked files matched the given paths.")
+		}
+		return nil
+	}
 
 	dbPath := filepath.Join(root, ".git-agent", "graph.db")
 
@@ -66,7 +83,6 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("init schema: %w", err)
 	}
 
-	graphGit := infraGit.NewGraphClient(root)
 	indexSvc := application.NewIndexService(repo, graphGit)
 	ensureIndexSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
 
@@ -81,7 +97,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 	impactSvc := application.NewImpactService(repo)
 	result, err := impactSvc.Impact(ctx, graph.ImpactRequest{
-		Path:     targetPath,
+		Paths:    seeds,
 		Depth:    depth,
 		Top:      top,
 		MinCount: minCount,
@@ -91,6 +107,58 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	}
 
 	return outputResult(cmd, result, jsonFlag, textFlag)
+}
+
+// resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
+// the working-tree changes are used. Each arg is normalized (git pathspec
+// semantics); a directory expands to the git-tracked files beneath it.
+func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit *infraGit.GraphClient) ([]string, error) {
+	seen := make(map[string]bool)
+	var seeds []string
+	add := func(p string) {
+		if p != "" && !isToolingPath(p) && !seen[p] {
+			seen[p] = true
+			seeds = append(seeds, p)
+		}
+	}
+
+	if len(args) == 0 {
+		changed, err := graphGit.DiffNameOnly(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list working-tree changes: %w", err)
+		}
+		for _, f := range changed {
+			add(f)
+		}
+		return seeds, nil
+	}
+
+	for _, arg := range args {
+		rel := normalizeRepoPath(root, cwd, arg)
+		if info, err := os.Stat(filepath.Join(root, rel)); err == nil && info.IsDir() {
+			files, err := graphGit.TrackedFiles(ctx, rel)
+			if err != nil {
+				return nil, fmt.Errorf("expand directory %q: %w", arg, err)
+			}
+			for _, f := range files {
+				add(f)
+			}
+			continue
+		}
+		add(rel)
+	}
+	return seeds, nil
+}
+
+// isToolingPath reports whether a path lives in an agent-tooling directory that
+// should never be treated as part of the codebase feature being analyzed.
+func isToolingPath(p string) bool {
+	for _, dir := range []string{".git-agent", ".claude"} {
+		if p == dir || strings.HasPrefix(p, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func outputError(jsonFlag, textFlag bool, err error) error {
@@ -114,7 +182,7 @@ func outputResult(cmd *cobra.Command, result *graph.ImpactResult, jsonFlag, text
 func outputText(cmd *cobra.Command, result *graph.ImpactResult) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintf(out, "Impact of %s:\n\n", result.Target)
+	fmt.Fprintf(out, "Impact of %s:\n\n", strings.Join(result.Targets, ", "))
 
 	if len(result.CoChanged) == 0 {
 		fmt.Fprintf(out, "  (no co-changed files found)\n\n")
@@ -130,22 +198,27 @@ func outputText(cmd *cobra.Command, result *graph.ImpactResult) error {
 		}
 	}
 
+	totalSeeds := len(result.Targets)
 	for _, e := range result.CoChanged {
-		fmt.Fprintln(out, formatImpactLine(e, maxLen))
+		fmt.Fprintln(out, formatImpactLine(e, maxLen, totalSeeds))
 	}
 
 	fmt.Fprintf(out, "\n%d co-changed files found | query: %dms\n", result.TotalFound, result.QueryMs)
 	return nil
 }
 
-// formatImpactLine renders one co-change row. Entries reached transitively
-// (depth > 1) are marked so an indirect coupling is never misread as a direct
-// one — the percentage shown is the strength of the last hop, not of a direct
-// target-to-file link.
-func formatImpactLine(e graph.ImpactEntry, maxLen int) string {
+// formatImpactLine renders one co-change row. With multiple seeds it shows how
+// many of them the file is coupled to (breadth across the feature). Entries
+// reached transitively (depth > 1) are marked so an indirect coupling is never
+// misread as a direct one — the percentage shown is the strength of the last
+// hop, not of a direct seed-to-file link.
+func formatImpactLine(e graph.ImpactEntry, maxLen, totalSeeds int) string {
 	padding := strings.Repeat(" ", maxLen-len(e.Path)+2)
 	pct := int(e.CouplingStrength * 100)
 	line := fmt.Sprintf("  %s%s%3d%%  (%d co-changes)", e.Path, padding, pct, e.CouplingCount)
+	if totalSeeds > 1 && e.Depth <= 1 {
+		line += fmt.Sprintf("  [%d/%d seeds: %s]", e.SeedMatches, totalSeeds, strings.Join(e.RelatedTo, ", "))
+	}
 	if e.Depth > 1 {
 		line += fmt.Sprintf("  [indirect, depth %d]", e.Depth)
 	}
