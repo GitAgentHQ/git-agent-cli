@@ -42,6 +42,26 @@ end to end:
   to 0; now parsed from the action diff (verified: a 4-add/1-delete edit is
   recorded as +4/-1).
 
+## Feature-level impact — multi-seed aggregation
+
+A feature is a SET of files, not one. `impact` now accepts several seeds and
+aggregates their co-change neighbours so a file coupled to many of the feature's
+files ranks above one coupled to a single file — the files most likely to also
+need changes surface first. Three ways an agent supplies the feature:
+
+- **Multiple files** — `impact a.go b.go` ranks shared neighbours first, each
+  annotated `[N/M seeds: ...]` (and `related_to` in JSON).
+- **A directory** — `impact internal/auth/` expands to the tracked files under it.
+- **No arguments** — seeds are the current working-tree changes: "given what
+  I've already edited, what else usually moves with it?" — the natural call for
+  an agent mid-task. Tooling dirs (`.git-agent/`, `.claude/`) are never seeds.
+
+Each result carries `score` (sum of coupling strengths over matched seeds),
+`seed_matches`, and `related_to`, so an agent can prioritise which related
+files to open. Verified on the real 259-commit clone: querying
+`commit_service.go` + `cmd/commit.go` correctly surfaces `commit_service_test.go`
+and the openai/git/config collaborators as `[2/2 seeds]`.
+
 ## Structural awareness in the commit flow — co-change A/B
 
 Question: does injecting co-change hints into the commit planner improve

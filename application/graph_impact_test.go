@@ -58,14 +58,14 @@ func TestImpactService_BasicCoChange(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path: "main.go",
+		Paths: []string{"main.go"},
 	})
 	if err != nil {
 		t.Fatalf("Impact() error = %v", err)
 	}
 
-	if result.Target != "main.go" {
-		t.Errorf("Target = %q, want %q", result.Target, "main.go")
+	if len(result.Targets) != 1 || result.Targets[0] != "main.go" {
+		t.Errorf("Targets = %v, want [main.go]", result.Targets)
 	}
 	if len(result.CoChanged) != 3 {
 		t.Fatalf("len(CoChanged) = %d, want 3", len(result.CoChanged))
@@ -99,7 +99,7 @@ func TestImpactService_WithRenames(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path: "new_name.go",
+		Paths: []string{"new_name.go"},
 	})
 	if err != nil {
 		t.Fatalf("Impact() error = %v", err)
@@ -131,7 +131,7 @@ func TestImpactService_Depth2(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path:  "a.go",
+		Paths: []string{"a.go"},
 		Depth: 2,
 	})
 	if err != nil {
@@ -167,8 +167,8 @@ func TestImpactService_TopLimit(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path: "target.go",
-		Top:  3,
+		Paths: []string{"target.go"},
+		Top:   3,
 	})
 	if err != nil {
 		t.Fatalf("Impact() error = %v", err)
@@ -197,7 +197,7 @@ func TestImpactService_MinCount(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path:     "target.go",
+		Paths:    []string{"target.go"},
 		MinCount: 3,
 	})
 	if err != nil {
@@ -217,7 +217,7 @@ func TestImpactService_NonExistentFile(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path: "does_not_exist.go",
+		Paths: []string{"does_not_exist.go"},
 	})
 	if err != nil {
 		t.Fatalf("Impact() error = %v, want nil", err)
@@ -235,9 +235,9 @@ func TestImpactService_EmptyPath(t *testing.T) {
 
 	svc := NewImpactService(repo)
 	_, err := svc.Impact(context.Background(), graph.ImpactRequest{
-		Path: "",
+		Paths: nil,
 	})
 	if err == nil {
-		t.Fatal("Impact() with empty path should return error")
+		t.Fatal("Impact() with no seed paths should return error")
 	}
 }

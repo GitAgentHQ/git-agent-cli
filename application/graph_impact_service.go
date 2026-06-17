@@ -7,7 +7,7 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
-// ImpactService queries co-change impact for a given file.
+// ImpactService queries co-change impact for one or more seed files.
 type ImpactService struct {
 	repo graph.GraphRepository
 }
@@ -17,12 +17,20 @@ func NewImpactService(repo graph.GraphRepository) *ImpactService {
 	return &ImpactService{repo: repo}
 }
 
-// Impact returns the co-changed files for the given path, applying defaults
-// and validation before delegating to the repository.
+// Impact returns the aggregated co-change neighbours of the seed paths, applying
+// defaults and validation before delegating to the repository. Blank seeds are
+// dropped; at least one non-empty seed is required.
 func (s *ImpactService) Impact(ctx context.Context, req graph.ImpactRequest) (*graph.ImpactResult, error) {
-	if req.Path == "" {
-		return nil, fmt.Errorf("impact: path must not be empty")
+	seeds := make([]string, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		if p != "" {
+			seeds = append(seeds, p)
+		}
 	}
+	if len(seeds) == 0 {
+		return nil, fmt.Errorf("impact: at least one seed path is required")
+	}
+	req.Paths = seeds
 
 	if req.Depth <= 0 {
 		req.Depth = 1

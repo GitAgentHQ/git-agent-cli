@@ -41,7 +41,7 @@ func (p *GraphCoChangeProvider) GetHintsForFiles(ctx context.Context, files []st
 
 	for _, f := range files {
 		result, err := p.repo.Impact(ctx, graph.ImpactRequest{
-			Path:     f,
+			Paths:    []string{f},
 			Depth:    1,
 			Top:      5,
 			MinCount: 3,
