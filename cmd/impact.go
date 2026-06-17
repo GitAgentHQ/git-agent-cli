@@ -25,8 +25,6 @@ var impactCmd = &cobra.Command{
 }
 
 func runImpact(cmd *cobra.Command, args []string) error {
-	targetPath := args[0]
-
 	depth, _ := cmd.Flags().GetInt("depth")
 	top, _ := cmd.Flags().GetInt("top")
 	minCount, _ := cmd.Flags().GetInt("min-count")
@@ -41,6 +39,15 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
+
+	// The graph stores repo-relative paths. Accept whatever form the caller
+	// passes — absolute, ./-prefixed, or relative to a subdirectory — and
+	// resolve it the way git resolves a pathspec: against the current dir.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	targetPath := normalizeRepoPath(root, cwd, args[0])
 
 	dbPath := filepath.Join(root, ".git-agent", "graph.db")
 
@@ -131,6 +138,48 @@ func outputText(cmd *cobra.Command, result *graph.ImpactResult) error {
 
 	fmt.Fprintf(out, "\n%d co-changed files found | query: %dms\n", result.TotalFound, result.QueryMs)
 	return nil
+}
+
+// normalizeRepoPath converts a user-supplied path into the repo-relative form
+// the graph stores. It resolves the target against cwd (git pathspec semantics)
+// and rebases onto the repo root, resolving symlinks on both sides so that a
+// caller-supplied /tmp/... path matches a root that git reports as /private/tmp
+// (the macOS case). Paths that resolve outside the repo are returned cleaned
+// but otherwise untouched.
+func normalizeRepoPath(root, cwd, target string) string {
+	abs := target
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, target)
+	}
+	abs = realPath(abs)
+	root = realPath(root)
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.Clean(target)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// realPath canonicalizes p by resolving symlinks. The target file may not exist
+// (e.g. querying a deleted file's history), so it falls back to resolving the
+// longest existing ancestor and re-appending the remainder.
+func realPath(p string) string {
+	if rp, err := filepath.EvalSymlinks(p); err == nil {
+		return rp
+	}
+	dir, base := filepath.Split(filepath.Clean(p))
+	dir = filepath.Clean(dir)
+	if dir == "" || dir == p {
+		return p
+	}
+	if rp, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(rp, base)
+	}
+	parent := realPath(dir)
+	if parent == dir {
+		return p
+	}
+	return filepath.Join(parent, base)
 }
 
 func useJSON(jsonFlag, textFlag bool) bool {
