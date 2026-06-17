@@ -182,7 +182,7 @@ func outputResult(cmd *cobra.Command, result *graph.ImpactResult, jsonFlag, text
 func outputText(cmd *cobra.Command, result *graph.ImpactResult) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintf(out, "Impact of %s:\n\n", strings.Join(result.Targets, ", "))
+	fmt.Fprintf(out, "Impact of %s:\n\n", summarizeTargets(result.Targets))
 
 	if len(result.CoChanged) == 0 {
 		fmt.Fprintf(out, "  (no co-changed files found)\n\n")
@@ -217,12 +217,30 @@ func formatImpactLine(e graph.ImpactEntry, maxLen, totalSeeds int) string {
 	pct := int(e.CouplingStrength * 100)
 	line := fmt.Sprintf("  %s%s%3d%%  (%d co-changes)", e.Path, padding, pct, e.CouplingCount)
 	if totalSeeds > 1 && e.Depth <= 1 {
-		line += fmt.Sprintf("  [%d/%d seeds: %s]", e.SeedMatches, totalSeeds, strings.Join(e.RelatedTo, ", "))
+		line += fmt.Sprintf("  [%d/%d seeds: %s]", e.SeedMatches, totalSeeds, capJoin(e.RelatedTo, 4))
 	}
 	if e.Depth > 1 {
 		line += fmt.Sprintf("  [indirect, depth %d]", e.Depth)
 	}
 	return line
+}
+
+// capJoin joins up to max items with ", " and appends " +N" for the remainder,
+// so long seed lists stay readable (a directory can expand to 100+ seeds).
+func capJoin(items []string, max int) string {
+	if len(items) <= max {
+		return strings.Join(items, ", ")
+	}
+	return strings.Join(items[:max], ", ") + fmt.Sprintf(" +%d", len(items)-max)
+}
+
+// summarizeTargets renders the seed set for the header, bounded so a directory
+// expanding to many files does not print a wall of paths.
+func summarizeTargets(targets []string) string {
+	if len(targets) <= 3 {
+		return strings.Join(targets, ", ")
+	}
+	return fmt.Sprintf("%s +%d more (%d seeds)", strings.Join(targets[:3], ", "), len(targets)-3, len(targets))
 }
 
 // normalizeRepoPath converts a user-supplied path into the repo-relative form

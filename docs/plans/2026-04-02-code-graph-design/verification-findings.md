@@ -90,6 +90,32 @@ first-ever coupling is unpredictable by construction. The framework is a strong
 assist (catches ~half the related files from one seed, ~2× a naive guess, more
 with multiple seeds), not an oracle.
 
+## External validation — a third-party repo (cli/cli, 11,450 commits)
+
+Repeated the temporal hold-out backtest on `github.com/cli/cli` — a large,
+actively-developed product the framework was never tuned for.
+
+| metric (39 real feature commits, top-10)        | git-agent impact | popularity |
+|-------------------------------------------------|------------------|------------|
+| mean recall of held-out files                   | **57%**          | 5%         |
+| commits with ≥1 correct prediction              | **69%**          | 10%        |
+
+The baseline collapses on a large modular codebase (popularity means little when
+no file dominates), so co-change wins by ~11×. Textbook hits: `clone.go` →
+`clone_test.go`, `view.go` → `view_test.go`, `feature_detection_test.go` →
+`detector_mock.go`, the three `third-party-licenses.{darwin,linux,windows}.md`
+predicting each other.
+
+### Performance fixes surfaced by the large repo
+
+First-run indexing of 11,450 commits dropped from **11.4s → 2.3s (≈5×)**:
+batching all per-commit writes into one transaction (3.2s → 0.34s) and running
+`ANALYZE` before the co-change self-join, without which the pure-Go SQLite
+planner chose a nested-loop scan (recompute 6.4s → 0.22s). Results are byte-for-
+byte identical; only speed changed. Robustness held up: reindex is idempotent,
+incremental indexing of a new commit is ~96ms, and a directory seed that expands
+to 100+ files now prints a bounded summary instead of a wall of paths.
+
 ## Structural awareness in the commit flow — co-change A/B
 
 Question: does injecting co-change hints into the commit planner improve
