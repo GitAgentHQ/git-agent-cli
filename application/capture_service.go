@@ -40,7 +40,7 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("diff name only: %w", err)
 	}
-	changedFiles = excludeGitAgentPaths(changedFiles)
+	changedFiles = excludeToolingPaths(changedFiles)
 	if len(changedFiles) == 0 {
 		return &graph.CaptureResult{
 			Skipped:   true,
@@ -163,19 +163,33 @@ func (s *CaptureService) endSession(ctx context.Context, source, instanceID stri
 	}, nil
 }
 
-// excludeGitAgentPaths drops git-agent's own state directory from the captured
-// file set. The graph DB (and its -shm/-wal siblings) churns on every capture;
-// recording it as agent work pollutes the timeline and action attribution, the
-// same way git never reports changes inside .git/.
-func excludeGitAgentPaths(files []string) []string {
+// toolingDirs are agent-tooling directories whose contents are never the
+// agent's code work: git-agent's own graph DB (churns on every capture) and
+// Claude Code's config (written by `init --agent-hook`). Recording them
+// pollutes the timeline and action attribution, the same way git never reports
+// changes inside .git/.
+var toolingDirs = []string{".git-agent", ".claude"}
+
+// excludeToolingPaths drops agent-tooling directories from the captured file
+// set so each action reflects only the codebase changes the agent made.
+func excludeToolingPaths(files []string) []string {
 	filtered := files[:0:0]
 	for _, f := range files {
-		if f == ".git-agent" || strings.HasPrefix(f, ".git-agent/") {
+		if isToolingPath(f) {
 			continue
 		}
 		filtered = append(filtered, f)
 	}
 	return filtered
+}
+
+func isToolingPath(f string) bool {
+	for _, dir := range toolingDirs {
+		if f == dir || strings.HasPrefix(f, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func truncateDiff(d string) string {

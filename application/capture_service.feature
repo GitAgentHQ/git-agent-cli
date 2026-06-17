@@ -2,20 +2,20 @@ Feature: Capture Service
 
   As a coding agent recording fine-grained actions into the graph,
   each capture must reflect only the files the agent actually changed,
-  never git-agent's own state.
+  never agent-tooling state (git-agent's graph DB or Claude Code's config).
 
   Background:
     Given a git repository with a graph database under .git-agent/
 
-  Scenario: A capture excludes git-agent's own database files
+  Scenario: A capture excludes agent-tooling directories
     Given the working tree shows ".git-agent/graph.db", ".git-agent/graph.db-shm",
-      ".git-agent/graph.db-wal", and "src/main.go" as changed
+      ".git-agent/graph.db-wal", ".claude/settings.json", and "src/main.go" as changed
     When Capture is called
     Then the recorded action's files_changed is exactly ["src/main.go"]
-    And no path under ".git-agent/" is recorded as agent work
+    And no path under ".git-agent/" or ".claude/" is recorded as agent work
 
-  Scenario: A capture of only git-agent metadata is a no-op
-    Given the only changed paths are under ".git-agent/"
+  Scenario: A capture of only tooling metadata is a no-op
+    Given the only changed paths are under ".git-agent/" or ".claude/"
     When Capture is called
     Then the capture is skipped
     And no session or action is created
