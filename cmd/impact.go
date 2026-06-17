@@ -131,13 +131,25 @@ func outputText(cmd *cobra.Command, result *graph.ImpactResult) error {
 	}
 
 	for _, e := range result.CoChanged {
-		padding := strings.Repeat(" ", maxLen-len(e.Path)+2)
-		pct := int(e.CouplingStrength * 100)
-		fmt.Fprintf(out, "  %s%s%3d%%  (%d co-changes)\n", e.Path, padding, pct, e.CouplingCount)
+		fmt.Fprintln(out, formatImpactLine(e, maxLen))
 	}
 
 	fmt.Fprintf(out, "\n%d co-changed files found | query: %dms\n", result.TotalFound, result.QueryMs)
 	return nil
+}
+
+// formatImpactLine renders one co-change row. Entries reached transitively
+// (depth > 1) are marked so an indirect coupling is never misread as a direct
+// one — the percentage shown is the strength of the last hop, not of a direct
+// target-to-file link.
+func formatImpactLine(e graph.ImpactEntry, maxLen int) string {
+	padding := strings.Repeat(" ", maxLen-len(e.Path)+2)
+	pct := int(e.CouplingStrength * 100)
+	line := fmt.Sprintf("  %s%s%3d%%  (%d co-changes)", e.Path, padding, pct, e.CouplingCount)
+	if e.Depth > 1 {
+		line += fmt.Sprintf("  [indirect, depth %d]", e.Depth)
+	}
+	return line
 }
 
 // normalizeRepoPath converts a user-supplied path into the repo-relative form

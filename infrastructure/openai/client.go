@@ -576,7 +576,7 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 		for _, h := range req.CoChangeHints {
 			lines = append(lines, fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100))
 		}
-		planParts = append(planParts, "Files that frequently change together (consider grouping in same commit):\n"+strings.Join(lines, "\n"))
+		planParts = append(planParts, "Historical co-change — these file pairs are usually committed together. Keep each pair in the SAME commit group unless their diffs are clearly unrelated:\n"+strings.Join(lines, "\n"))
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
 

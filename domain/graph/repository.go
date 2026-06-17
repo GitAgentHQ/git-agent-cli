@@ -37,8 +37,10 @@ type GraphRepository interface {
 	UpsertSession(ctx context.Context, s SessionNode) error
 	EndSession(ctx context.Context, sessionID string) error
 	CreateAction(ctx context.Context, a ActionNode) error
-	// CreateActionBatch atomically creates an action and its modifies edges in a single transaction.
-	CreateActionBatch(ctx context.Context, a ActionNode, modifiedFiles []string) error
+	// CreateActionBatch atomically creates an action and its modifies edges in a
+	// single transaction. Each FileChange carries the per-file addition and
+	// deletion counts for the action.
+	CreateActionBatch(ctx context.Context, a ActionNode, modifiedFiles []FileChange) error
 	GetActionCountForSession(ctx context.Context, sessionID string) (int, error)
 	CreateActionModifies(ctx context.Context, actionID, filePath string, additions, deletions int) error
 	CreateActionProduces(ctx context.Context, actionID, commitHash string) error

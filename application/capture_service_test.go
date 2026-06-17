@@ -129,6 +129,42 @@ func TestCaptureService_OnlyGitAgentMetadata_IsNoOp(t *testing.T) {
 	}
 }
 
+func TestCaptureService_RecordsLineCounts(t *testing.T) {
+	repo := setupCaptureTest(t)
+	git := &mockGraphGitClient{
+		diffNameOnlyResult: []string{"src/main.go"},
+		hashObjectResults:  map[string]string{"src/main.go": "h1"},
+		diffForFilesResult: `diff --git a/src/main.go b/src/main.go
+index 111..222 100644
+--- a/src/main.go
++++ b/src/main.go
+@@ -1,2 +1,4 @@
+ package main
+-old
++new one
++new two
++new three`,
+	}
+	svc := application.NewCaptureService(repo, git)
+
+	result, err := svc.Capture(context.Background(), graph.CaptureRequest{Source: "claude-code", Tool: "Edit"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+
+	var add, del int
+	err = repo.Client().DB().QueryRowContext(context.Background(),
+		"SELECT additions, deletions FROM action_modifies WHERE action_id = ? AND file_path = ?",
+		result.ActionID, "src/main.go",
+	).Scan(&add, &del)
+	if err != nil {
+		t.Fatalf("query action_modifies: %v", err)
+	}
+	if add != 3 || del != 1 {
+		t.Errorf("action_modifies = +%d/-%d, want +3/-1 (must not be hardcoded 0)", add, del)
+	}
+}
+
 func TestCaptureService_DeltaCapture_OnlyNewChanges(t *testing.T) {
 	repo := setupCaptureTest(t)
 

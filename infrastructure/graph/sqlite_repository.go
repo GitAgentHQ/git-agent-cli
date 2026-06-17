@@ -538,7 +538,7 @@ func (r *SQLiteRepository) CreateAction(ctx context.Context, a graph.ActionNode)
 	return err
 }
 
-func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []string) error {
+func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange) error {
 	tx, err := r.db().BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -560,8 +560,8 @@ func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.Action
 	for _, f := range modifiedFiles {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO action_modifies (action_id, file_path, additions, deletions)
-			 VALUES (?, ?, 0, 0)`,
-			a.ID, f,
+			 VALUES (?, ?, ?, ?)`,
+			a.ID, f.Path, f.Additions, f.Deletions,
 		); err != nil {
 			return fmt.Errorf("insert action_modifies: %w", err)
 		}

@@ -86,6 +86,12 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("diff for files: %w", err)
 	}
+	// Tally per-file +/- from the full diff before truncating it for storage.
+	stats := parseDiffStat(deltaDiff)
+	modified := make([]graph.FileChange, len(deltaFiles))
+	for i, f := range deltaFiles {
+		modified[i] = graph.FileChange{Path: f, Additions: stats[f].Additions, Deletions: stats[f].Deletions}
+	}
 	deltaDiff = truncateDiff(deltaDiff)
 
 	// Find or create session.
@@ -123,7 +129,7 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 		Timestamp:    time.Now().Unix(),
 		Message:      req.Message,
 	}
-	if err := s.repo.CreateActionBatch(ctx, action, deltaFiles); err != nil {
+	if err := s.repo.CreateActionBatch(ctx, action, modified); err != nil {
 		return nil, fmt.Errorf("create action: %w", err)
 	}
 
