@@ -155,11 +155,11 @@ func TestGraphCoChangeProvider_OnlyInListPairs(t *testing.T) {
 
 func TestNilCoChangeProvider_GracefulDegradation(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
-	git := &mockCommitGitClient{stagedDiff: defaultDiff()}
+	git := &mockCommitGitClient{stagedDiff: defaultDiff(), allChangedFiles: []string{"main.go"}}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
 
 	// Pass no coChange provider (variadic empty) - should work without error.
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
@@ -188,7 +188,8 @@ func TestCommitService_WithCoChangeHints_PassesToPlanner(t *testing.T) {
 			{Files: []string{}, Content: "", Lines: 0},
 			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2},
 		},
-		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
+		stagedDiff:      &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
+		allChangedFiles: []string{"a.go", "b.go"},
 	}
 
 	// Recording planner to verify CoChangeHints are passed.
@@ -203,7 +204,7 @@ func TestCommitService_WithCoChangeHints_PassesToPlanner(t *testing.T) {
 		},
 	}
 
-	svc := application.NewCommitService(gen, rp, git, noopHook(), nil, nil, nil, coProvider)
+	svc := application.NewCommitService(gen, rp, git, noopHook(), nil, nil, nil, nil, coProvider)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -229,7 +230,8 @@ func TestCommitService_CoChangeError_GracefulDegradation(t *testing.T) {
 			{Files: []string{}, Content: "", Lines: 0},
 			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2},
 		},
-		stagedDiff: &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
+		stagedDiff:      &diff.StagedDiff{Files: []string{"a.go"}, Content: "+a", Lines: 1},
+		allChangedFiles: []string{"a.go", "b.go"},
 	}
 
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{
@@ -240,7 +242,7 @@ func TestCommitService_CoChangeError_GracefulDegradation(t *testing.T) {
 		err: context.DeadlineExceeded, // simulate a failure
 	}
 
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, coProvider)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil, coProvider)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)
