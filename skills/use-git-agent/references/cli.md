@@ -272,6 +272,70 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ---
 
+## git-agent impact
+
+```
+git-agent impact [path...]
+```
+
+Rank the files that historically change together with the given seeds — the
+files a feature change is most likely to also need. Seeds are one or more files,
+a directory (expands to its tracked files), or, with **no arguments**, the
+current working-tree changes ("given what I've edited, what else usually
+moves?"). Co-change neighbours are aggregated across all seeds, so a file
+coupled to several seeds ranks above one coupled to a single seed. The first run
+auto-indexes git history; queries are offline (no LLM / API key). Tooling
+directories (`.git-agent/`, `.claude/`) are never used as seeds.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--depth N` | 1 | Transitive co-change depth; depth > 1 entries are marked `[indirect, depth N]` |
+| `--top N` | 20 | Max results |
+| `--min-count N` | 3 | Minimum co-change count to include (index floor is 2; values below 2 cannot surface more) |
+| `--reindex` | false | Force a full re-index before querying |
+| `--json` / `--text` | auto | Force output format (default: JSON when piped, text on a TTY) |
+
+### Output
+
+Text shows `path  strength%  (N co-changes)`, with `[M/T seeds: ...]` when more
+than one seed. JSON fields per entry: `path`, `coupling_count`,
+`coupling_strength`, `score` (sum of strengths over matched seeds — the rank
+key), `seed_matches`, `related_to` (which seeds), `depth`. Top-level: `targets`,
+`co_changed`, `total_found`, `query_ms`.
+
+```bash
+git-agent impact application/commit_service.go cmd/commit.go --json
+git-agent impact internal/auth          # a whole module
+git-agent impact                        # seeds = my current edits
+```
+
+---
+
+## git-agent timeline
+
+```
+git-agent timeline [--file <path>] [--source <src>] [--since <2h|7d|RFC3339>] [--top N] [--json|--text]
+```
+
+Show recent agent/human action history grouped into sessions, with the tool and
+files for each action. Populated by `git-agent capture` (see below). Offline.
+
+## git-agent capture (hidden)
+
+```
+git-agent capture --source <src> [--tool <T>] [--instance-id <id>] [--message <m>] [--end-session]
+```
+
+Record one agent action (the working-tree delta since the last capture) into the
+graph. Designed to run as a Claude Code `PostToolUse` hook — `init --agent-hook`
+installs it — and reads `tool_name`/`session_id` from the hook's stdin payload.
+Fast (<200ms), no LLM, never blocks the agent on failure. Tooling directories
+are excluded from recorded actions.
+
+---
+
 ## Defaults and legacy notes
 
 ### Hardcoded defaults

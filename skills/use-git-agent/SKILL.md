@@ -1,11 +1,40 @@
 ---
 name: use-git-agent
-description: Operates the git-agent CLI — commits, init, config, and provider setup via ~/.config/git-agent/config.yml or git config. Provider CLI overrides belong in exception flows only. Use whenever the user mentions git-agent, wants to commit/init, or needs to configure a provider.
+description: Operates the git-agent CLI — commits, init, config, provider setup, and the code graph (`git-agent impact` to find files that change together). Use whenever the user mentions git-agent, wants to commit/init, configure a provider, or — when modifying a feature — needs to find the other files likely to need changes.
 ---
 
 # Git Agent CLI
 
 When this skill is loaded, determine the appropriate git-agent command from the conversation context. Do **not** default to `git-agent commit` — ask or infer what the user needs.
+
+## Find related files before changing a feature
+
+When you are about to modify a feature — or are partway through editing it — ask
+the git graph which other files historically change together with the ones you
+are touching. Those are the files most likely to also need updating (tests,
+callers, sibling modules) and are easy to forget.
+
+```
+# Given the files of a feature, rank the files that usually change with them:
+git-agent impact application/commit_service.go cmd/commit.go --json
+
+# Given a directory (a whole module/feature area):
+git-agent impact infrastructure/hook --json
+
+# No arguments: use your CURRENT uncommitted edits as the seeds —
+# "given what I've already changed, what else usually moves with it?"
+git-agent impact --json
+```
+
+Read the JSON to prioritise: each entry has `seed_matches` (how many of the seed
+files it co-changes with — higher means more central to the feature),
+`related_to` (which seeds), `coupling_strength`, and `score` (the ranking).
+A file with `seed_matches` equal to the number of seeds is coupled to the whole
+feature; open it before you finish. The first run auto-indexes git history;
+queries are offline and need no LLM or API key.
+
+Use this proactively at the start of multi-file work and again before committing,
+so nothing coupled to the change is left behind.
 
 ## Commit workflow
 
@@ -95,7 +124,10 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 
 | Command | What it does |
 |---|---|
+| `git-agent impact [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes). Finds the other files a feature change is likely to need. JSON via `--json` |
+| `git-agent timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
+| `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
 | `git-agent init --scope` | Regenerate scopes only |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |
