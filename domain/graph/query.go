@@ -1,8 +1,10 @@
 package graph
 
-// ImpactRequest is the input for an impact (co-change) query.
+// ImpactRequest is the input for an impact (co-change) query. One or more seed
+// paths describe the feature being changed; their co-change neighbours are
+// aggregated so files coupled to several seeds rank highest.
 type ImpactRequest struct {
-	Path     string
+	Paths    []string
 	Depth    int // transitive co-change depth, default 1
 	Top      int // max results, default 20
 	MinCount int // minimum co-change count, default 3
@@ -10,7 +12,7 @@ type ImpactRequest struct {
 
 // ImpactResult is the output of an impact query.
 type ImpactResult struct {
-	Target     string        `json:"target"`
+	Targets    []string      `json:"targets"`
 	CoChanged  []ImpactEntry `json:"co_changed"`
 	TotalFound int           `json:"total_found"`
 	QueryMs    int64         `json:"query_ms"`
@@ -18,10 +20,13 @@ type ImpactResult struct {
 
 // ImpactEntry is a single co-changed file in an impact result.
 type ImpactEntry struct {
-	Path             string  `json:"path"`
-	CouplingCount    int     `json:"coupling_count"`
-	CouplingStrength float64 `json:"coupling_strength"`
-	Depth            int     `json:"depth,omitempty"`
+	Path             string   `json:"path"`
+	CouplingCount    int      `json:"coupling_count"`    // total co-change events across matched seeds
+	CouplingStrength float64  `json:"coupling_strength"` // strongest single coupling to a seed
+	Score            float64  `json:"score"`             // ranking score: sum of strengths over matched seeds
+	SeedMatches      int      `json:"seed_matches"`      // how many seed files this file co-changes with
+	RelatedTo        []string `json:"related_to,omitempty"`
+	Depth            int      `json:"depth,omitempty"`
 }
 
 // TimelineRequest is the input for a timeline query.
