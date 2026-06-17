@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("diff name only: %w", err)
 	}
+	changedFiles = excludeGitAgentPaths(changedFiles)
 	if len(changedFiles) == 0 {
 		return &graph.CaptureResult{
 			Skipped:   true,
@@ -159,6 +161,21 @@ func (s *CaptureService) endSession(ctx context.Context, source, instanceID stri
 		Reason:    "session ended",
 		CaptureMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// excludeGitAgentPaths drops git-agent's own state directory from the captured
+// file set. The graph DB (and its -shm/-wal siblings) churns on every capture;
+// recording it as agent work pollutes the timeline and action attribution, the
+// same way git never reports changes inside .git/.
+func excludeGitAgentPaths(files []string) []string {
+	filtered := files[:0:0]
+	for _, f := range files {
+		if f == ".git-agent" || strings.HasPrefix(f, ".git-agent/") {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
 }
 
 func truncateDiff(d string) string {

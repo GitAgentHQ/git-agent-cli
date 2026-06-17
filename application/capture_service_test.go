@@ -64,6 +64,69 @@ func TestCaptureService_CaptureCreatesSessionAndAction(t *testing.T) {
 	}
 }
 
+func TestCaptureService_ExcludesGitAgentMetadata(t *testing.T) {
+	repo := setupCaptureTest(t)
+	// The capture diff surfaces git-agent's own SQLite files alongside the
+	// real edit. These are tooling state, not agent work, and must never be
+	// recorded as files the agent changed.
+	git := &mockGraphGitClient{
+		diffNameOnlyResult: []string{
+			".git-agent/graph.db",
+			".git-agent/graph.db-shm",
+			".git-agent/graph.db-wal",
+			"src/main.go",
+		},
+		hashObjectResults: map[string]string{
+			".git-agent/graph.db":     "db1",
+			".git-agent/graph.db-shm": "shm1",
+			".git-agent/graph.db-wal": "wal1",
+			"src/main.go":             "main1",
+		},
+		diffForFilesResult: "+func main() {}",
+	}
+	svc := application.NewCaptureService(repo, git)
+
+	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
+		Source: "claude-code",
+		Tool:   "Edit",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Skipped {
+		t.Fatal("expected capture to succeed, got skipped")
+	}
+	if len(result.FilesChanged) != 1 || result.FilesChanged[0] != "src/main.go" {
+		t.Errorf("expected files_changed=[src/main.go], got %v", result.FilesChanged)
+	}
+}
+
+func TestCaptureService_OnlyGitAgentMetadata_IsNoOp(t *testing.T) {
+	repo := setupCaptureTest(t)
+	// A capture triggered solely by git-agent writing its own DB must be a
+	// no-op, not a phantom action.
+	git := &mockGraphGitClient{
+		diffNameOnlyResult: []string{".git-agent/graph.db", ".git-agent/graph.db-wal"},
+		hashObjectResults: map[string]string{
+			".git-agent/graph.db":     "db1",
+			".git-agent/graph.db-wal": "wal1",
+		},
+		diffForFilesResult: "+noise",
+	}
+	svc := application.NewCaptureService(repo, git)
+
+	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
+		Source: "claude-code",
+		Tool:   "Edit",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Skipped {
+		t.Errorf("expected skipped capture when only git-agent metadata changed, got action %q", result.ActionID)
+	}
+}
+
 func TestCaptureService_DeltaCapture_OnlyNewChanges(t *testing.T) {
 	repo := setupCaptureTest(t)
 
