@@ -310,6 +310,46 @@ HAVING COUNT(DISTINCT m1.commit_hash) >= ?`,
 	return tx.Commit()
 }
 
+// coNeighbor is one row from the co_changed table.
+type coNeighbor struct {
+	path     string
+	count    int
+	strength float64
+}
+
+// coChangedNeighbors returns the files co-changed with path at or above minCount.
+func (r *SQLiteRepository) coChangedNeighbors(ctx context.Context, path string, minCount int) ([]coNeighbor, error) {
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT
+			CASE WHEN cc.file_a = ? THEN cc.file_b ELSE cc.file_a END AS neighbor,
+			cc.coupling_count,
+			cc.coupling_strength
+		FROM co_changed cc
+		WHERE (cc.file_a = ? OR cc.file_b = ?)
+		  AND cc.coupling_count >= ?
+		ORDER BY cc.coupling_strength DESC`,
+		path, path, path, minCount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query co_changed for %q: %w", path, err)
+	}
+	defer rows.Close()
+
+	var out []coNeighbor
+	for rows.Next() {
+		var n coNeighbor
+		if err := rows.Scan(&n.path, &n.count, &n.strength); err != nil {
+			return nil, fmt.Errorf("scan co_changed: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// Impact aggregates the co-change neighbours of one or more seed paths. A file
+// coupled to several seeds accumulates score (sum of strengths) and seed_matches,
+// so the files most central to the changed feature rank first. Transitive
+// neighbours (depth > 1) are appended via BFS with their single-edge strength.
 func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) (*graph.ImpactResult, error) {
 	start := time.Now()
 
@@ -326,103 +366,136 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 		minCount = 3
 	}
 
-	// Resolve all historical aliases for the target path.
-	aliases, err := r.ResolveRenames(ctx, req.Path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve renames: %w", err)
+	// Resolve rename aliases per seed; seeds (and aliases) never appear as results.
+	type seedQuery struct {
+		display string
+		paths   []string
 	}
-	allPaths := append([]string{req.Path}, aliases...)
-
-	// BFS across depth levels.
+	var seedQueries []seedQuery
 	visited := make(map[string]bool)
-	for _, p := range allPaths {
-		visited[p] = true
+	for _, s := range req.Paths {
+		aliases, err := r.ResolveRenames(ctx, s)
+		if err != nil {
+			return nil, fmt.Errorf("resolve renames: %w", err)
+		}
+		paths := append([]string{s}, aliases...)
+		seedQueries = append(seedQueries, seedQuery{display: s, paths: paths})
+		for _, p := range paths {
+			visited[p] = true
+		}
 	}
 
-	// Collect all results across all depths.
+	// Depth 1: aggregate neighbours across all seeds.
+	agg := make(map[string]*graph.ImpactEntry)
+	for _, sq := range seedQueries {
+		// Collapse this seed's aliases into one strength/count per neighbour.
+		perSeed := make(map[string]coNeighbor)
+		for _, p := range sq.paths {
+			neighbors, err := r.coChangedNeighbors(ctx, p, minCount)
+			if err != nil {
+				return nil, err
+			}
+			for _, nb := range neighbors {
+				if visited[nb.path] {
+					continue
+				}
+				cur := perSeed[nb.path]
+				cur.count += nb.count
+				if nb.strength > cur.strength {
+					cur.strength = nb.strength
+				}
+				perSeed[nb.path] = cur
+			}
+		}
+		for nbPath, v := range perSeed {
+			e, ok := agg[nbPath]
+			if !ok {
+				e = &graph.ImpactEntry{Path: nbPath, Depth: 1}
+				agg[nbPath] = e
+			}
+			e.Score += v.strength
+			e.CouplingCount += v.count
+			if v.strength > e.CouplingStrength {
+				e.CouplingStrength = v.strength
+			}
+			e.SeedMatches++
+			e.RelatedTo = append(e.RelatedTo, sq.display)
+		}
+	}
+
 	var allEntries []graph.ImpactEntry
+	var frontier []string
+	for path, e := range agg {
+		sort.Strings(e.RelatedTo)
+		allEntries = append(allEntries, *e)
+		visited[path] = true
+		frontier = append(frontier, path)
+	}
 
-	// Current frontier: the set of paths to query at this depth level.
-	frontier := allPaths
-
-	for d := 1; d <= depth; d++ {
+	// Depth 2..N: transitive BFS, each new file keyed by its single best edge.
+	for d := 2; d <= depth; d++ {
 		if len(frontier) == 0 {
 			break
 		}
-
-		// best tracks the highest-strength entry per neighbor path at this depth.
 		best := make(map[string]*graph.ImpactEntry)
-
 		for _, p := range frontier {
-			rows, err := r.db().QueryContext(ctx,
-				`SELECT
-					CASE WHEN cc.file_a = ? THEN cc.file_b ELSE cc.file_a END AS neighbor,
-					cc.coupling_count,
-					cc.coupling_strength
-				FROM co_changed cc
-				WHERE (cc.file_a = ? OR cc.file_b = ?)
-				  AND cc.coupling_count >= ?
-				ORDER BY cc.coupling_strength DESC`,
-				p, p, p, minCount,
-			)
+			neighbors, err := r.coChangedNeighbors(ctx, p, minCount)
 			if err != nil {
-				return nil, fmt.Errorf("query co_changed for %q: %w", p, err)
+				return nil, err
 			}
-			for rows.Next() {
-				var neighbor string
-				var count int
-				var strength float64
-				if err := rows.Scan(&neighbor, &count, &strength); err != nil {
-					rows.Close()
-					return nil, fmt.Errorf("scan co_changed: %w", err)
-				}
-				if visited[neighbor] {
+			for _, nb := range neighbors {
+				if visited[nb.path] {
 					continue
 				}
-				if existing, ok := best[neighbor]; !ok || strength > existing.CouplingStrength {
-					best[neighbor] = &graph.ImpactEntry{
-						Path:             neighbor,
-						CouplingCount:    count,
-						CouplingStrength: strength,
+				if existing, ok := best[nb.path]; !ok || nb.strength > existing.CouplingStrength {
+					best[nb.path] = &graph.ImpactEntry{
+						Path:             nb.path,
+						CouplingCount:    nb.count,
+						CouplingStrength: nb.strength,
+						Score:            nb.strength,
 						Depth:            d,
 					}
 				}
 			}
-			rows.Close()
 		}
-
-		// Collect entries from this depth level and build next frontier.
-		var nextFrontier []string
-		for path, entry := range best {
-			allEntries = append(allEntries, *entry)
+		var next []string
+		for path, e := range best {
+			allEntries = append(allEntries, *e)
 			visited[path] = true
-			nextFrontier = append(nextFrontier, path)
+			next = append(next, path)
 		}
-		frontier = nextFrontier
+		frontier = next
 	}
 
 	totalFound := len(allEntries)
-
-	// Sort by coupling_strength descending.
 	sortImpactEntries(allEntries)
-
-	// Apply top limit.
 	if len(allEntries) > top {
 		allEntries = allEntries[:top]
 	}
 
 	return &graph.ImpactResult{
-		Target:     req.Path,
+		Targets:    req.Paths,
 		CoChanged:  allEntries,
 		TotalFound: totalFound,
 		QueryMs:    time.Since(start).Milliseconds(),
 	}, nil
 }
 
-// sortImpactEntries sorts entries by CouplingStrength descending.
+// sortImpactEntries ranks by aggregate score, then breadth of seed coupling,
+// then total co-changes, then path for determinism.
 func sortImpactEntries(entries []graph.ImpactEntry) {
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].CouplingStrength > entries[j].CouplingStrength
+		a, b := entries[i], entries[j]
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.SeedMatches != b.SeedMatches {
+			return a.SeedMatches > b.SeedMatches
+		}
+		if a.CouplingCount != b.CouplingCount {
+			return a.CouplingCount > b.CouplingCount
+		}
+		return a.Path < b.Path
 	})
 }
 

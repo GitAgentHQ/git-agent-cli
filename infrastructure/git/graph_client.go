@@ -320,6 +320,23 @@ func (g *GraphClient) DiffNameOnly(ctx context.Context) ([]string, error) {
 
 // DiffForFiles returns the combined diff output (staged + unstaged) for the
 // specified files.
+// TrackedFiles lists the git-tracked files under a path (a directory expands to
+// its contents; a file returns itself). Paths are repo-relative, NUL-separated
+// internally to survive unusual filenames.
+func (g *GraphClient) TrackedFiles(ctx context.Context, path string) ([]string, error) {
+	out, err := g.run(ctx, "ls-files", "-z", "--", path)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(strings.TrimRight(out, "\x00"), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
+
 func (g *GraphClient) DiffForFiles(ctx context.Context, files []string) (string, error) {
 	if len(files) == 0 {
 		return "", nil
