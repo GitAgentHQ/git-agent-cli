@@ -28,6 +28,10 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	message, _ := cmd.Flags().GetString("message")
 	endSession, _ := cmd.Flags().GetBool("end-session")
 
+	// When invoked as a Claude Code PostToolUse hook, the tool name and session
+	// id arrive as a JSON payload on stdin; fold them in unless overridden.
+	tool, instanceID = mergeHookPayload(tool, instanceID, readPipedStdin())
+
 	if source == "" {
 		fmt.Fprintln(os.Stderr, "capture: --source is required")
 		return nil
