@@ -16,6 +16,19 @@ import (
 // nothing for data that was pruned at index time.
 const coChangeIndexFloor = 2
 
+// runRepoBatch runs fn inside a single repository transaction when the backing
+// repository supports batching (the SQLite implementation does), otherwise runs
+// fn directly. Batching collapses a bulk index's per-row autocommits into one
+// commit — the dominant cost when indexing a large history.
+func runRepoBatch(ctx context.Context, repo graph.GraphRepository, fn func() error) error {
+	if b, ok := repo.(interface {
+		RunInTx(context.Context, func() error) error
+	}); ok {
+		return b.RunInTx(ctx, fn)
+	}
+	return fn()
+}
+
 // IndexService orchestrates building the code knowledge graph from git history.
 type IndexService struct {
 	repo graph.GraphRepository
@@ -54,64 +67,71 @@ func (s *IndexService) FullIndex(ctx context.Context, req graph.IndexRequest) (*
 		lastHash       string
 	)
 
-	for _, ci := range commits {
-		if maxFiles > 0 && len(ci.Files) > maxFiles {
-			// Still count it as "seen" for lastHash tracking,
-			// but skip the file-level indexing.
-			lastHash = ci.Hash
-			indexedCommits++
+	// Stage every insert in a single transaction; on a large history this turns
+	// tens of thousands of autocommits into one commit (the dominant cost).
+	if err := runRepoBatch(ctx, s.repo, func() error {
+		for _, ci := range commits {
+			if maxFiles > 0 && len(ci.Files) > maxFiles {
+				// Still count it as "seen" for lastHash tracking,
+				// but skip the file-level indexing.
+				lastHash = ci.Hash
+				indexedCommits++
+				if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
+					return err
+				}
+				if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
+					return err
+				}
+				authorsSeen[ci.AuthorEmail] = true
+				if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
+					return err
+				}
+				continue
+			}
+
 			if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
-				return nil, err
+				return err
 			}
 			if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
-				return nil, err
+				return err
 			}
 			authorsSeen[ci.AuthorEmail] = true
 			if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
-			return nil, err
-		}
-		if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
-			return nil, err
-		}
-		authorsSeen[ci.AuthorEmail] = true
-		if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
-			return nil, err
-		}
-
-		for _, fc := range ci.Files {
-			filesSeen[fc.Path] = true
-			if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.Path}); err != nil {
-				return nil, err
-			}
-			if err := s.repo.CreateModifies(ctx, graph.ModifiesEdge{
-				CommitHash: ci.Hash,
-				FilePath:   fc.Path,
-				Additions:  fc.Additions,
-				Deletions:  fc.Deletions,
-				Status:     fc.Status,
-			}); err != nil {
-				return nil, err
+				return err
 			}
 
-			if strings.HasPrefix(fc.Status, "R") && fc.OldPath != "" {
-				filesSeen[fc.OldPath] = true
-				if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.OldPath}); err != nil {
-					return nil, err
+			for _, fc := range ci.Files {
+				filesSeen[fc.Path] = true
+				if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.Path}); err != nil {
+					return err
 				}
-				if err := s.repo.CreateRename(ctx, fc.OldPath, fc.Path, ci.Hash); err != nil {
-					return nil, err
+				if err := s.repo.CreateModifies(ctx, graph.ModifiesEdge{
+					CommitHash: ci.Hash,
+					FilePath:   fc.Path,
+					Additions:  fc.Additions,
+					Deletions:  fc.Deletions,
+					Status:     fc.Status,
+				}); err != nil {
+					return err
+				}
+
+				if strings.HasPrefix(fc.Status, "R") && fc.OldPath != "" {
+					filesSeen[fc.OldPath] = true
+					if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.OldPath}); err != nil {
+						return err
+					}
+					if err := s.repo.CreateRename(ctx, fc.OldPath, fc.Path, ci.Hash); err != nil {
+						return err
+					}
 				}
 			}
-		}
 
-		lastHash = ci.Hash
-		indexedCommits++
+			lastHash = ci.Hash
+			indexedCommits++
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	if lastHash != "" {
@@ -163,62 +183,67 @@ func (s *IndexService) IncrementalIndex(ctx context.Context, sinceHash string, r
 		lastHash       string
 	)
 
-	for _, ci := range commits {
-		if maxFiles > 0 && len(ci.Files) > maxFiles {
-			lastHash = ci.Hash
-			indexedCommits++
+	if err := runRepoBatch(ctx, s.repo, func() error {
+		for _, ci := range commits {
+			if maxFiles > 0 && len(ci.Files) > maxFiles {
+				lastHash = ci.Hash
+				indexedCommits++
+				if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
+					return err
+				}
+				if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
+					return err
+				}
+				authorsSeen[ci.AuthorEmail] = true
+				if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
+					return err
+				}
+				continue
+			}
+
 			if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
-				return nil, err
+				return err
 			}
 			if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
-				return nil, err
+				return err
 			}
 			authorsSeen[ci.AuthorEmail] = true
 			if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		if err := s.repo.UpsertCommit(ctx, commitNodeFrom(ci)); err != nil {
-			return nil, err
-		}
-		if err := s.repo.UpsertAuthor(ctx, graph.AuthorNode{Email: ci.AuthorEmail, Name: ci.AuthorName}); err != nil {
-			return nil, err
-		}
-		authorsSeen[ci.AuthorEmail] = true
-		if err := s.repo.CreateAuthored(ctx, ci.AuthorEmail, ci.Hash); err != nil {
-			return nil, err
-		}
-
-		for _, fc := range ci.Files {
-			filesSeen[fc.Path] = true
-			if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.Path}); err != nil {
-				return nil, err
-			}
-			if err := s.repo.CreateModifies(ctx, graph.ModifiesEdge{
-				CommitHash: ci.Hash,
-				FilePath:   fc.Path,
-				Additions:  fc.Additions,
-				Deletions:  fc.Deletions,
-				Status:     fc.Status,
-			}); err != nil {
-				return nil, err
+				return err
 			}
 
-			if strings.HasPrefix(fc.Status, "R") && fc.OldPath != "" {
-				filesSeen[fc.OldPath] = true
-				if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.OldPath}); err != nil {
-					return nil, err
+			for _, fc := range ci.Files {
+				filesSeen[fc.Path] = true
+				if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.Path}); err != nil {
+					return err
 				}
-				if err := s.repo.CreateRename(ctx, fc.OldPath, fc.Path, ci.Hash); err != nil {
-					return nil, err
+				if err := s.repo.CreateModifies(ctx, graph.ModifiesEdge{
+					CommitHash: ci.Hash,
+					FilePath:   fc.Path,
+					Additions:  fc.Additions,
+					Deletions:  fc.Deletions,
+					Status:     fc.Status,
+				}); err != nil {
+					return err
+				}
+
+				if strings.HasPrefix(fc.Status, "R") && fc.OldPath != "" {
+					filesSeen[fc.OldPath] = true
+					if err := s.repo.UpsertFile(ctx, graph.FileNode{Path: fc.OldPath}); err != nil {
+						return err
+					}
+					if err := s.repo.CreateRename(ctx, fc.OldPath, fc.Path, ci.Hash); err != nil {
+						return err
+					}
 				}
 			}
-		}
 
-		lastHash = ci.Hash
-		indexedCommits++
+			lastHash = ci.Hash
+			indexedCommits++
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	if lastHash != "" {

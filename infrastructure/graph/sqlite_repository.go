@@ -18,7 +18,9 @@ var _ graph.GraphRepository = (*SQLiteRepository)(nil)
 
 // SQLiteRepository implements graph.GraphRepository using a SQLiteClient.
 type SQLiteRepository struct {
-	client *SQLiteClient
+	client    *SQLiteClient
+	tx        *sql.Tx              // non-nil while a RunInTx batch is open
+	stmtCache map[string]*sql.Stmt // prepared statements reused within the batch
 }
 
 // NewSQLiteRepository returns a new SQLiteRepository wrapping the given client.
@@ -33,6 +35,55 @@ func (r *SQLiteRepository) Client() *SQLiteClient {
 
 func (r *SQLiteRepository) db() *sql.DB {
 	return r.client.DB()
+}
+
+// RunInTx executes fn inside one transaction. Every upsert fn issues through
+// execStmt is staged and committed together — on a large history this turns tens
+// of thousands of autocommits into a single commit (the dominant index cost).
+// Methods that manage their own transaction (the co-change recompute) must be
+// called outside fn.
+func (r *SQLiteRepository) RunInTx(ctx context.Context, fn func() error) error {
+	if r.tx != nil {
+		return fn() // already batching — reuse the open transaction
+	}
+	tx, err := r.client.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin batch tx: %w", err)
+	}
+	r.tx = tx
+	r.stmtCache = make(map[string]*sql.Stmt)
+	defer func() {
+		for _, st := range r.stmtCache {
+			st.Close()
+		}
+		r.stmtCache = nil
+		r.tx = nil
+	}()
+	if err := fn(); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// execStmt runs a write through a prepared statement reused for the lifetime of
+// the batch transaction, avoiding re-compilation of the same INSERT on every
+// row (the dominant cost under the pure-Go SQLite driver). Outside a batch it
+// falls back to a plain autocommit exec.
+func (r *SQLiteRepository) execStmt(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if r.tx == nil {
+		return r.client.DB().ExecContext(ctx, query, args...)
+	}
+	st := r.stmtCache[query]
+	if st == nil {
+		prepared, err := r.tx.PrepareContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		r.stmtCache[query] = prepared
+		st = prepared
+	}
+	return st.ExecContext(ctx, args...)
 }
 
 // --- Lifecycle ---
@@ -60,7 +111,7 @@ func (r *SQLiteRepository) UpsertCommit(ctx context.Context, c graph.CommitNode)
 	if err != nil {
 		return fmt.Errorf("marshal parent_hashes: %w", err)
 	}
-	_, err = r.db().ExecContext(ctx,
+	_, err = r.execStmt(ctx,
 		`INSERT OR IGNORE INTO commits (hash, message, author_name, author_email, timestamp, parent_hashes)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		c.Hash, c.Message, c.AuthorName, c.AuthorEmail, c.Timestamp, string(parentsJSON),
@@ -69,7 +120,7 @@ func (r *SQLiteRepository) UpsertCommit(ctx context.Context, c graph.CommitNode)
 }
 
 func (r *SQLiteRepository) UpsertAuthor(ctx context.Context, a graph.AuthorNode) error {
-	_, err := r.db().ExecContext(ctx,
+	_, err := r.execStmt(ctx,
 		`INSERT OR REPLACE INTO authors (email, name) VALUES (?, ?)`,
 		a.Email, a.Name,
 	)
@@ -77,7 +128,7 @@ func (r *SQLiteRepository) UpsertAuthor(ctx context.Context, a graph.AuthorNode)
 }
 
 func (r *SQLiteRepository) UpsertFile(ctx context.Context, f graph.FileNode) error {
-	_, err := r.db().ExecContext(ctx,
+	_, err := r.execStmt(ctx,
 		`INSERT OR IGNORE INTO files (path) VALUES (?)`,
 		f.Path,
 	)
@@ -85,7 +136,7 @@ func (r *SQLiteRepository) UpsertFile(ctx context.Context, f graph.FileNode) err
 }
 
 func (r *SQLiteRepository) CreateModifies(ctx context.Context, e graph.ModifiesEdge) error {
-	_, err := r.db().ExecContext(ctx,
+	_, err := r.execStmt(ctx,
 		`INSERT OR IGNORE INTO modifies (commit_hash, file_path, additions, deletions, status)
 		 VALUES (?, ?, ?, ?, ?)`,
 		e.CommitHash, e.FilePath, e.Additions, e.Deletions, e.Status,
@@ -94,7 +145,7 @@ func (r *SQLiteRepository) CreateModifies(ctx context.Context, e graph.ModifiesE
 }
 
 func (r *SQLiteRepository) CreateAuthored(ctx context.Context, authorEmail, commitHash string) error {
-	_, err := r.db().ExecContext(ctx,
+	_, err := r.execStmt(ctx,
 		`INSERT OR IGNORE INTO authored (author_email, commit_hash) VALUES (?, ?)`,
 		authorEmail, commitHash,
 	)
@@ -102,7 +153,7 @@ func (r *SQLiteRepository) CreateAuthored(ctx context.Context, authorEmail, comm
 }
 
 func (r *SQLiteRepository) CreateRename(ctx context.Context, oldPath, newPath, commitHash string) error {
-	_, err := r.db().ExecContext(ctx,
+	_, err := r.execStmt(ctx,
 		`INSERT OR IGNORE INTO renames (old_path, new_path, commit_hash) VALUES (?, ?, ?)`,
 		oldPath, newPath, commitHash,
 	)
@@ -203,6 +254,13 @@ func (r *SQLiteRepository) RecomputeCoChanged(ctx context.Context, minCount, max
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM co_changed"); err != nil {
 		return fmt.Errorf("delete co_changed: %w", err)
+	}
+
+	// Give the planner table statistics; without them the pure-Go SQLite engine
+	// picks a nested-loop plan for the self-join below and runs orders of
+	// magnitude slower on a large history.
+	if _, err := tx.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("analyze: %w", err)
 	}
 
 	query := `
