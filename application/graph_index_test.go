@@ -128,6 +128,45 @@ func TestIndexService_FullIndex(t *testing.T) {
 	}
 }
 
+func TestIndexService_FullIndex_PersistsWeakCoChange(t *testing.T) {
+	repoDir, git := testRepo(t)
+
+	// Two commits where a.go and b.go change together: a coupling_count of 2.
+	// This is below the query-time default (3) but must still be stored so a
+	// caller can surface it with `impact --min-count 2`.
+	for i := 1; i <= 2; i++ {
+		writeFile(t, repoDir, "a.go", fmt.Sprintf("package a // v%d\n", i))
+		writeFile(t, repoDir, "b.go", fmt.Sprintf("package b // v%d\n", i))
+		git("add", ".")
+		git("commit", "-m", fmt.Sprintf("change %d", i))
+	}
+
+	repo := openTestDB(t, repoDir)
+	gitClient := gitinfra.NewGraphClient(repoDir)
+	ctx := context.Background()
+	if _, err := NewIndexService(repo, gitClient).FullIndex(ctx, graph.IndexRequest{}); err != nil {
+		t.Fatalf("FullIndex() error = %v", err)
+	}
+
+	// At the default min-count (3) the weak pair is filtered out.
+	def, err := NewImpactService(repo).Impact(ctx, graph.ImpactRequest{Path: "a.go"})
+	if err != nil {
+		t.Fatalf("Impact(default) error = %v", err)
+	}
+	if def.TotalFound != 0 {
+		t.Errorf("default min-count should hide the count-2 pair, got %d results", def.TotalFound)
+	}
+
+	// Lowering min-count to 2 must surface it — i.e. it was persisted at index time.
+	res, err := NewImpactService(repo).Impact(ctx, graph.ImpactRequest{Path: "a.go", MinCount: 2})
+	if err != nil {
+		t.Fatalf("Impact(min-count=2) error = %v", err)
+	}
+	if res.TotalFound != 1 || res.CoChanged[0].Path != "b.go" {
+		t.Fatalf("min-count=2 should surface b.go (count 2), got %+v", res.CoChanged)
+	}
+}
+
 func TestIndexService_FullIndex_Renames(t *testing.T) {
 	repoDir, git := testRepo(t)
 

@@ -8,6 +8,14 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
+// coChangeIndexFloor is the minimum co-occurrence count worth persisting to the
+// co_changed table. A pair seen together exactly once is incidental and would
+// bloat the index, but anything from two upward is a real (if weak) signal that
+// the `impact --min-count` query flag must be able to surface. Keep this at or
+// below the query-time default so lowering --min-count never silently returns
+// nothing for data that was pruned at index time.
+const coChangeIndexFloor = 2
+
 // IndexService orchestrates building the code knowledge graph from git history.
 type IndexService struct {
 	repo graph.GraphRepository
@@ -113,7 +121,7 @@ func (s *IndexService) FullIndex(ctx context.Context, req graph.IndexRequest) (*
 	}
 
 	// Run full co-change recompute after full index.
-	minCount := 3
+	minCount := coChangeIndexFloor
 	if err := s.repo.RecomputeCoChanged(ctx, minCount, maxFiles); err != nil {
 		return nil, err
 	}
@@ -229,7 +237,7 @@ func (s *IndexService) IncrementalIndex(ctx context.Context, sinceHash string, r
 	if coChangeThreshold == 0 {
 		coChangeThreshold = 500
 	}
-	minCount := 3
+	minCount := coChangeIndexFloor
 	if len(touchedFiles) > 0 {
 		if len(touchedFiles) > coChangeThreshold {
 			if err := s.repo.RecomputeCoChanged(ctx, minCount, maxFiles); err != nil {

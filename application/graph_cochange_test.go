@@ -99,11 +99,20 @@ func TestCoChange_CouplingStrength(t *testing.T) {
 	}
 }
 
-func TestCoChange_MinCountFilter(t *testing.T) {
+func TestCoChange_IndexFloorExcludesIncidentalPairs(t *testing.T) {
 	repoDir, git := testRepo(t)
 
-	// 2 commits where a.go and b.go change together. With minCount=3, no row.
-	for i := 0; i < 2; i++ {
+	// pairAB co-change twice (count 2 — persisted at the index floor), while
+	// soloC co-changes with them only once via the seed commit (count 1 —
+	// incidental, pruned). This pins the floor at 2: weak-but-real signal is
+	// kept, single co-occurrences are dropped.
+	writeFile(t, repoDir, "a.go", "a0\n")
+	writeFile(t, repoDir, "b.go", "b0\n")
+	writeFile(t, repoDir, "c.go", "c0\n")
+	git("add", ".")
+	git("commit", "-m", "seed")
+
+	for i := 1; i <= 2; i++ {
 		writeFile(t, repoDir, "a.go", repeated("a", i+1))
 		writeFile(t, repoDir, "b.go", repeated("b", i+1))
 		git("add", ".")
@@ -116,20 +125,28 @@ func TestCoChange_MinCountFilter(t *testing.T) {
 	indexSvc := NewIndexService(repo, gitClient)
 
 	ctx := context.Background()
-	// FullIndex uses minCount=3 by default.
-	_, err := indexSvc.FullIndex(ctx, graph.IndexRequest{})
-	if err != nil {
+	if _, err := indexSvc.FullIndex(ctx, graph.IndexRequest{}); err != nil {
 		t.Fatalf("FullIndex() error = %v", err)
 	}
 
 	db := repo.Client().DB()
-	var count int
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM co_changed").Scan(&count)
-	if err != nil {
+	// Only the a.go/b.go pair (count 3: seed + 2) clears the floor; every pair
+	// involving c.go has count 1 and is dropped.
+	var total int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM co_changed").Scan(&total); err != nil {
 		t.Fatalf("count co_changed: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("co_changed count = %d, want 0 (minCount=3 filter)", count)
+	if total != 1 {
+		t.Errorf("co_changed rows = %d, want 1 (only the a/b pair clears the floor)", total)
+	}
+
+	var cWithAny int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM co_changed WHERE file_a = 'c.go' OR file_b = 'c.go'").Scan(&cWithAny); err != nil {
+		t.Fatalf("count c.go pairs: %v", err)
+	}
+	if cWithAny != 0 {
+		t.Errorf("c.go incidental pairs = %d, want 0 (count-1 pruned)", cWithAny)
 	}
 }
 
