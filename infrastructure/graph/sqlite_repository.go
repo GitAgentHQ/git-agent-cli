@@ -408,6 +408,11 @@ func (r *SQLiteRepository) coChangedNeighbors(ctx context.Context, path string, 
 // coupled to several seeds accumulates score (sum of strengths) and seed_matches,
 // so the files most central to the changed feature rank first. Transitive
 // neighbours (depth > 1) are appended via BFS with their single-edge strength.
+//
+// Ranking uses the stored symmetric coupling strength (count / max(totalA,
+// totalB)) rather than directional P(neighbour | seed): a backtest showed
+// directional gives no recall gain while promoting high-fanout noise such as
+// changelogs to the top. The symmetric denominator suppresses that noise.
 func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) (*graph.ImpactResult, error) {
 	start := time.Now()
 

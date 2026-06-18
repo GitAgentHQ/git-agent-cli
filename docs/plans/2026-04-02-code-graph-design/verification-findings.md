@@ -122,6 +122,17 @@ byte identical; only speed changed. Robustness held up: reindex is idempotent,
 incremental indexing of a new commit is ~96ms, and a directory seed that expands
 to 100+ files now prints a bounded summary instead of a wall of paths.
 
+## Negative result — directional coupling does not help
+
+Tested ranking neighbours by directional `P(neighbour | seed) = count / seed's
+own change count` instead of the stored symmetric strength `count / max(totalA,
+totalB)`. Theory favours directional for prediction, but the backtest on express
+showed **no recall gain (46% vs 47%)** while it **promoted high-fanout noise** —
+the `History.md` changelog jumped to rank 1 for a core file, because
+`P(changelog | anything)` is moderate. The symmetric denominator demotes files
+that change with everything, which matters more than the marginal theory gain.
+Kept symmetric; reverted directional.
+
 ## Structural awareness in the commit flow — co-change A/B
 
 Question: does injecting co-change hints into the commit planner improve
