@@ -90,21 +90,27 @@ first-ever coupling is unpredictable by construction. The framework is a strong
 assist (catches ~half the related files from one seed, ~2× a naive guess, more
 with multiple seeds), not an oracle.
 
-## External validation — a third-party repo (cli/cli, 11,450 commits)
+## External validation — third-party repos, two languages
 
-Repeated the temporal hold-out backtest on `github.com/cli/cli` — a large,
-actively-developed product the framework was never tuned for.
+Repeated the same leak-free temporal hold-out on real projects the framework was
+never tuned for, including a non-Go codebase to confirm it is language-agnostic
+(co-change is computed from git history alone — no parsing, no language rules).
 
-| metric (39 real feature commits, top-10)        | git-agent impact | popularity |
-|-------------------------------------------------|------------------|------------|
-| mean recall of held-out files                   | **57%**          | 5%         |
-| commits with ≥1 correct prediction              | **69%**          | 10%        |
+| repo (lang)              | commits | recall (impact) | recall (baseline) | hit-rate (impact) |
+|--------------------------|--------:|----------------:|------------------:|------------------:|
+| git-agent (Go)           |     272 |          **46%** |              32% |              66% |
+| cli/cli (Go)             |  11,450 |          **57%** |               5% |              69% |
+| expressjs/express (JS)   |   6,153 |          **47%** |               0% |              55% |
 
-The baseline collapses on a large modular codebase (popularity means little when
-no file dominates), so co-change wins by ~11×. Textbook hits: `clone.go` →
-`clone_test.go`, `view.go` → `view_test.go`, `feature_detection_test.go` →
-`detector_mock.go`, the three `third-party-licenses.{darwin,linux,windows}.md`
-predicting each other.
+Consistently ~46–57% recall, always far above the popularity baseline — which
+collapses to near zero on larger, modular codebases (no single file dominates,
+so "most-changed" predicts nothing). Textbook hits across languages: `clone.go`
+→ `clone_test.go`, `view.go` → `view_test.go`, `lib/response.js` →
+`test/res.redirect.js`, and even cross-tooling signals like
+`appveyor.yml` → `.github/workflows/ci.yml` (a CI migration) that no
+language-specific tool would catch. High-fanout noise (changelogs, package.json)
+is demoted by coupling strength without any language-specific filtering — e.g.
+Express's `History.md` co-changes 42× but ranks low at strength 0.04.
 
 ### Performance fixes surfaced by the large repo
 
