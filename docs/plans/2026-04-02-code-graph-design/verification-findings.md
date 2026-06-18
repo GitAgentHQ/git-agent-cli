@@ -4,6 +4,74 @@ End-to-end validation of the existing code-graph capabilities on real and
 synthetic git repositories (all experiments run under `/tmp`, never against
 this repo). Drives the fixes committed alongside this document.
 
+> **READ THIS FIRST — the headline numbers answer the wrong question.**
+> The recall figures below (46–57%) compare `impact` against a *popularity*
+> baseline (the globally most-changed files). That is a strawman. The decision
+> that matters is whether `impact` helps an LLM agent **beyond what the agent
+> finds by reading the code itself**. Measured against that baseline (next
+> section), the unique marginal value collapses to ~0.2–0.4 non-obvious files
+> per commit, almost all of them recurring CI/build-config pairs — close to
+> noise for an agent that can read the repo. Weigh everything below against that.
+
+## Marginal value to a code-reading agent — the decisive eval
+
+The earlier backtests proved `impact` is a *better co-change predictor than
+popularity* and is language-agnostic. They did **not** test the question that
+decides whether the feature earns its complexity: does it surface files an LLM
+agent (large context, can grep/read) would otherwise miss?
+
+Re-ran the temporal hold-out with a **generous agent proxy** as the baseline:
+for each held-out file, mark it "obvious" if an agent would find it by
+(a) the impl↔test naming pair, (b) being in the seed's directory, or
+(c) a textual cross-reference between the two files. Only count a prediction as
+*valuable* if it is correct **and** non-obvious. Also bucket each held file by
+prior co-occurrence with the seed (0 = novel, unpredictable by construction).
+
+| metric | flask (Py) | express (JS) | git-agent (Go) |
+|--------|-----------:|-------------:|---------------:|
+| raw recall (sanity)                          | 38% | 48% | 29% |
+| correct hits that are trivial (test/dir/xref) | **82%** | 53% | **83%** |
+| correct hits that are non-obvious            | 18% | 47%* | 17% |
+| held files never co-changed before (novel)   | 26% | 11% | 29% |
+| held files novel **or** sub-threshold        | 43% | 29% | **50%** |
+| misses that were unpredictable (novel/weak)  | 69% | 54% | 70% |
+| **non-obvious correct predictions / commit** | 0.33 | 0.37 | **0.18** |
+
+Findings, against the user's skepticism — all confirmed:
+
+- **Most hits are trivial.** 82–83% of correct predictions (flask, git-agent)
+  are files an agent finds for free. Only ~17% are non-obvious.
+- **The new-coupling blind spot is real and large.** 43–50% of held files never
+  (or barely) co-changed before, so `impact` cannot predict them in principle;
+  54–70% of all misses are these unpredictable files. On the most active repo
+  (git-agent, real feature work) half the held files are novel — the tool is
+  weakest exactly when doing new work.
+- **Marginal value over a reading agent is ~0.2–0.4 files/commit, and that is an
+  upper bound.** The cross-reference proxy only matches file *names*, so it
+  misses interface-based dependencies (e.g. git-agent's `commit_service.go` →
+  `git/client.go`, found via the `GitClient` type, not the string "client") —
+  an agent reading the file would still find those, so the true unique value is
+  lower than measured.
+- **\*The non-obvious wins are a few recurring config/tooling pairs, not code.**
+  De-duplicated, they are: `appveyor.yml → ci.yml` (express, the single pattern
+  behind its 47%), `requirements/dev.txt → .pre-commit-config.yaml`,
+  `pyproject.toml → requirements/*`, `tox.ini → ci.yaml` (flask). Genuine
+  "changing A surprisingly needs unrelated code Z" hits were ~zero in the sample.
+
+Independent corroborating signal: the commit-grouping A/B (below) already showed
+co-change hints have only a soft, marginal effect when fed to the LLM planner.
+
+**Verdict.** For an LLM agent that can read the codebase, `impact`'s unique
+contribution is near noise, concentrated in a handful of cross-tooling config
+couplings. The SQLite graph + indexing + capture-hook complexity is hard to
+justify on this evidence. Reasonable options: (a) drop the graph subsystem;
+(b) keep a zero-dependency `impact` that computes co-change directly from
+`git log` with no SQLite/index/hooks, preserving the thin config-pair value
+without the weight; (c) if the real audience is *humans* navigating an
+unfamiliar large repo (where evolutionary coupling has established value), the
+positioning and the evaluation method both need to change — test with humans,
+not a proxy.
+
 ## Structural awareness — `impact` (P0)
 
 Verified on a real 259-commit clone of this repository. Co-change ranking is
