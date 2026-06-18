@@ -101,6 +101,7 @@ never tuned for, including a non-Go codebase to confirm it is language-agnostic
 | git-agent (Go)           |     272 |          **46%** |              32% |              66% |
 | cli/cli (Go)             |  11,450 |          **57%** |               5% |              69% |
 | expressjs/express (JS)   |   6,153 |          **47%** |               0% |              55% |
+| pallets/flask (Python)   |   5,539 |          **51%** |               2% |              69% |
 
 Consistently ~46–57% recall, always far above the popularity baseline — which
 collapses to near zero on larger, modular codebases (no single file dominates,
@@ -121,6 +122,26 @@ planner chose a nested-loop scan (recompute 6.4s → 0.22s). Results are byte-fo
 byte identical; only speed changed. Robustness held up: reindex is idempotent,
 incremental indexing of a new commit is ~96ms, and a directory seed that expands
 to 100+ files now prints a bounded summary instead of a wall of paths.
+
+## Positive result — recency weighting (shipped)
+
+Weighted each co-change by an exponential decay of its commit age (one-year
+half-life), so recent couplings dominate strength and stale ones fade; the raw
+count still drives the min-count floor. Validated with a *paired* backtest — the
+same held-out commit scored by both the old (symmetric, all-time) and new
+(recency) ranking on an identical test set:
+
+| repo (maturity)          | symmetric | recency | per-commit recency better / worse |
+|--------------------------|----------:|--------:|-----------------------------------|
+| flask (Python, ~14 yr)   |     50.7% | **56.4%** | 19 / 1 |
+| express (JS, ~14 yr)     |     46.9% | **56.3%** | 12 / 1 |
+| git-agent (Go, ~1 yr)    |     47.7% |   47.7% | 2 / 1 |
+
+Recency lifts recall 6–9 points on mature, long-lived repos (their old coupling
+patterns are stale) and is neutral on a young repo — and never meaningfully
+regresses a commit. Shipped. Contemporaneous history (e.g. unit-test fixtures
+committed at once) decays to plain count-based strength, so existing behaviour
+is unchanged where there is no time spread.
 
 ## Negative result — directional coupling does not help
 
