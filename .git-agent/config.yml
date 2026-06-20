@@ -2,18 +2,18 @@ hook:
     - conventional
 scopes:
     - name: app
-      description: application services, orchestration, and coordination in application/; does not cover CLI commands or domain models
+      description: Orchestrates application services, impact aggregation, and commit planning in application/; excludes CLI routing and domain models.
     - name: cli
-      description: command-line entry points, flags, and user interaction in cmd/; does not cover backend application logic
+      description: Handles command-line interfaces, flag parsing, and user-facing output in cmd/; excludes backend service logic.
     - name: domain
-      description: core business logic, entities, and interfaces in domain/; does not cover infrastructure implementation
+      description: Defines core business models, validation rules, and interfaces in domain/; excludes infrastructure implementations.
     - name: e2e
-      description: end-to-end integration and workflow validation tests in e2e/; does not cover unit tests
+      description: Runs full-stack integration tests validating CLI workflows and application behavior in e2e/; excludes unit tests.
     - name: hooks
-      description: git hook shell scripts and templates in hooks/; does not cover hook executor implementation
+      description: Manages git pre-commit shell scripts and execution templates in hooks/; excludes Go-based hook executors.
     - name: infra
-      description: infrastructure adapters for Git, OpenAI, config, and hooks in infrastructure/; does not cover application flow
+      description: Adapters for Git, OpenAI, SQLite graph storage, and config resolution in infrastructure/; excludes domain models.
     - name: pkg
-      description: shared internal utility packages and filtering helpers in pkg/; does not cover application services
+      description: Shared internal utilities, error definitions, and pattern filters in pkg/; excludes application services.
     - name: skills
-      description: documentation and configuration definitions for CLI agent skills in skills/; does not cover runtime logic
+      description: Agent skill definitions, markdown guides, and reference documentation in skills/; excludes executable runtime logic.
