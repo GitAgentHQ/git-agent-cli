@@ -120,34 +120,34 @@ const (
 
 // ASTNode represents a code symbol extracted from a source file's AST.
 type ASTNode struct {
-	ID            string
-	Kind          ASTNodeKind
-	Name          string
-	QualifiedName string
-	FilePath      string
-	Language      string
-	StartLine     int
-	EndLine       int
-	StartColumn   int
-	EndColumn     int
-	Signature     string
-	Visibility    string // public, private, protected, internal
-	IsExported    bool
-	IsAsync       bool
-	IsStatic      bool
-	IsAbstract    bool
-	ReturnType    string
-	UpdatedAt     int64
+	ID            string      `json:"id"`
+	Kind          ASTNodeKind `json:"kind"`
+	Name          string      `json:"name"`
+	QualifiedName string      `json:"qualified_name"`
+	FilePath      string      `json:"file_path"`
+	Language      string      `json:"language"`
+	StartLine     int         `json:"start_line"`
+	EndLine       int         `json:"end_line"`
+	StartColumn   int         `json:"start_column"`
+	EndColumn     int         `json:"end_column"`
+	Signature     string      `json:"signature"`
+	Visibility    string      `json:"visibility"` // public, private, protected, internal
+	IsExported    bool        `json:"is_exported"`
+	IsAsync       bool        `json:"is_async"`
+	IsStatic      bool        `json:"is_static"`
+	IsAbstract    bool        `json:"is_abstract"`
+	ReturnType    string      `json:"return_type"`
+	UpdatedAt     int64       `json:"updated_at"`
 }
 
 // ASTEdge represents a relationship between two AST nodes.
 type ASTEdge struct {
-	Source     string
-	Target     string
-	Kind       ASTEdgeKind
-	Line       int
-	Column     int
-	Provenance string // tree-sitter, heuristic
+	Source     string      `json:"source"`
+	Target     string      `json:"target"`
+	Kind       ASTEdgeKind `json:"kind"`
+	Line       int         `json:"line"`
+	Column     int         `json:"column"`
+	Provenance string      `json:"provenance"` // tree-sitter, heuristic
 }
 
 // ASTUnresolvedRef is a reference that could not be resolved during extraction.
@@ -176,17 +176,17 @@ type ExtractionResult struct {
 
 // ASTImpactResult holds the output of a structural impact query.
 type ASTImpactResult struct {
-	SeedNode   ASTNode
-	Impacted   []ASTImpactEntry
-	TotalFound int
-	QueryMs    int64
+	SeedNode   ASTNode          `json:"seed_node"`
+	Impacted   []ASTImpactEntry `json:"impacted"`
+	TotalFound int              `json:"total_found"`
+	QueryMs    int64            `json:"query_ms"`
 }
 
 // ASTImpactEntry is a single node in a structural impact result.
 type ASTImpactEntry struct {
-	Node  ASTNode
-	Edge  ASTEdge
-	Depth int
+	Node  ASTNode `json:"node"`
+	Edge  ASTEdge `json:"edge"`
+	Depth int     `json:"depth"`
 }
 
 // ASTSearchResult is a node found via symbol search.

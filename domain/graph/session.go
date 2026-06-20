@@ -9,6 +9,13 @@ type SessionNode struct {
 	EndedAt    int64 // 0 if still active
 }
 
+// SessionIDGenerator produces unique session identifiers. Generating IDs is an
+// infrastructure concern (UUID, ULID, etc.), so the application layer depends
+// on this port rather than on a concrete ID library.
+type SessionIDGenerator interface {
+	NewSessionID() string
+}
+
 // ActionNode represents a single agent tool call or human edit.
 type ActionNode struct {
 	ID           string // "{session_id}:{sequence}"
