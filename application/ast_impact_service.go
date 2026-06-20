@@ -49,7 +49,11 @@ func (s *ASTImpactService) ImpactBySymbol(ctx context.Context, name string, maxD
 			return nil, fmt.Errorf("get callers for %s: %w", n.ID, err)
 		}
 		for _, e := range callers {
-			if _, ok := merged[e.Node.ID]; !ok {
+			// Prefer the shallowest depth across same-named seeds: a caller
+			// reached at depth 1 from one seed should not be reported at depth 2
+			// just because an earlier seed (sorted by qualified name) found it
+			// deeper.
+			if existing, ok := merged[e.Node.ID]; !ok || e.Depth < existing.Depth {
 				merged[e.Node.ID] = e
 			}
 		}

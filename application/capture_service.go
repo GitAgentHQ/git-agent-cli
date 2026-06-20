@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
@@ -17,13 +15,15 @@ const (
 
 // CaptureService records delta-based agent actions into the graph.
 type CaptureService struct {
-	repo graph.GraphRepository
-	git  graph.GraphGitClient
+	repo  graph.GraphRepository
+	git   graph.GraphGitClient
+	idGen graph.SessionIDGenerator
 }
 
-// NewCaptureService creates a CaptureService with the given repository and git client.
-func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient) *CaptureService {
-	return &CaptureService{repo: repo, git: git}
+// NewCaptureService creates a CaptureService with the given repository, git
+// client, and session ID generator.
+func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient, idGen graph.SessionIDGenerator) *CaptureService {
+	return &CaptureService{repo: repo, git: git, idGen: idGen}
 }
 
 // Capture records a delta-based action. It detects which files changed since
@@ -100,7 +100,7 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	}
 	if session == nil {
 		session = &graph.SessionNode{
-			ID:         uuid.New().String(),
+			ID:         s.idGen.NewSessionID(),
 			Source:     req.Source,
 			InstanceID: req.InstanceID,
 			StartedAt:  time.Now().Unix(),

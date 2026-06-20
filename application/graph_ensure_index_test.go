@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
@@ -170,15 +171,23 @@ func TestEnsureIndex_ForcePushTriggersFullReindex(t *testing.T) {
 		t.Fatalf("FullIndex() error = %v", err)
 	}
 
-	// Set lastIndexedCommit to a hash that is unreachable.
-	if err := repo.SetLastIndexedCommit(ctx, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); err != nil {
+	// Record the HEAD before a force-push so we can restore history to a real
+	// (now-unreachable) ancestor. This exercises the genuine exit-1
+	// "is-ancestor false" path, not an invalid-hash exit-128 error.
+	preForceHead := strings.TrimSpace(git("rev-parse", "HEAD"))
+
+	// Rewrite history: reset to commit 1, then build a divergent commit 2'.
+	// The old commits 2 and 3 become unreachable (exit 1 from merge-base).
+	git("reset", "--hard", "HEAD~2")
+	writeFile(t, repoDir, "b2.go", "package main\n")
+	git("add", ".")
+	git("commit", "-m", "commit 2 prime")
+
+	// Point lastIndexedCommit at the old, now-unreachable HEAD (a real commit
+	// object, so merge-base --is-ancestor returns exit 1, not an error).
+	if err := repo.SetLastIndexedCommit(ctx, preForceHead); err != nil {
 		t.Fatalf("SetLastIndexedCommit() error = %v", err)
 	}
-
-	// Add one more commit so there's something to index.
-	writeFile(t, repoDir, "d.go", "package main\n")
-	git("add", ".")
-	git("commit", "-m", "commit 4")
 
 	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
 	result, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
@@ -186,9 +195,42 @@ func TestEnsureIndex_ForcePushTriggersFullReindex(t *testing.T) {
 		t.Fatalf("EnsureIndex() error = %v", err)
 	}
 
-	// Full re-index should process all 4 commits (the 3 original + the new one).
-	if result.IndexedCommits != 4 {
-		t.Errorf("IndexedCommits = %d, want 4", result.IndexedCommits)
+	// Full re-index should process all reachable commits: the original commit 1
+	// plus the divergent commit 2' (commits 2 and 3 are now unreachable).
+	if result.IndexedCommits != 2 {
+		t.Errorf("IndexedCommits = %d, want 2", result.IndexedCommits)
+	}
+}
+
+func TestEnsureIndex_CorruptLastHashSurfacesError(t *testing.T) {
+	repoDir, git := testRepo(t)
+
+	writeFile(t, repoDir, "a.go", "package main\n")
+	git("add", ".")
+	git("commit", "-m", "commit 1")
+
+	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
+	repo := openTestDB(t, repoDir)
+	gitClient := gitinfra.NewGraphClient(repoDir)
+	indexSvc := NewIndexService(repo, gitClient)
+
+	ctx := context.Background()
+
+	_, err := indexSvc.FullIndex(ctx, graph.IndexRequest{})
+	if err != nil {
+		t.Fatalf("FullIndex() error = %v", err)
+	}
+
+	// A garbage lastHash is not a force-push: git merge-base exits 128 (real
+	// error), which must surface rather than silently destroying the index.
+	if err := repo.SetLastIndexedCommit(ctx, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); err != nil {
+		t.Fatalf("SetLastIndexedCommit() error = %v", err)
+	}
+
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	_, err = ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
+	if err == nil {
+		t.Fatal("EnsureIndex() expected error for corrupt lastHash, got nil")
 	}
 }
 

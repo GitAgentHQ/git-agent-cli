@@ -37,7 +37,7 @@ func TestCaptureService_CaptureCreatesSessionAndAction(t *testing.T) {
 		hashObjectResults:  map[string]string{"main.go": "abc123"},
 		diffForFilesResult: "+func main() {}",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",
@@ -86,7 +86,7 @@ func TestCaptureService_ExcludesGitAgentMetadata(t *testing.T) {
 		},
 		diffForFilesResult: "+func main() {}",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",
@@ -115,7 +115,7 @@ func TestCaptureService_OnlyGitAgentMetadata_IsNoOp(t *testing.T) {
 		},
 		diffForFilesResult: "+noise",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",
@@ -145,7 +145,7 @@ index 111..222 100644
 +new two
 +new three`,
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{Source: "claude-code", Tool: "Edit"})
 	if err != nil {
@@ -174,7 +174,7 @@ func TestCaptureService_DeltaCapture_OnlyNewChanges(t *testing.T) {
 		hashObjectResults:  map[string]string{"a.go": "hash-a-v1"},
 		diffForFilesResult: "+func a() {}",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	r1, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",
@@ -221,7 +221,7 @@ func TestCaptureService_AppendsToExistingSession(t *testing.T) {
 		hashObjectResults:  map[string]string{"main.go": "hash-v1"},
 		diffForFilesResult: "+v1",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	r1, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source:     "claude-code",
@@ -273,7 +273,7 @@ func TestCaptureService_NewSessionAfterTimeout(t *testing.T) {
 		hashObjectResults:  map[string]string{"main.go": "hash-new"},
 		diffForFilesResult: "+new",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(ctx, graph.CaptureRequest{
 		Source:     "claude-code",
@@ -296,7 +296,7 @@ func TestCaptureService_NoDiff_IsNoOp(t *testing.T) {
 	git := &mockGraphGitClient{
 		diffNameOnlyResult: []string{},
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",
@@ -323,7 +323,7 @@ func TestCaptureService_EndSession(t *testing.T) {
 		hashObjectResults:  map[string]string{"main.go": "hash1"},
 		diffForFilesResult: "+code",
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	r, err := svc.Capture(ctx, graph.CaptureRequest{
 		Source:     "claude-code",
@@ -366,7 +366,7 @@ func TestCaptureService_DiffTruncation(t *testing.T) {
 		hashObjectResults:  map[string]string{"big.go": "hash-big"},
 		diffForFilesResult: largeDiff,
 	}
-	svc := application.NewCaptureService(repo, git)
+	svc := application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 
 	result, err := svc.Capture(context.Background(), graph.CaptureRequest{
 		Source: "claude-code",

@@ -11,7 +11,11 @@ import (
 // ActionLinker links uncommitted actions to a newly created commit.
 // A nil linker means action-to-commit linking is unavailable (graceful degradation).
 type ActionLinker interface {
-	LinkActionsToCommit(ctx context.Context, commitHash string, files []string) error
+	// commitOutput is the raw stdout from `git commit`, e.g.
+	// "[branch hash] subject" or "[branch (root-commit) hash] subject".
+	// Implementations parse the short hash from it; they do NOT receive a
+	// pre-parsed hash despite the historical parameter name.
+	LinkActionsToCommit(ctx context.Context, commitOutput string, files []string) error
 }
 
 // GraphActionLinker implements ActionLinker using the graph repository.

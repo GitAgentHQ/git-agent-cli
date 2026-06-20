@@ -611,10 +611,16 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				allFiles = append(allFiles, r.Files...)
 			}
 
-			newPlan, err := s.planner.Plan(ctx, commit.PlanRequest{
-				StagedDiff: &diff.StagedDiff{Files: allFiles},
-				Intent:     req.Intent,
-				Config:     req.Config,
+			// Route through runPlan so the heuristic fallback applies uniformly
+			// to all three plan/re-plan call sites (initial, scope-refresh, hook).
+			// CoChangeHints is preserved here for the same reason as the other
+			// re-plan: a rejected group needs structural coupling context to be
+			// re-bucketed correctly.
+			newPlan, err := s.runPlan(ctx, req, commit.PlanRequest{
+				StagedDiff:    &diff.StagedDiff{Files: allFiles},
+				Intent:        req.Intent,
+				Config:        req.Config,
+				CoChangeHints: coChangeHints,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)
@@ -627,6 +633,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			}
 			if n := filterPlanFiles(newPlan, rePlanAllowed); n > 0 {
 				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
+			}
+			if len(newPlan.Groups) > maxCommitGroups {
+				s.vlog(req, "hook re-plan has %d groups — capping to %d", len(newPlan.Groups), maxCommitGroups)
+				newPlan.Groups = newPlan.Groups[:maxCommitGroups]
 			}
 			appendPassthroughFiles(newPlan, rePlanAllowed)
 			remaining = newPlan.Groups
