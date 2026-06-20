@@ -163,11 +163,11 @@ func caller() string { return target() }
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if !strings.Contains(out, "SeedNode") {
-		t.Errorf("JSON output should contain SeedNode:\n%s", out)
+	if !strings.Contains(out, "seed_node") {
+		t.Errorf("JSON output should contain seed_node:\n%s", out)
 	}
-	if !strings.Contains(out, "Impacted") {
-		t.Errorf("JSON output should contain Impacted array:\n%s", out)
+	if !strings.Contains(out, "impacted") {
+		t.Errorf("JSON output should contain impacted array:\n%s", out)
 	}
 	if !strings.Contains(out, "caller") {
 		t.Errorf("JSON output should contain caller symbol:\n%s", out)
