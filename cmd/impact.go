@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/graph"
+	infraExtraction "github.com/gitagenthq/git-agent/infrastructure/extraction"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 )
@@ -36,6 +38,8 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	reindex, _ := cmd.Flags().GetBool("reindex")
 	jsonFlag, _ := cmd.Flags().GetBool("json")
 	textFlag, _ := cmd.Flags().GetBool("text")
+	symbol, _ := cmd.Flags().GetString("symbol")
+	mode, _ := cmd.Flags().GetString("mode")
 
 	ctx := cmd.Context()
 
@@ -47,6 +51,23 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
+	}
+
+	// Mode dispatch:
+	//   --symbol with no explicit --mode (or --mode structural) → AST only
+	//   --symbol with --mode combined → co-change of symbol's file + AST
+	//   --symbol with --mode cochange → co-change of symbol's file
+	//   --mode structural/combined without --symbol → error (need a symbol)
+	//   everything else → existing co-change behavior
+	switch {
+	case symbol != "" && (mode == "" || mode == "structural"):
+		return runASTImpact(cmd, ctx, root, symbol, depth, "structural", jsonFlag, textFlag)
+	case symbol != "" && mode == "combined":
+		return runASTImpact(cmd, ctx, root, symbol, depth, "combined", jsonFlag, textFlag)
+	case symbol != "" && mode == "cochange":
+		// Fall through to co-change with the symbol's file as seed.
+	case symbol == "" && (mode == "structural" || mode == "combined"):
+		return fmt.Errorf("--mode %s requires --symbol", mode)
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
@@ -109,6 +130,104 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	return outputResult(cmd, result, jsonFlag, textFlag)
 }
 
+// runASTImpact handles --symbol / --mode structural|combined.
+func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, jsonFlag, textFlag bool) error {
+	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return fmt.Errorf("create .git-agent dir: %w", err)
+	}
+
+	client := infraGraph.NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		return fmt.Errorf("open graph db: %w", err)
+	}
+	defer client.Close()
+	if err := client.InitSchema(ctx); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+
+	astRepo := infraGraph.NewSQLiteASTRepository(client)
+	graphGit := infraGit.NewGraphClient(root)
+
+	// If symbol is given but no AST data yet, auto-index.
+	if symbol != "" {
+		extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
+		indexSvc := application.NewASTIndexService(astRepo, graphGit, extractor)
+
+		nodes, err := astRepo.GetASTNodeByName(ctx, symbol)
+		if err != nil {
+			return outputError(jsonFlag, textFlag, fmt.Errorf("lookup AST symbol %q: %w", symbol, err))
+		}
+		if len(nodes) == 0 {
+			idxResult, err := indexSvc.IndexAll(ctx, root)
+			if err != nil {
+				return outputError(jsonFlag, textFlag, fmt.Errorf("index AST symbols: %w", err))
+			}
+			if idxResult.FilesProcessed > 0 {
+				fmt.Fprintf(os.Stderr, "AST indexed %d files, %d symbols [%dms]\n",
+					idxResult.FilesProcessed, idxResult.SymbolsStored, idxResult.DurationMs)
+			}
+		}
+	}
+
+	impactSvc := application.NewASTImpactService(astRepo)
+	astResult, err := impactSvc.ImpactBySymbol(ctx, symbol, depth)
+	if err != nil {
+		return outputError(jsonFlag, textFlag, err)
+	}
+
+	// Combined mode: also run co-change for the seed symbol's file.
+	if mode == "combined" {
+		coChangeResult := runCoChangeForSymbol(ctx, root, astResult.SeedNode.FilePath)
+		if useJSON(jsonFlag, textFlag) {
+			return outputCombinedJSON(cmd.OutOrStdout(), astResult, coChangeResult)
+		}
+		outputCombinedText(cmd.OutOrStdout(), astResult, coChangeResult)
+		return nil
+	}
+
+	if useJSON(jsonFlag, textFlag) {
+		return outputASTImpactJSON(cmd.OutOrStdout(), astResult)
+	}
+	outputASTImpactText(cmd.OutOrStdout(), astResult)
+	return nil
+}
+
+// runCoChangeForSymbol runs a co-change query for the symbol's file path,
+// returning nil if the co-change index doesn't exist yet.
+func runCoChangeForSymbol(ctx context.Context, root, filePath string) *graph.ImpactResult {
+	if filePath == "" {
+		return nil
+	}
+
+	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	repo := infraGraph.NewSQLiteRepository(infraGraph.NewSQLiteClient(dbPath))
+	if err := repo.Open(ctx); err != nil {
+		return nil
+	}
+	defer repo.Close()
+	if err := repo.InitSchema(ctx); err != nil {
+		return nil
+	}
+
+	graphGit := infraGit.NewGraphClient(root)
+	indexSvc := application.NewIndexService(repo, graphGit)
+	ensureSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
+	if _, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{MaxFilesPerCommit: 50}); err != nil {
+		return nil
+	}
+
+	impactSvc := application.NewImpactService(repo)
+	result, err := impactSvc.Impact(ctx, graph.ImpactRequest{
+		Paths: []string{filePath},
+		Top:   10,
+	})
+	if err != nil {
+		return nil
+	}
+	return result
+}
+
 // resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
 // the working-tree changes are used. Each arg is normalized (git pathspec
 // semantics); a directory expands to the git-tracked files beneath it.
@@ -116,7 +235,7 @@ func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit
 	seen := make(map[string]bool)
 	var seeds []string
 	add := func(p string) {
-		if p != "" && !isToolingPath(p) && !seen[p] {
+		if p != "" && !graph.IsToolingPath(p) && !seen[p] {
 			seen[p] = true
 			seeds = append(seeds, p)
 		}
@@ -148,17 +267,6 @@ func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit
 		add(rel)
 	}
 	return seeds, nil
-}
-
-// isToolingPath reports whether a path lives in an agent-tooling directory that
-// should never be treated as part of the codebase feature being analyzed.
-func isToolingPath(p string) bool {
-	for _, dir := range []string{".git-agent", ".claude"} {
-		if p == dir || strings.HasPrefix(p, dir+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func outputError(jsonFlag, textFlag bool, err error) error {
@@ -295,6 +403,74 @@ func useJSON(jsonFlag, textFlag bool) bool {
 	return !isatty.IsTerminal(os.Stdout.Fd())
 }
 
+// outputASTImpactJSON renders the structural impact result as JSON.
+func outputASTImpactJSON(w io.Writer, result *graph.ASTImpactResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
+}
+
+// outputASTImpactText renders the structural impact result as human-readable text.
+func outputASTImpactText(w io.Writer, result *graph.ASTImpactResult) {
+	fmt.Fprintf(w, "Structural impact of %s (%s):\n\n", result.SeedNode.Name, result.SeedNode.Kind)
+
+	if len(result.Impacted) == 0 {
+		fmt.Fprintln(w, "  (no callers or references found)")
+		fmt.Fprintf(w, "\n0 impacted symbols | query: %dms\n", result.QueryMs)
+		return
+	}
+
+	// Split production callers (first) from test callers (last) so signal is
+	// not buried under test noise. Entries keep their original order within
+	// each group.
+	var prod, tests []graph.ASTImpactEntry
+	for _, e := range result.Impacted {
+		if isTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
+			tests = append(tests, e)
+		} else {
+			prod = append(prod, e)
+		}
+	}
+
+	renderImpactEntries(w, prod)
+	if len(tests) > 0 {
+		fmt.Fprintf(w, "\n  -- tests (%d) --\n", len(tests))
+		renderImpactEntries(w, tests)
+	}
+
+	fmt.Fprintf(w, "\n%d impacted symbols | query: %dms\n", result.TotalFound, result.QueryMs)
+}
+
+func renderImpactEntries(w io.Writer, entries []graph.ASTImpactEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	maxLen := 0
+	for _, e := range entries {
+		if len(e.Node.Name) > maxLen {
+			maxLen = len(e.Node.Name)
+		}
+	}
+	for _, e := range entries {
+		padding := strings.Repeat(" ", maxLen-len(e.Node.Name)+2)
+		line := fmt.Sprintf("  %s%s%s  %s  d%d", e.Node.Name, padding, e.Node.Kind, e.Node.FilePath, e.Depth)
+		if e.Depth > 1 {
+			line += "  [indirect]"
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+// isTestFile reports whether a Go file path is a test file.
+func isTestFile(filePath string) bool {
+	return strings.HasSuffix(filePath, "_test.go")
+}
+
+// isTestSymbol reports whether a symbol name looks like a Go test function/benchmark.
+func isTestSymbol(name string) bool {
+	return strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Example")
+}
+
 func init() {
 	impactCmd.Flags().Int("depth", 1, "transitive co-change depth")
 	impactCmd.Flags().Int("top", 20, "max results")
@@ -302,7 +478,48 @@ func init() {
 	impactCmd.Flags().Bool("reindex", false, "force full re-index before query")
 	impactCmd.Flags().Bool("json", false, "force JSON output")
 	impactCmd.Flags().Bool("text", false, "force text output")
+	impactCmd.Flags().String("symbol", "", "query structural impact by symbol name")
+	impactCmd.Flags().String("mode", "", "impact mode: structural, combined, or cochange (default: cochange, or structural if --symbol given)")
 	impactCmd.MarkFlagsMutuallyExclusive("json", "text")
 
 	rootCmd.AddCommand(impactCmd)
+}
+
+// outputCombinedJSON renders both co-change and structural results as JSON.
+func outputCombinedJSON(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(map[string]any{
+		"mode":         "combined",
+		"structural":   astResult,
+		"co_change":    ccResult,
+		"seed_symbol":  astResult.SeedNode.Name,
+		"seed_file":    astResult.SeedNode.FilePath,
+		"struct_total": astResult.TotalFound,
+		"cochange_total": func() int {
+			if ccResult == nil {
+				return 0
+			}
+			return ccResult.TotalFound
+		}(),
+	})
+}
+
+// outputCombinedText renders both results in text format.
+func outputCombinedText(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) {
+	// Section 1: Structural impact
+	outputASTImpactText(w, astResult)
+
+	// Section 2: Co-change impact
+	fmt.Fprintf(w, "\n--- Co-change for %s ---\n", astResult.SeedNode.FilePath)
+	if ccResult == nil || len(ccResult.CoChanged) == 0 {
+		fmt.Fprintln(w, "  (no co-changed files found)")
+		return
+	}
+	for _, e := range ccResult.CoChanged {
+		pct := int(e.CouplingStrength * 100)
+		fmt.Fprintf(w, "  %-40s %3d%%  (%d co-changes)\n", e.Path, pct, e.CouplingCount)
+	}
+	fmt.Fprintf(w, "\n%d co-changed files | %d structural impacts\n",
+		ccResult.TotalFound, astResult.TotalFound)
 }

@@ -7,17 +7,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 )
 
 func TestIsToolingPath(t *testing.T) {
 	for _, p := range []string{".git-agent", ".git-agent/graph.db", ".claude/settings.json"} {
-		if !isToolingPath(p) {
+		if !graph.IsToolingPath(p) {
 			t.Errorf("%q should be a tooling path", p)
 		}
 	}
 	for _, p := range []string{"main.go", "src/.claude.go", "git-agent/x"} {
-		if isToolingPath(p) {
+		if graph.IsToolingPath(p) {
 			t.Errorf("%q should NOT be a tooling path", p)
 		}
 	}
@@ -93,7 +94,7 @@ func TestResolveSeeds_WorkingTreeAndToolingExclusion(t *testing.T) {
 		t.Fatalf("resolveSeeds: %v", err)
 	}
 	for _, s := range seeds {
-		if isToolingPath(s) {
+		if graph.IsToolingPath(s) {
 			t.Errorf("tooling path %q must not be a seed", s)
 		}
 	}
