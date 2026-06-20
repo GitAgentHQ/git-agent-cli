@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -169,33 +168,17 @@ func (s *CaptureService) endSession(ctx context.Context, source, instanceID stri
 	}, nil
 }
 
-// toolingDirs are agent-tooling directories whose contents are never the
-// agent's code work: git-agent's own graph DB (churns on every capture) and
-// Claude Code's config (written by `init --agent-hook`). Recording them
-// pollutes the timeline and action attribution, the same way git never reports
-// changes inside .git/.
-var toolingDirs = []string{".git-agent", ".claude"}
-
 // excludeToolingPaths drops agent-tooling directories from the captured file
 // set so each action reflects only the codebase changes the agent made.
 func excludeToolingPaths(files []string) []string {
 	filtered := files[:0:0]
 	for _, f := range files {
-		if isToolingPath(f) {
+		if graph.IsToolingPath(f) {
 			continue
 		}
 		filtered = append(filtered, f)
 	}
 	return filtered
-}
-
-func isToolingPath(f string) bool {
-	for _, dir := range toolingDirs {
-		if f == dir || strings.HasPrefix(f, dir+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func truncateDiff(d string) string {
