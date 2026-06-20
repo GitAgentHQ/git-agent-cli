@@ -56,6 +56,23 @@ type GraphRepository interface {
 	GetStats(ctx context.Context) (*GraphStats, error)
 }
 
+// ASTRepository defines persistence operations for AST-extracted code symbols.
+type ASTRepository interface {
+	UpsertASTNode(ctx context.Context, n ASTNode) error
+	UpsertASTEdge(ctx context.Context, e ASTEdge) error
+	UpsertUnresolvedRef(ctx context.Context, ref ASTUnresolvedRef) error
+	GetASTNodeByName(ctx context.Context, name string) ([]ASTNode, error)
+	GetASTNodeByQualifiedName(ctx context.Context, qname string) (*ASTNode, error)
+	GetCallers(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
+	GetCallees(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
+	GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*ASTImpactResult, error)
+	SearchASTNodes(ctx context.Context, query string, kinds []ASTNodeKind) ([]ASTSearchResult, error)
+	ListUnresolvedRefs(ctx context.Context) ([]ASTUnresolvedRef, error)
+	ListASTNodeNames(ctx context.Context) ([]string, error)
+	DeleteASTNodesForFile(ctx context.Context, filePath string) error
+	DeleteASTNodesExceptFiles(ctx context.Context, filePaths []string) error
+}
+
 // GraphStats holds counts for graph status display.
 type GraphStats struct {
 	Exists            bool   `json:"exists"`
