@@ -2,17 +2,17 @@ hook:
     - conventional
 scopes:
     - name: app
-      description: application service orchestration and coordination in application/; does not cover CLI commands or domain models
+      description: application services, orchestration, and coordination in application/; does not cover CLI commands or domain models
     - name: cli
-      description: command-line entry points, flags, and interaction in cmd/; does not cover backend application logic
+      description: command-line entry points, flags, and user interaction in cmd/; does not cover backend application logic
     - name: domain
       description: core business logic, entities, and interfaces in domain/; does not cover infrastructure implementation
-    - name: infra
-      description: infrastructure adapters for Git, OpenAI, config, and hooks in infrastructure/; does not cover application flow
     - name: e2e
       description: end-to-end integration and workflow validation tests in e2e/; does not cover unit tests
     - name: hooks
       description: git hook shell scripts and templates in hooks/; does not cover hook executor implementation
+    - name: infra
+      description: infrastructure adapters for Git, OpenAI, config, and hooks in infrastructure/; does not cover application flow
     - name: pkg
       description: shared internal utility packages and filtering helpers in pkg/; does not cover application services
     - name: skills
