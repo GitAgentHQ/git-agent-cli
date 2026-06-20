@@ -86,10 +86,10 @@ func TestFormatASTImpactJSON_ValidJSON(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "SeedNode") {
+	if !strings.Contains(out, "seed_node") {
 		t.Errorf("JSON output should include seed node: %q", out)
 	}
-	if !strings.Contains(out, "Impacted") {
+	if !strings.Contains(out, "impacted") {
 		t.Errorf("JSON output should include impacted array: %q", out)
 	}
 }

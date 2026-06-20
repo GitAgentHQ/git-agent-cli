@@ -65,7 +65,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
-	captureSvc := application.NewCaptureService(repo, graphGit)
+	captureSvc := application.NewCaptureService(repo, graphGit, infraGraph.NewUUIDSessionIDGenerator())
 
 	result, err := captureSvc.Capture(ctx, graph.CaptureRequest{
 		Source:     source,
