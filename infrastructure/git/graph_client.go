@@ -27,9 +27,16 @@ func NewGraphClient(repoPath string) *GraphClient {
 	return &GraphClient{repoPath: repoPath}
 }
 
+// gitConfigArgs prepends settings that make git's path output verbatim and
+// machine-parseable. core.quotePath=false stops git from octal-escaping
+// non-ASCII filenames in --name-only/--raw/--numstat output, which would
+// otherwise round-trip into broken pathspecs and silently-corrupt stored
+// paths (the sibling client.go gitCmd applies the same fix).
+var gitConfigArgs = []string{"-c", "core.quotePath=false"}
+
 // run executes a git command in the repository directory and returns stdout.
 func (g *GraphClient) run(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, gitConfigArgs...), args...)...)
 	cmd.Dir = g.repoPath
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -41,17 +48,23 @@ func (g *GraphClient) run(ctx context.Context, args ...string) (string, error) {
 }
 
 // runExitCode executes a git command and returns its exit code without
-// treating non-zero exits as errors (useful for commands like merge-base
-// --is-ancestor which use exit code 1 to mean "false").
+// treating exit code 1 as an error (useful for commands like merge-base
+// --is-ancestor which use exit 1 to mean "false"). Exit codes >= 2 (including
+// git's standard error code 128) are propagated as errors: silently treating
+// them as a boolean "false" would cause callers to misinterpret a genuine git
+// failure (e.g. an invalid/corrupt commit hash) as a normal negative result.
 func (g *GraphClient) runExitCode(ctx context.Context, args ...string) (int, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, gitConfigArgs...), args...)...)
 	cmd.Dir = g.repoPath
 	err := cmd.Run()
 	if err == nil {
 		return 0, nil
 	}
 	if ee, ok := err.(*exec.ExitError); ok {
-		return ee.ExitCode(), nil
+		if ee.ExitCode() <= 1 {
+			return ee.ExitCode(), nil
+		}
+		return ee.ExitCode(), fmt.Errorf("git %s: exit %d", strings.Join(args, " "), ee.ExitCode())
 	}
 	return -1, err
 }

@@ -450,3 +450,61 @@ func TestGraphClient_DiffForFiles(t *testing.T) {
 		t.Error("diff should not contain b.go when only a.go requested")
 	}
 }
+
+// TestGraphClient_NonASCIIPath verifies that DiffNameOnly, CommitLogDetailed,
+// and HashObject return verbatim non-ASCII filenames. Without -c
+// core.quotePath=false, git octal-escapes these paths and the escaped forms
+// fail to round-trip into pathspecs (HashObject would misreport the file as
+// deleted, DiffForFiles would return an empty diff).
+func TestGraphClient_NonASCIIPath(t *testing.T) {
+	dir := initTestRepo(t)
+	name := "项目复盘.md"
+
+	commitFile(t, dir, name, "initial\n", "add non-ascii", 3600)
+
+	// Modify the tracked non-ASCII file.
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gc := NewGraphClient(dir)
+
+	files, err := gc.DiffNameOnly(context.Background())
+	if err != nil {
+		t.Fatalf("DiffNameOnly: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if f == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DiffNameOnly() = %v, want verbatim %q (no octal escaping)", files, name)
+	}
+
+	hash, err := gc.HashObject(context.Background(), name)
+	if err != nil {
+		t.Fatalf("HashObject(%q): %v", name, err)
+	}
+	if strings.Contains(hash, "deleted") || hash == "" {
+		t.Errorf("HashObject(%q) = %q, want a real object hash (path resolved verbatim)", name, hash)
+	}
+
+	commits, err := gc.CommitLogDetailed(context.Background(), "", 1)
+	if err != nil {
+		t.Fatalf("CommitLogDetailed: %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("expected 1 commit, got %d", len(commits))
+	}
+	pathSeen := false
+	for _, f := range commits[0].Files {
+		if f.Path == name {
+			pathSeen = true
+		}
+	}
+	if !pathSeen {
+		t.Errorf("CommitLogDetailed files = %v, want verbatim %q", commits[0].Files, name)
+	}
+}
