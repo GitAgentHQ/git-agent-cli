@@ -424,3 +424,75 @@ func TestASTImpactService_SymbolNotFound(t *testing.T) {
 		t.Fatalf("error should mention not found: %v", err)
 	}
 }
+
+func TestReferenceResolver_PromotesCallToStructToInstantiates(t *testing.T) {
+	repo := setupASTRepo(t)
+	ctx := context.Background()
+
+	caller := graph.ASTNode{ID: "caller", Kind: graph.ASTNodeKindFunction, Name: "build", QualifiedName: "a.go::build", FilePath: "a.go", Language: "go"}
+	// A bare call to a struct should be classified as instantiates, not calls.
+	structNode := graph.ASTNode{ID: "config", Kind: graph.ASTNodeKindStruct, Name: "Config", QualifiedName: "b.go::Config", FilePath: "b.go", Language: "go", IsExported: true}
+	for _, n := range []graph.ASTNode{caller, structNode} {
+		if err := repo.UpsertASTNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "caller", ReferenceName: "Config", ReferenceKind: string(graph.ASTEdgeKindCalls), Line: 5, FilePath: "a.go", Language: "go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := NewReferenceResolver(repo, nil)
+	if _, err := resolver.Resolve(ctx); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	callees, err := repo.GetCallees(ctx, "caller", 1)
+	if err != nil {
+		t.Fatalf("get callees: %v", err)
+	}
+	if len(callees) != 1 {
+		t.Fatalf("expected 1 callee, got %d", len(callees))
+	}
+	if callees[0].Edge.Kind != graph.ASTEdgeKindInstantiates {
+		t.Errorf("expected edge kind %s for call to struct, got %s", graph.ASTEdgeKindInstantiates, callees[0].Edge.Kind)
+	}
+}
+
+func TestReferenceResolver_PromotesExtendsToInterfaceToImplements(t *testing.T) {
+	repo := setupASTRepo(t)
+	ctx := context.Background()
+
+	impl := graph.ASTNode{ID: "impl", Kind: graph.ASTNodeKindStruct, Name: "MemoryStore", QualifiedName: "a.go::MemoryStore", FilePath: "a.go", Language: "go", IsExported: true}
+	iface := graph.ASTNode{ID: "iface", Kind: graph.ASTNodeKindInterface, Name: "Store", QualifiedName: "b.go::Store", FilePath: "b.go", Language: "go", IsExported: true}
+	for _, n := range []graph.ASTNode{impl, iface} {
+		if err := repo.UpsertASTNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "impl", ReferenceName: "Store", ReferenceKind: string(graph.ASTEdgeKindExtends), Line: 3, FilePath: "a.go", Language: "go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := NewReferenceResolver(repo, nil)
+	if _, err := resolver.Resolve(ctx); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	// implements is not a "caller" edge (GetCallers only follows calls/refs/
+	// instantiates), so verify via the impact radius, which includes
+	// extends/implements.
+	result, err := repo.GetImpactRadius(ctx, "iface", 1)
+	if err != nil {
+		t.Fatalf("impact: %v", err)
+	}
+	if len(result.Impacted) != 1 {
+		t.Fatalf("expected 1 impacted node, got %d", len(result.Impacted))
+	}
+	if result.Impacted[0].Edge.Kind != graph.ASTEdgeKindImplements {
+		t.Errorf("expected edge kind %s for extends interface, got %s", graph.ASTEdgeKindImplements, result.Impacted[0].Edge.Kind)
+	}
+}

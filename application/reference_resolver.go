@@ -128,6 +128,12 @@ func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResu
 		if edge.Kind == "" {
 			edge.Kind = graph.ASTEdgeKindCalls
 		}
+		// Promote the edge kind based on the resolved target's kind, so the
+		// graph captures constructor/implementation intent semantically rather
+		// than just "calls": a call whose target is a class/struct is a
+		// construction (instantiates), and an extends whose target is an
+		// interface/trait is a conformance (implements).
+		edge.Kind = promoteEdgeKind(edge.Kind, target.Kind)
 
 		if err := r.repo.UpsertASTEdge(ctx, edge); err != nil {
 			r.log.Debug("upsert edge failed", "source", ref.FromNodeID, "target", target.ID, "err", err)
@@ -138,6 +144,45 @@ func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResu
 
 	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
+}
+
+// promoteEdgeKind reclassifies a resolved edge based on the resolved target's
+// kind, mirroring the extraction-time promotion for unresolved refs that are
+// only resolved later. A call to a class/struct/interface is a construction
+// (instantiates); an extends/implements edge whose target is an interface or
+// trait is a conformance (implements).
+func promoteEdgeKind(kind graph.ASTEdgeKind, targetKind graph.ASTNodeKind) graph.ASTEdgeKind {
+	switch kind {
+	case graph.ASTEdgeKindCalls:
+		if isInstantiableTargetKind(targetKind) {
+			return graph.ASTEdgeKindInstantiates
+		}
+	case graph.ASTEdgeKindExtends:
+		if isConformanceTargetKind(targetKind) {
+			return graph.ASTEdgeKindImplements
+		}
+	}
+	return kind
+}
+
+// isInstantiableTargetKind reports whether a target kind represents a type
+// that a bare call constructs (class/struct/interface).
+func isInstantiableTargetKind(kind graph.ASTNodeKind) bool {
+	switch kind {
+	case graph.ASTNodeKindClass, graph.ASTNodeKindStruct, graph.ASTNodeKindInterface:
+		return true
+	}
+	return false
+}
+
+// isConformanceTargetKind reports whether a target kind is an abstract type
+// that can be implemented (interface/trait), as opposed to extended.
+func isConformanceTargetKind(kind graph.ASTNodeKind) bool {
+	switch kind {
+	case graph.ASTNodeKindInterface, graph.ASTNodeKindTrait:
+		return true
+	}
+	return false
 }
 
 // loadKnownNames builds a set of all distinct symbol names in the index for
