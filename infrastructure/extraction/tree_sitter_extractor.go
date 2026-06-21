@@ -444,6 +444,12 @@ func (s *extractState) extractTypeAlias(node *sitter.Node) bool {
 		s.nodeStack = append(s.nodeStack, astNode.ID)
 		typeChild := node.ChildByFieldName("type")
 		if typeChild != nil {
+			// Extract embedded types as extends/implements edges. Go embeds a
+			// type by naming it as a field with no field_identifier (struct) or
+			// as a bare type_elem (interface). The promoted methods of the
+			// embedded type become available on this type, so an edge to it
+			// lets impact analysis and the resolver reach them.
+			s.extractEmbeddings(typeChild, astNode.ID, kind)
 			for i := uint(0); i < typeChild.NamedChildCount(); i++ {
 				child := typeChild.NamedChild(i)
 				s.visitSymbols(child)
@@ -453,6 +459,146 @@ func (s *extractState) extractTypeAlias(node *sitter.Node) bool {
 		return true
 	}
 	return true
+}
+
+// extractEmbeddings walks a struct_type or interface_type body and emits an
+// extends (struct embedding) or implements (interface embedding) edge for each
+// embedded type. An embedded field is a field_declaration with no
+// field_identifier child (just a type); an embedded interface element is a
+// type_elem whose child is a bare type identifier. Embedded types may be
+// cross-file or package-qualified, so unresolved ones become ASTUnresolvedRef
+// entries with ReferenceKind "extends"/"implements" for the resolver to link.
+func (s *extractState) extractEmbeddings(typeNode *sitter.Node, containerID string, containerKind graph.ASTNodeKind) {
+	edgeKind := graph.ASTEdgeKindExtends
+	if containerKind == graph.ASTNodeKindInterface {
+		edgeKind = graph.ASTEdgeKindImplements
+	}
+
+	walkTypeBody(typeNode, func(fieldNode *sitter.Node) {
+		typeNode := embeddedTypeNode(fieldNode, containerKind)
+		if typeNode == nil {
+			return
+		}
+		typeName := s.nodeText(typeNode)
+		if typeName == "" {
+			return
+		}
+		// Resolve only unqualified, same-file embedded types now; qualified
+		// or cross-file embeddings are left for the resolver.
+		if id, ok := s.symbolIDs[typeName]; ok {
+			s.edges = append(s.edges, graph.ASTEdge{
+				Source:     containerID,
+				Target:     id,
+				Kind:       edgeKind,
+				Line:       int(typeNode.StartPosition().Row) + 1,
+				Provenance: "tree-sitter",
+			})
+			return
+		}
+		s.unresolved = append(s.unresolved, graph.ASTUnresolvedRef{
+			FromNodeID:    containerID,
+			ReferenceName: typeName,
+			ReferenceKind: string(edgeKind),
+			Line:          int(typeNode.StartPosition().Row) + 1,
+			Column:        int(typeNode.StartPosition().Column),
+			FilePath:      s.filePath,
+			Language:      s.lang,
+		})
+	})
+}
+
+// walkTypeBody invokes fn for each embedded-field/element node under a
+// struct_type or interface_type. struct_type nests a field_declaration_list
+// of field_declaration nodes; interface_type nests type_elem nodes. The
+// field_declaration_list is the first named child that is not a comment.
+func walkTypeBody(typeNode *sitter.Node, fn func(*sitter.Node)) {
+	switch typeNode.Kind() {
+	case "struct_type":
+		for i := uint(0); i < typeNode.NamedChildCount(); i++ {
+			c := typeNode.NamedChild(i)
+			if c.Kind() == "field_declaration_list" {
+				for j := uint(0); j < c.NamedChildCount(); j++ {
+					fn(c.NamedChild(j))
+				}
+				return
+			}
+		}
+	case "interface_type":
+		for i := uint(0); i < typeNode.NamedChildCount(); i++ {
+			fn(typeNode.NamedChild(i))
+		}
+	}
+}
+
+// embeddedTypeNode returns the type node of an embedded field, or nil if the
+// field is a regular named field (not an embedding).
+func embeddedTypeNode(fieldNode *sitter.Node, containerKind graph.ASTNodeKind) *sitter.Node {
+	if containerKind == graph.ASTNodeKindInterface {
+		// type_elem → bare type_identifier (embedded interface) or a method
+		// signature (func). Only bare type identifiers are embeddings.
+		if fieldNode.Kind() == "type_elem" {
+			for i := uint(0); i < fieldNode.NamedChildCount(); i++ {
+				c := fieldNode.NamedChild(i)
+				if c.Kind() == "type_identifier" {
+					return c
+				}
+			}
+		}
+		return nil
+	}
+	// struct field_declaration: an embedding has a type_identifier (or
+	// qualified_type) child but NO field_identifier child.
+	if fieldNode.Kind() != "field_declaration" {
+		return nil
+	}
+	hasFieldName := false
+	var typeChild *sitter.Node
+	for i := uint(0); i < fieldNode.NamedChildCount(); i++ {
+		c := fieldNode.NamedChild(i)
+		switch c.Kind() {
+		case "field_identifier":
+			hasFieldName = true
+		case "type_identifier", "qualified_type", "pointer_type", "slice_type", "generic_type":
+			typeChild = c
+		}
+	}
+	if hasFieldName || typeChild == nil {
+		return nil
+	}
+	return unwrapEmbeddedType(typeChild)
+}
+
+// unwrapEmbeddedType follows pointer/slice/generic wrappers to the underlying
+// type name node (e.g. *Base → Base, pkg.Base → Base).
+func unwrapEmbeddedType(n *sitter.Node) *sitter.Node {
+	for n != nil {
+		switch n.Kind() {
+		case "pointer_type", "slice_type":
+			if n.NamedChildCount() > 0 {
+				n = n.NamedChild(0)
+				continue
+			}
+			return nil
+		case "qualified_type":
+			// pkg.Type → take the type_identifier child
+			if n.NamedChildCount() > 0 {
+				last := n.NamedChild(n.NamedChildCount() - 1)
+				if last.Kind() == "type_identifier" {
+					return last
+				}
+			}
+			return n
+		case "generic_type":
+			if n.NamedChildCount() > 0 {
+				n = n.NamedChild(0)
+				continue
+			}
+			return nil
+		default:
+			return n
+		}
+	}
+	return n
 }
 
 func (s *extractState) extractImport(node *sitter.Node) {

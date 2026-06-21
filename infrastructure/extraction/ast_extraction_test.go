@@ -472,6 +472,91 @@ func run() { fmt.Println("hello") }
 			t.Errorf("expected no symbol nodes, got %d: %v", symbolNodes, nodeNames(result))
 		}
 	})
+
+	t.Run("struct embedding emits extends edge", func(t *testing.T) {
+		source := []byte(`package main
+type Base struct{}
+type Service struct { Base }
+type PtrEmbed struct { *Base }
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("s.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		serviceID := findNodeIDByQualifiedName(result, "s.go::Service")
+		baseID := findNodeIDByQualifiedName(result, "s.go::Base")
+		ptrID := findNodeIDByQualifiedName(result, "s.go::PtrEmbed")
+		if serviceID == "" || baseID == "" || ptrID == "" {
+			t.Fatalf("missing expected nodes: %v", nodeNames(result))
+		}
+		hasExtend := func(src, dst string) bool {
+			for _, e := range result.Edges {
+				if e.Source == src && e.Target == dst && e.Kind == graph.ASTEdgeKindExtends {
+					return true
+				}
+			}
+			return false
+		}
+		if !hasExtend(serviceID, baseID) {
+			t.Errorf("expected Service extends Base, edges: %v", edgeSummary(result))
+		}
+		if !hasExtend(ptrID, baseID) {
+			t.Errorf("expected PtrEmbed extends Base (pointer unwrap), edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("interface embedding emits implements edge", func(t *testing.T) {
+		source := []byte(`package main
+type Reader interface{ Read() }
+type Store interface { Reader }
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("s.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		storeID := findNodeIDByQualifiedName(result, "s.go::Store")
+		readerID := findNodeIDByQualifiedName(result, "s.go::Reader")
+		if storeID == "" || readerID == "" {
+			t.Fatalf("missing expected nodes: %v", nodeNames(result))
+		}
+		found := false
+		for _, e := range result.Edges {
+			if e.Source == storeID && e.Target == readerID && e.Kind == graph.ASTEdgeKindImplements {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected Store implements Reader, edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("named struct field is not treated as embedding", func(t *testing.T) {
+		source := []byte(`package main
+type Base struct{}
+type Service struct {
+	Base
+	count int
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("s.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		serviceID := findNodeIDByQualifiedName(result, "s.go::Service")
+		// Exactly one extends edge (to Base), none to "int".
+		extendsCount := 0
+		for _, e := range result.Edges {
+			if e.Source == serviceID && e.Kind == graph.ASTEdgeKindExtends {
+				extendsCount++
+			}
+		}
+		if extendsCount != 1 {
+			t.Errorf("expected exactly 1 extends edge (Base), got %d: %v", extendsCount, edgeSummary(result))
+		}
+	})
 }
 
 func findNodeByName(r *graph.ExtractionResult, name string) *graph.ASTNode {

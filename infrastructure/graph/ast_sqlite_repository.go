@@ -73,9 +73,9 @@ func (r *SQLiteASTRepository) UpsertASTNode(ctx context.Context, n graph.ASTNode
 
 func (r *SQLiteASTRepository) UpsertASTEdge(ctx context.Context, e graph.ASTEdge) error {
 	_, err := r.db().ExecContext(ctx,
-		`INSERT OR IGNORE INTO ast_edges (source, target, kind, line, column, provenance)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.Source, e.Target, string(e.Kind), e.Line, e.Column, e.Provenance,
+		`INSERT OR IGNORE INTO ast_edges (source, target, kind, line, column, provenance, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.Source, e.Target, string(e.Kind), e.Line, e.Column, e.Provenance, e.Metadata,
 	)
 	return err
 }
@@ -130,6 +130,109 @@ func (r *SQLiteASTRepository) GetCallees(ctx context.Context, nodeID string, max
 	return r.bfsOutgoing(ctx, nodeID, maxDepth, []graph.ASTEdgeKind{graph.ASTEdgeKindCalls, graph.ASTEdgeKindReferences, graph.ASTEdgeKindInstantiates})
 }
 
+// containerNodeKinds are the kinds whose members are worth surfacing when the
+// node itself is the impact seed: an impact query on a class/struct/interface
+// should surface callers of its methods, not just direct references to the type.
+var containerNodeKinds = map[graph.ASTNodeKind]bool{
+	graph.ASTNodeKindClass:     true,
+	graph.ASTNodeKindStruct:    true,
+	graph.ASTNodeKindInterface: true,
+	graph.ASTNodeKindTrait:     true,
+	graph.ASTNodeKindModule:    true,
+	graph.ASTNodeKindEnum:      true,
+	graph.ASTNodeKindNamespace: true,
+}
+
+// expandContainerChildren returns the members of the given container node IDs
+// at the given depth, marking them visited and adding them to entries. It is
+// the counterpart to codegraph's container expansion: impact on a type surfaces
+// callers of its members. The expansion walks outgoing contains edges, plus
+// extends/implements so methods promoted through Go struct/interface embedding
+// (and Go-style type conformance generally) are reachable. contains/extends/
+// implements are only ever walked outward (parent→member / type→supertype),
+// never upward on the incoming traversal.
+func (r *SQLiteASTRepository) expandContainerChildren(ctx context.Context, frontier []string, depth int, visited map[string]bool, entries *[]graph.ASTImpactEntry, kinds map[string]graph.ASTNodeKind) ([]string, error) {
+	var containers []string
+	for _, id := range frontier {
+		if kind, ok := kinds[id]; ok && containerNodeKinds[kind] {
+			containers = append(containers, id)
+		}
+	}
+	if len(containers) == 0 {
+		return nil, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(containers)-1) + "?"
+	args := make([]any, 0, len(containers))
+	for _, c := range containers {
+		args = append(args, c)
+	}
+
+	expansionKinds := []string{
+		string(graph.ASTEdgeKindContains),
+		string(graph.ASTEdgeKindExtends),
+		string(graph.ASTEdgeKindImplements),
+	}
+	kindPlaceholders := strings.Repeat("?,", len(expansionKinds)-1) + "?"
+
+	query := fmt.Sprintf(
+		`SELECT e.source, e.target, e.kind, e.line, e.column, e.provenance, e.metadata,
+		 n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
+		 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
+		 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at
+		 FROM ast_edges e JOIN ast_nodes n ON e.target = n.id
+		 WHERE e.source IN (%s) AND e.kind IN (%s)`,
+		placeholders, kindPlaceholders,
+	)
+	for _, k := range expansionKinds {
+		args = append(args, k)
+	}
+
+	rows, err := r.db().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("expand container children depth %d: %w", depth, err)
+	}
+	defer rows.Close()
+
+	var added []string
+	for rows.Next() {
+		var edge graph.ASTEdge
+		var node graph.ASTNode
+		var edgeKind, nodeKind, provenance, metadata string
+		var isExported, isAsync, isStatic, isAbstract int
+
+		if err := rows.Scan(
+			&edge.Source, &edge.Target, &edgeKind, &edge.Line, &edge.Column, &provenance, &metadata,
+			&node.ID, &nodeKind, &node.Name, &node.QualifiedName, &node.FilePath, &node.Language,
+			&node.StartLine, &node.EndLine, &node.StartColumn, &node.EndColumn, &node.Signature, &node.Visibility,
+			&isExported, &isAsync, &isStatic, &isAbstract, &node.ReturnType, &node.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan container child: %w", err)
+		}
+
+		edge.Kind = graph.ASTEdgeKind(edgeKind)
+		edge.Provenance = provenance
+		edge.Metadata = metadata
+		node.Kind = graph.ASTNodeKind(nodeKind)
+		node.IsExported = isExported == 1
+		node.IsAsync = isAsync == 1
+		node.IsStatic = isStatic == 1
+		node.IsAbstract = isAbstract == 1
+
+		if !visited[node.ID] {
+			visited[node.ID] = true
+			kinds[node.ID] = node.Kind
+			*entries = append(*entries, graph.ASTImpactEntry{
+				Node:  node,
+				Edge:  edge,
+				Depth: depth,
+			})
+			added = append(added, node.ID)
+		}
+	}
+	return added, rows.Err()
+}
+
 func (r *SQLiteASTRepository) GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*graph.ASTImpactResult, error) {
 	start := time.Now()
 
@@ -154,38 +257,127 @@ func (r *SQLiteASTRepository) GetImpactRadius(ctx context.Context, nodeID string
 
 func (r *SQLiteASTRepository) SearchASTNodes(ctx context.Context, query string, kinds []graph.ASTNodeKind) ([]graph.ASTSearchResult, error) {
 	var kindFilter string
-	var args []any
-	args = append(args, query)
+	var kindArgs []any
 	if len(kinds) > 0 {
 		placeholders := strings.Repeat("?,", len(kinds)-1) + "?"
 		for _, k := range kinds {
-			args = append(args, string(k))
+			kindArgs = append(kindArgs, string(k))
 		}
-		kindFilter = fmt.Sprintf(" AND kind IN (%s)", placeholders)
+		kindFilter = fmt.Sprintf(" AND n.kind IN (%s)", placeholders)
 	}
 
-	rows, err := r.db().QueryContext(ctx,
-		fmt.Sprintf(`SELECT id, kind, name, qualified_name, file_path, language,
-		 start_line, end_line, start_column, end_column, signature, visibility,
-		 is_exported, is_async, is_static, is_abstract, return_type, updated_at
-		 FROM ast_nodes WHERE name LIKE ? || '%%'%s ORDER BY name LIMIT 50`, kindFilter),
-		args...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("search ast_nodes: %w", err)
+	// FTS5 path: rank by relevance across name/qualified_name/signature. The
+	// query is sanitized to a prefix token (name: foo*) so partial matches
+	// rank higher and bare queries don't trigger FTS5 syntax errors.
+	ftsExpr := sanitizeFTSPrefix(query)
+	var rows *sql.Rows
+	var err error
+	if ftsExpr != "" {
+		args := append([]any{ftsExpr}, kindArgs...)
+		rows, err = r.db().QueryContext(ctx,
+			fmt.Sprintf(`SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
+			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
+			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at,
+			 bm25(ast_nodes_fts) AS score
+			 FROM ast_nodes_fts JOIN ast_nodes n ON n.rowid = ast_nodes_fts.rowid
+			 WHERE ast_nodes_fts MATCH ?%s
+			 ORDER BY score LIMIT 50`, kindFilter),
+			args...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("search ast_nodes (fts): %w", err)
+		}
+	} else {
+		args := append([]any{query}, kindArgs...)
+		rows, err = r.db().QueryContext(ctx,
+			fmt.Sprintf(`SELECT id, kind, name, qualified_name, file_path, language,
+			 start_line, end_line, start_column, end_column, signature, visibility,
+			 is_exported, is_async, is_static, is_abstract, return_type, updated_at, 0.0
+			 FROM ast_nodes WHERE name LIKE ? || '%%'%s ORDER BY name LIMIT 50`, kindFilter),
+			args...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("search ast_nodes: %w", err)
+		}
 	}
 	defer rows.Close()
 
-	nodes, err := scanASTNodes(rows)
-	if err != nil {
+	var nodes []graph.ASTNode
+	var scores []float64
+	for rows.Next() {
+		var n graph.ASTNode
+		var kind, visibility string
+		var isExported, isAsync, isStatic, isAbstract int
+		var score float64
+
+		if err := rows.Scan(
+			&n.ID, &kind, &n.Name, &n.QualifiedName, &n.FilePath, &n.Language,
+			&n.StartLine, &n.EndLine, &n.StartColumn, &n.EndColumn, &n.Signature, &visibility,
+			&isExported, &isAsync, &isStatic, &isAbstract, &n.ReturnType, &n.UpdatedAt, &score,
+		); err != nil {
+			return nil, fmt.Errorf("scan ast_node: %w", err)
+		}
+		n.Kind = graph.ASTNodeKind(kind)
+		n.Visibility = visibility
+		n.IsExported = isExported == 1
+		n.IsAsync = isAsync == 1
+		n.IsStatic = isStatic == 1
+		n.IsAbstract = isAbstract == 1
+		nodes = append(nodes, n)
+		scores = append(scores, score)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
 	results := make([]graph.ASTSearchResult, len(nodes))
 	for i, n := range nodes {
-		results[i] = graph.ASTSearchResult{Node: n, Score: 1.0}
+		// bm25 returns negative scores (lower = better match). Normalize so a
+		// perfect/exact name match scores highest; the LIKE fallback yields 0.
+		s := scores[i]
+		if s == 0 {
+			s = 1.0
+		} else {
+			s = 1.0 / (1.0 - s) // s is negative; closer to 0 → stronger match
+		}
+		results[i] = graph.ASTSearchResult{Node: n, Score: s}
 	}
 	return results, nil
+}
+
+// sanitizeFTSPrefix turns a user query into a safe FTS5 prefix expression. It
+// strips characters with FTS5 syntactic meaning and appends the prefix
+// wildcard so "Co" becomes "co*", matching any name starting with "co".
+// Returns "" if the query has no usable token (empty/all-punctuation).
+func sanitizeFTSPrefix(query string) string {
+	var b strings.Builder
+	for _, r := range query {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '\t':
+			// collapse whitespace to a single space boundary
+			if b.Len() > 0 && b.String()[b.Len()-1] != ' ' {
+				b.WriteRune(' ')
+			}
+		default:
+			// drop punctuation; treat as token separator
+			if b.Len() > 0 && b.String()[b.Len()-1] != ' ' {
+				b.WriteRune(' ')
+			}
+		}
+	}
+	s := strings.TrimSpace(b.String())
+	if s == "" {
+		return ""
+	}
+	// Quote each token and apply the prefix wildcard to the last one.
+	tokens := strings.Fields(s)
+	for i, t := range tokens {
+		tokens[i] = "\"" + t + "\""
+	}
+	tokens[len(tokens)-1] = tokens[len(tokens)-1] + "*"
+	return "name:" + strings.Join(tokens, " name:")
 }
 
 func (r *SQLiteASTRepository) DeleteASTNodesForFile(ctx context.Context, filePath string) error {
@@ -333,10 +525,31 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 	}
 
 	visited := map[string]bool{startID: true}
+	kinds := map[string]graph.ASTNodeKind{}
+	if err := r.seedNodeKind(ctx, startID, kinds); err != nil {
+		return nil, err
+	}
 	var entries []graph.ASTImpactEntry
 	frontier := []string{startID}
 
 	for d := 1; d <= maxDepth; d++ {
+		if len(frontier) == 0 {
+			break
+		}
+
+		// Container expansion runs at the START of each depth: surface a
+		// container's own members (via contains/extends/implements edges) at the
+		// same depth so impact on a class/struct/interface surfaces its methods'
+		// dependents, including methods promoted through embedding. The added
+		// nodes also join nextFrontier so their own members expand next depth.
+		// Contains/extends/implements are only ever walked outward, never upward.
+		var expanded []string
+		if added, err := r.expandContainerChildren(ctx, frontier, d, visited, &entries, kinds); err != nil {
+			return nil, err
+		} else {
+			frontier = append(frontier, added...)
+			expanded = added
+		}
 		if len(frontier) == 0 {
 			break
 		}
@@ -349,7 +562,7 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 		args = append(args, kindArgs...)
 
 		query := fmt.Sprintf(
-			`SELECT e.source, e.target, e.kind, e.line, e.column, e.provenance,
+			`SELECT e.source, e.target, e.kind, e.line, e.column, e.provenance, e.metadata,
 			 n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
 			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
 			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at
@@ -363,15 +576,17 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 			return nil, fmt.Errorf("bfs incoming depth %d: %w", d, err)
 		}
 
-		var nextFrontier []string
+		// Container nodes reached via expansion this depth continue into the
+		// next depth so their members expand (e.g. an embedded type's methods).
+		nextFrontier := append([]string{}, expanded...)
 		for rows.Next() {
 			var edge graph.ASTEdge
 			var node graph.ASTNode
-			var edgeKind, nodeKind, provenance string
+			var edgeKind, nodeKind, provenance, metadata string
 			var isExported, isAsync, isStatic, isAbstract int
 
 			if err := rows.Scan(
-				&edge.Source, &edge.Target, &edgeKind, &edge.Line, &edge.Column, &provenance,
+				&edge.Source, &edge.Target, &edgeKind, &edge.Line, &edge.Column, &provenance, &metadata,
 				&node.ID, &nodeKind, &node.Name, &node.QualifiedName, &node.FilePath, &node.Language,
 				&node.StartLine, &node.EndLine, &node.StartColumn, &node.EndColumn, &node.Signature, &node.Visibility,
 				&isExported, &isAsync, &isStatic, &isAbstract, &node.ReturnType, &node.UpdatedAt,
@@ -382,6 +597,7 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 
 			edge.Kind = graph.ASTEdgeKind(edgeKind)
 			edge.Provenance = provenance
+			edge.Metadata = metadata
 			node.Kind = graph.ASTNodeKind(nodeKind)
 			node.IsExported = isExported == 1
 			node.IsAsync = isAsync == 1
@@ -390,6 +606,7 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 
 			if !visited[node.ID] {
 				visited[node.ID] = true
+				kinds[node.ID] = node.Kind
 				entries = append(entries, graph.ASTImpactEntry{
 					Node:  node,
 					Edge:  edge,
@@ -402,6 +619,7 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 			return nil, fmt.Errorf("iterate bfs incoming: %w", err)
 		}
 		rows.Close()
+
 		frontier = nextFrontier
 	}
 
@@ -416,10 +634,26 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 	}
 
 	visited := map[string]bool{startID: true}
+	kinds := map[string]graph.ASTNodeKind{}
+	if err := r.seedNodeKind(ctx, startID, kinds); err != nil {
+		return nil, err
+	}
 	var entries []graph.ASTImpactEntry
 	frontier := []string{startID}
 
 	for d := 1; d <= maxDepth; d++ {
+		if len(frontier) == 0 {
+			break
+		}
+
+		// Container expansion at the start of each depth (see bfsIncoming).
+		var expanded []string
+		if added, err := r.expandContainerChildren(ctx, frontier, d, visited, &entries, kinds); err != nil {
+			return nil, err
+		} else {
+			frontier = append(frontier, added...)
+			expanded = added
+		}
 		if len(frontier) == 0 {
 			break
 		}
@@ -432,7 +666,7 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 		args = append(args, kindArgs...)
 
 		query := fmt.Sprintf(
-			`SELECT e.source, e.target, e.kind, e.line, e.column, e.provenance,
+			`SELECT e.source, e.target, e.kind, e.line, e.column, e.provenance, e.metadata,
 			 n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
 			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
 			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at
@@ -446,15 +680,15 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 			return nil, fmt.Errorf("bfs outgoing depth %d: %w", d, err)
 		}
 
-		var nextFrontier []string
+		nextFrontier := append([]string{}, expanded...)
 		for rows.Next() {
 			var edge graph.ASTEdge
 			var node graph.ASTNode
-			var edgeKind, nodeKind, provenance string
+			var edgeKind, nodeKind, provenance, metadata string
 			var isExported, isAsync, isStatic, isAbstract int
 
 			if err := rows.Scan(
-				&edge.Source, &edge.Target, &edgeKind, &edge.Line, &edge.Column, &provenance,
+				&edge.Source, &edge.Target, &edgeKind, &edge.Line, &edge.Column, &provenance, &metadata,
 				&node.ID, &nodeKind, &node.Name, &node.QualifiedName, &node.FilePath, &node.Language,
 				&node.StartLine, &node.EndLine, &node.StartColumn, &node.EndColumn, &node.Signature, &node.Visibility,
 				&isExported, &isAsync, &isStatic, &isAbstract, &node.ReturnType, &node.UpdatedAt,
@@ -465,6 +699,7 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 
 			edge.Kind = graph.ASTEdgeKind(edgeKind)
 			edge.Provenance = provenance
+			edge.Metadata = metadata
 			node.Kind = graph.ASTNodeKind(nodeKind)
 			node.IsExported = isExported == 1
 			node.IsAsync = isAsync == 1
@@ -473,6 +708,7 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 
 			if !visited[node.ID] {
 				visited[node.ID] = true
+				kinds[node.ID] = node.Kind
 				entries = append(entries, graph.ASTImpactEntry{
 					Node:  node,
 					Edge:  edge,
@@ -485,10 +721,26 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 			return nil, fmt.Errorf("iterate bfs outgoing: %w", err)
 		}
 		rows.Close()
+
 		frontier = nextFrontier
 	}
 
 	return entries, nil
+}
+
+// seedNodeKind loads the start node's kind so container expansion can apply
+// to a container that is the BFS seed (depth 0) itself.
+func (r *SQLiteASTRepository) seedNodeKind(ctx context.Context, startID string, kinds map[string]graph.ASTNodeKind) error {
+	var kind string
+	err := r.db().QueryRowContext(ctx, `SELECT kind FROM ast_nodes WHERE id = ?`, startID).Scan(&kind)
+	if err == sql.ErrNoRows {
+		return nil // node may be absent in edge-only contexts; expansion simply skips
+	}
+	if err != nil {
+		return fmt.Errorf("seed node kind: %w", err)
+	}
+	kinds[startID] = graph.ASTNodeKind(kind)
+	return nil
 }
 
 func scanASTNodes(rows *sql.Rows) ([]graph.ASTNode, error) {

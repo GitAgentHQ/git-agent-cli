@@ -302,6 +302,117 @@ func TestASTRepository(t *testing.T) {
 			t.Fatalf("expected transaction rollback to remove temp node, got %+v", found)
 		}
 	})
+
+	t.Run("impact radius expands container members", func(t *testing.T) {
+		_, repo := setupDB(t)
+		// Service struct contains method Save; caller calls Save directly.
+		svc := graph.ASTNode{ID: "struct:s.go:Service", Kind: graph.ASTNodeKindStruct, Name: "Service", QualifiedName: "s.go::Service", FilePath: "s.go", Language: "go", StartLine: 1, EndLine: 10, UpdatedAt: 1000}
+		save := graph.ASTNode{ID: "method:s.go:Service.Save", Kind: graph.ASTNodeKindMethod, Name: "Save", QualifiedName: "s.go::Service.Save", FilePath: "s.go", Language: "go", StartLine: 2, EndLine: 4, UpdatedAt: 1000}
+		caller := graph.ASTNode{ID: "function:h.go:handler", Kind: graph.ASTNodeKindFunction, Name: "handler", QualifiedName: "h.go::handler", FilePath: "h.go", Language: "go", StartLine: 1, EndLine: 3, UpdatedAt: 1000}
+		for _, n := range []graph.ASTNode{svc, save, caller} {
+			repo.UpsertASTNode(ctx, n)
+		}
+		repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: svc.ID, Target: save.ID, Kind: graph.ASTEdgeKindContains, Provenance: "tree-sitter"})
+		repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: caller.ID, Target: save.ID, Kind: graph.ASTEdgeKindCalls, Provenance: "tree-sitter"})
+
+		// Impact on the Service struct should surface handler (caller of Save)
+		// via container expansion, even though no edge points directly at Service.
+		result, err := repo.GetImpactRadius(ctx, svc.ID, 1)
+		if err != nil {
+			t.Fatalf("impact: %v", err)
+		}
+		foundHandler := false
+		for _, e := range result.Impacted {
+			if e.Node.Name == "handler" {
+				foundHandler = true
+			}
+		}
+		if !foundHandler {
+			names := impactNames(result)
+			t.Errorf("expected container expansion to surface handler, got %v", names)
+		}
+	})
+
+	t.Run("edge metadata persists and is returned", func(t *testing.T) {
+		_, repo := setupDB(t)
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:a.go:A", Kind: graph.ASTNodeKindFunction, Name: "A", QualifiedName: "a.go::A", FilePath: "a.go", Language: "go", StartLine: 1, EndLine: 2, UpdatedAt: 1000})
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:b.go:B", Kind: graph.ASTNodeKindFunction, Name: "B", QualifiedName: "b.go::B", FilePath: "b.go", Language: "go", StartLine: 1, EndLine: 2, UpdatedAt: 1000})
+		meta := `{"resolvedBy":"resolver","confidence":0.9}`
+		if err := repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: "function:a.go:A", Target: "function:b.go:B", Kind: graph.ASTEdgeKindCalls, Provenance: "resolver", Metadata: meta}); err != nil {
+			t.Fatalf("upsert edge: %v", err)
+		}
+		callees, err := repo.GetCallees(ctx, "function:a.go:A", 1)
+		if err != nil {
+			t.Fatalf("callees: %v", err)
+		}
+		if len(callees) != 1 || callees[0].Edge.Metadata != meta {
+			t.Errorf("expected metadata %q, got %+v", meta, callees)
+		}
+	})
+
+	t.Run("FTS5 search ranks exact name match above substring", func(t *testing.T) {
+		_, repo := setupDB(t)
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:h.go:Handle", Kind: graph.ASTNodeKindFunction, Name: "Handle", QualifiedName: "h.go::Handle", FilePath: "h.go", Language: "go", StartLine: 1, EndLine: 2, UpdatedAt: 1000})
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:h.go:HandleRequest", Kind: graph.ASTNodeKindFunction, Name: "HandleRequest", QualifiedName: "h.go::HandleRequest", FilePath: "h.go", Language: "go", StartLine: 3, EndLine: 5, UpdatedAt: 1000})
+
+		results, err := repo.SearchASTNodes(ctx, "Handle", nil)
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if len(results) < 2 {
+			t.Fatalf("expected at least 2 results, got %d", len(results))
+		}
+		// The exact "Handle" match should outrank the longer "HandleRequest".
+		if results[0].Node.Name != "Handle" {
+			t.Errorf("expected exact match Handle ranked first, got %s (score=%v)", results[0].Node.Name, results[0].Score)
+		}
+	})
+
+	t.Run("FTS5 search handles punctuation without syntax error", func(t *testing.T) {
+		_, repo := setupDB(t)
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:h.go:Run", Kind: graph.ASTNodeKindFunction, Name: "Run", QualifiedName: "h.go::Run", FilePath: "h.go", Language: "go", StartLine: 1, EndLine: 2, UpdatedAt: 1000})
+		// A query with FTS5 metacharacters must be sanitized, not crash.
+		results, err := repo.SearchASTNodes(ctx, "Run();", nil)
+		if err != nil {
+			t.Fatalf("search with punctuation: %v", err)
+		}
+		if len(results) != 1 || results[0].Node.Name != "Run" {
+			t.Errorf("expected Run, got %+v", results)
+		}
+	})
+
+	t.Run("impact reaches promoted method via struct embedding", func(t *testing.T) {
+		_, repo := setupDB(t)
+		// Service embeds Base; Base has method Save; handler calls Save directly.
+		svc := graph.ASTNode{ID: "struct:s.go:Service", Kind: graph.ASTNodeKindStruct, Name: "Service", QualifiedName: "s.go::Service", FilePath: "s.go", Language: "go", StartLine: 1, EndLine: 3, UpdatedAt: 1000}
+		base := graph.ASTNode{ID: "struct:s.go:Base", Kind: graph.ASTNodeKindStruct, Name: "Base", QualifiedName: "s.go::Base", FilePath: "s.go", Language: "go", StartLine: 1, EndLine: 1, UpdatedAt: 1000}
+		save := graph.ASTNode{ID: "method:s.go:Base.Save", Kind: graph.ASTNodeKindMethod, Name: "Save", QualifiedName: "s.go::Base.Save", FilePath: "s.go", Language: "go", StartLine: 2, EndLine: 2, UpdatedAt: 1000}
+		caller := graph.ASTNode{ID: "function:h.go:handler", Kind: graph.ASTNodeKindFunction, Name: "handler", QualifiedName: "h.go::handler", FilePath: "h.go", Language: "go", StartLine: 1, EndLine: 3, UpdatedAt: 1000}
+		for _, n := range []graph.ASTNode{svc, base, save, caller} {
+			repo.UpsertASTNode(ctx, n)
+		}
+		// The embedding: Service extends Base. Base contains Save.
+		repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: svc.ID, Target: base.ID, Kind: graph.ASTEdgeKindExtends, Provenance: "tree-sitter"})
+		repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: base.ID, Target: save.ID, Kind: graph.ASTEdgeKindContains, Provenance: "tree-sitter"})
+		repo.UpsertASTEdge(ctx, graph.ASTEdge{Source: caller.ID, Target: save.ID, Kind: graph.ASTEdgeKindCalls, Provenance: "tree-sitter"})
+
+		// Impact on Service: container expansion surfaces Base's members, and
+		// the extends edge lets the BFS reach Save and its caller (handler).
+		result, err := repo.GetImpactRadius(ctx, svc.ID, 3)
+		if err != nil {
+			t.Fatalf("impact: %v", err)
+		}
+		found := map[string]bool{}
+		for _, e := range result.Impacted {
+			found[e.Node.Name] = true
+		}
+		if !found["Save"] {
+			t.Errorf("expected impact to reach promoted method Save via embedding, got %v", impactNames(result))
+		}
+		if !found["handler"] {
+			t.Errorf("expected impact to reach handler (caller of promoted Save), got %v", impactNames(result))
+		}
+	})
 }
 
 func impactNames(r *graph.ASTImpactResult) []string {

@@ -83,9 +83,11 @@ var migrations = []struct {
 	decl  string
 }{
 	{"ast_unresolved_refs", "var_call_hint", "TEXT DEFAULT ''"},
+	{"ast_edges", "metadata", "TEXT"},
 }
 
 func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
+	ranMigration := false
 	for _, m := range migrations {
 		exists, err := c.columnExists(ctx, m.table, m.col)
 		if err != nil {
@@ -98,8 +100,45 @@ func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
 		if _, err := c.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate add %s.%s: %w", m.table, m.col, err)
 		}
+		ranMigration = true
+	}
+
+	// Rebuild the FTS index if a migration just changed the schema, or if the
+	// FTS table exists but is empty (e.g. triggers were absent when ast_nodes
+	// rows were first inserted). Skipped on the steady-state open path so we
+	// don't pay an O(n) reindex every invocation.
+	if ranMigration {
+		if _, err := c.db.ExecContext(ctx, `INSERT INTO ast_nodes_fts(ast_nodes_fts) VALUES('rebuild')`); err != nil {
+			return fmt.Errorf("rebuild ast_nodes_fts after migration: %w", err)
+		}
+		return nil
+	}
+	empty, err := c.ftsTableEmpty(ctx)
+	if err != nil {
+		return err
+	}
+	if empty {
+		if _, err := c.db.ExecContext(ctx, `INSERT INTO ast_nodes_fts(ast_nodes_fts) VALUES('rebuild')`); err != nil {
+			return fmt.Errorf("rebuild empty ast_nodes_fts: %w", err)
+		}
 	}
 	return nil
+}
+
+// ftsTableEmpty reports whether the FTS index has zero rows but ast_nodes has
+// rows — the signal that the FTS table needs backfilling.
+func (c *SQLiteClient) ftsTableEmpty(ctx context.Context) (bool, error) {
+	var ftsCount, nodeCount int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM ast_nodes_fts`).Scan(&ftsCount); err != nil {
+		return false, fmt.Errorf("count ast_nodes_fts: %w", err)
+	}
+	if ftsCount > 0 {
+		return false, nil
+	}
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM ast_nodes`).Scan(&nodeCount); err != nil {
+		return false, fmt.Errorf("count ast_nodes: %w", err)
+	}
+	return nodeCount > 0, nil
 }
 
 func (c *SQLiteClient) columnExists(ctx context.Context, table, col string) (bool, error) {
@@ -280,7 +319,8 @@ var schemaStatements = []string{
 		kind TEXT NOT NULL,
 		line INTEGER,
 		column INTEGER DEFAULT 0,
-		provenance TEXT DEFAULT 'tree-sitter'
+		provenance TEXT DEFAULT 'tree-sitter',
+		metadata TEXT
 	)`,
 
 	`CREATE TABLE IF NOT EXISTS ast_unresolved_refs (
@@ -312,4 +352,35 @@ var schemaStatements = []string{
 
 	// Prevent duplicate unresolved refs on re-index.
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_ast_unresolved_unique ON ast_unresolved_refs(from_node_id, reference_name, line)`,
+
+	// FTS5 full-text index over ast_nodes for ranked symbol search across
+	// name, qualified_name, and signature. The external-content pattern points
+	// at ast_nodes so inserts/updates/deletes are mirrored by triggers and the
+	// FTS rowid matches the ast_nodes.rowid. The 'rebuild' backfill is run
+	// conditionally in applyMigrations (only when a migration ran or the FTS
+	// table is empty), to avoid re-indexing the whole table on every open.
+	`CREATE VIRTUAL TABLE IF NOT EXISTS ast_nodes_fts USING fts5(
+		name,
+		qualified_name,
+		signature,
+		content='ast_nodes',
+		content_rowid='rowid'
+	)`,
+
+	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_ai AFTER INSERT ON ast_nodes BEGIN
+		INSERT INTO ast_nodes_fts(rowid, name, qualified_name, signature)
+		VALUES (new.rowid, new.name, new.qualified_name, new.signature);
+	END`,
+
+	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_ad AFTER DELETE ON ast_nodes BEGIN
+		INSERT INTO ast_nodes_fts(ast_nodes_fts, rowid, name, qualified_name, signature)
+		VALUES('delete', old.rowid, old.name, old.qualified_name, old.signature);
+	END`,
+
+	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_au AFTER UPDATE ON ast_nodes BEGIN
+		INSERT INTO ast_nodes_fts(ast_nodes_fts, rowid, name, qualified_name, signature)
+		VALUES('delete', old.rowid, old.name, old.qualified_name, old.signature);
+		INSERT INTO ast_nodes_fts(rowid, name, qualified_name, signature)
+		VALUES (new.rowid, new.name, new.qualified_name, new.signature);
+	END`,
 }
