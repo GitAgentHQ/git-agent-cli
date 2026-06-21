@@ -334,17 +334,31 @@ func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) StageFiles(ctx context.Context, files []string) error {
+	// Run `git add` from the repository root so that paths — which git always
+	// reports relative to the repo root — resolve correctly even when the CLI
+	// was invoked from a subdirectory. Without this, a path like
+	// "skills/apple-events/SKILL.md" is interpreted relative to the cwd
+	// (e.g. .../event/skills/apple-events) and fails to match.
+	root, rootErr := c.RepoRoot(ctx)
+	addCmd := func(args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		if rootErr == nil {
+			cmd.Dir = root
+		}
+		return cmd
+	}
+
 	// Use -f to re-stage files that were already in the index but match .gitignore
 	// (they were explicitly tracked before UnstageAll removed them).
 	args := append([]string{"add", "-f", "--"}, files...)
-	if _, err := gitCmd(ctx, args...).CombinedOutput(); err == nil {
+	if _, err := addCmd(args...).CombinedOutput(); err == nil {
 		return nil
 	}
 	// Batch failed; retry file-by-file to isolate bad entries.
 	var staged int
 	var lastErr error
 	for _, f := range files {
-		if out, err := gitCmd(ctx, "add", "-f", "--", f).CombinedOutput(); err != nil {
+		if out, err := addCmd("add", "-f", "--", f).CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 		} else {
 			staged++
