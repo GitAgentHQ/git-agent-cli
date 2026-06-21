@@ -567,7 +567,12 @@ func (r *SQLiteASTRepository) bfsIncoming(ctx context.Context, startID string, m
 			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
 			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at
 			 FROM ast_edges e JOIN ast_nodes n ON e.source = n.id
-			 WHERE e.target IN (%s) AND e.kind IN (%s)`,
+			 WHERE e.target IN (%s) AND e.kind IN (%s)
+			 ORDER BY CASE e.kind
+			     WHEN 'calls' THEN 0
+			     WHEN 'instantiates' THEN 1
+			     WHEN 'references' THEN 2
+			     ELSE 3 END, n.name`,
 			placeholders, kindPlaceholders,
 		)
 
@@ -671,7 +676,12 @@ func (r *SQLiteASTRepository) bfsOutgoing(ctx context.Context, startID string, m
 			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
 			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at
 			 FROM ast_edges e JOIN ast_nodes n ON e.target = n.id
-			 WHERE e.source IN (%s) AND e.kind IN (%s)`,
+			 WHERE e.source IN (%s) AND e.kind IN (%s)
+			 ORDER BY CASE e.kind
+			     WHEN 'calls' THEN 0
+			     WHEN 'instantiates' THEN 1
+			     WHEN 'references' THEN 2
+			     ELSE 3 END, n.name`,
 			placeholders, kindPlaceholders,
 		)
 
