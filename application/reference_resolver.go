@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -75,14 +76,17 @@ func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResu
 		// If the qualifier is a local variable assigned from a factory call
 		// (svc := NewClient()), resolve the factory's return type and use it as
 		// the qualifier so `svc.Commit` disambiguates to `Client.Commit`.
+		inferredQualifier := false
 		if ref.VarCallHint != "" {
 			if rt, ok := receiverType[ref.VarCallHint]; ok {
 				qualifier = rt
+				inferredQualifier = rt != ""
 			} else {
 				rt, err := r.resolveReceiverType(ctx, ref.VarCallHint, cache)
 				if err == nil && rt != "" {
 					receiverType[ref.VarCallHint] = rt
 					qualifier = rt
+					inferredQualifier = true
 				} else {
 					receiverType[ref.VarCallHint] = ""
 				}
@@ -107,7 +111,7 @@ func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResu
 			cache[lookupName] = candidates
 		}
 
-		target := pickCandidate(candidates, qualifier)
+		target, strategy := pickCandidate(candidates, qualifier, inferredQualifier)
 		if target == nil {
 			if len(candidates) == 0 {
 				result.NotFoundCount++
@@ -134,6 +138,7 @@ func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResu
 		// construction (instantiates), and an extends whose target is an
 		// interface/trait is a conformance (implements).
 		edge.Kind = promoteEdgeKind(edge.Kind, target.Kind)
+		edge.Metadata = resolutionMetadata(strategy, qualifier)
 
 		if err := r.repo.UpsertASTEdge(ctx, edge); err != nil {
 			r.log.Debug("upsert edge failed", "source", ref.FromNodeID, "target", target.ID, "err", err)
@@ -185,6 +190,48 @@ func isConformanceTargetKind(kind graph.ASTNodeKind) bool {
 	return false
 }
 
+// resolutionMetadata serializes how a reference was resolved into the edge's
+// metadata JSON column, mirroring codegraph's resolvedBy/confidence tagging so
+// resolution quality can be inspected and ranked downstream. Confidence is a
+// heuristic 0-1 score by strategy strength.
+func resolutionMetadata(strategy, qualifier string) string {
+	if strategy == "" {
+		return ""
+	}
+	type meta struct {
+		ResolvedBy string  `json:"resolvedBy"`
+		Confidence float64 `json:"confidence"`
+	}
+	confidence := strategyConfidence(strategy)
+	m := meta{ResolvedBy: strategy, Confidence: confidence}
+	if qualifier != "" {
+		m.Confidence = confidence // qualifier already encoded in strategy name
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// strategyConfidence maps a resolution strategy to a heuristic confidence.
+// Higher = stronger evidence: a single unambiguous candidate beats a
+// qualifier match beats a receiver-inference guess beats an exported-default
+// fallback.
+func strategyConfidence(strategy string) float64 {
+	switch strategy {
+	case "unique":
+		return 1.0
+	case "qualifier":
+		return 0.9
+	case "receiver-inference":
+		return 0.8
+	case "exported":
+		return 0.6
+	}
+	return 0.5
+}
+
 // loadKnownNames builds a set of all distinct symbol names in the index for
 // O(1) pre-filtering of references that resolve to nothing locally.
 func (r *ReferenceResolver) loadKnownNames(ctx context.Context) (map[string]bool, error) {
@@ -233,18 +280,20 @@ func splitReference(refName string) (lookupName, qualifier string) {
 	return refName[dot+1:], refName[:dot]
 }
 
-// pickCandidate applies the disambiguation strategy:
-//   - exactly one candidate → resolve
+// pickCandidate applies the disambiguation strategy and returns the chosen
+// candidate plus the strategy label that selected it (for edge metadata):
+//   - exactly one candidate → "unique"
 //   - qualifier present and exactly one candidate's package directory or
-//     receiver type matches the qualifier → resolve to it
-//   - otherwise, if exactly one candidate is exported → resolve to it
-//   - else ambiguous (nil)
-func pickCandidate(candidates []graph.ASTNode, qualifier string) *graph.ASTNode {
+//     receiver type matches the qualifier → "qualifier" (or "receiver-inference"
+//     when the qualifier was synthesized from a VarCallHint factory return type)
+//   - otherwise, if exactly one candidate is exported → "exported"
+//   - else ambiguous (nil, "")
+func pickCandidate(candidates []graph.ASTNode, qualifier string, inferredQualifier bool) (*graph.ASTNode, string) {
 	switch len(candidates) {
 	case 0:
-		return nil
+		return nil, ""
 	case 1:
-		return &candidates[0]
+		return &candidates[0], "unique"
 	}
 
 	// When a qualifier is present (selector call), try to match it against
@@ -257,13 +306,16 @@ func pickCandidate(candidates []graph.ASTNode, qualifier string) *graph.ASTNode 
 			if receiverMatchesQualifier(c.QualifiedName, qualifier) ||
 				pathMatchesQualifier(c.FilePath, qualifier) {
 				if match != nil {
-					return nil // still ambiguous
+					return nil, "" // still ambiguous
 				}
 				match = c
 			}
 		}
 		if match != nil {
-			return match
+			if inferredQualifier {
+				return match, "receiver-inference"
+			}
+			return match, "qualifier"
 		}
 	}
 
@@ -271,12 +323,15 @@ func pickCandidate(candidates []graph.ASTNode, qualifier string) *graph.ASTNode 
 	for i := range candidates {
 		if candidates[i].IsExported {
 			if exported != nil {
-				return nil
+				return nil, ""
 			}
 			exported = &candidates[i]
 		}
 	}
-	return exported
+	if exported != nil {
+		return exported, "exported"
+	}
+	return nil, ""
 }
 
 // receiverMatchesQualifier reports whether qualifier matches the receiver type

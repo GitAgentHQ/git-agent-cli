@@ -223,23 +223,23 @@ func TestReferenceResolver_CrossFileCallAfterIndex(t *testing.T) {
 }
 
 func TestPickCandidate(t *testing.T) {
-	if got := pickCandidate(nil, ""); got != nil {
+	if got, _ := pickCandidate(nil, "", false); got != nil {
 		t.Error("nil candidates should return nil")
 	}
 	single := []graph.ASTNode{{ID: "s"}}
-	if got := pickCandidate(single, ""); got == nil || got.ID != "s" {
+	if got, _ := pickCandidate(single, "", false); got == nil || got.ID != "s" {
 		t.Error("single candidate should resolve")
 	}
 	multi := []graph.ASTNode{{ID: "a"}, {ID: "b", IsExported: true}}
-	if got := pickCandidate(multi, ""); got == nil || got.ID != "b" {
+	if got, _ := pickCandidate(multi, "", false); got == nil || got.ID != "b" {
 		t.Error("multiple with one exported should pick exported")
 	}
 	multiExp := []graph.ASTNode{{ID: "a", IsExported: true}, {ID: "b", IsExported: true}}
-	if got := pickCandidate(multiExp, ""); got != nil {
+	if got, _ := pickCandidate(multiExp, "", false); got != nil {
 		t.Error("multiple exported should be ambiguous (nil)")
 	}
 	multiPriv := []graph.ASTNode{{ID: "a"}, {ID: "b"}}
-	if got := pickCandidate(multiPriv, ""); got != nil {
+	if got, _ := pickCandidate(multiPriv, "", false); got != nil {
 		t.Error("multiple non-exported should be ambiguous (nil)")
 	}
 }
@@ -251,13 +251,13 @@ func TestPickCandidate_QualifierReceiverMatch(t *testing.T) {
 		{ID: "a", Name: "Commit", QualifiedName: "app/commit_service.go::CommitService.Commit", IsExported: true},
 		{ID: "b", Name: "Commit", QualifiedName: "git/client.go::Client.Commit", IsExported: true},
 	}
-	if got := pickCandidate(candidates, "CommitService"); got == nil || got.ID != "a" {
+	if got, _ := pickCandidate(candidates, "CommitService", false); got == nil || got.ID != "a" {
 		t.Errorf("qualifier matching receiver type should resolve: got %v", got)
 	}
-	if got := pickCandidate(candidates, "Client"); got == nil || got.ID != "b" {
+	if got, _ := pickCandidate(candidates, "Client", false); got == nil || got.ID != "b" {
 		t.Errorf("qualifier matching Client receiver should resolve: got %v", got)
 	}
-	if got := pickCandidate(candidates, "unknown"); got != nil {
+	if got, _ := pickCandidate(candidates, "unknown", false); got != nil {
 		t.Error("non-matching qualifier with multiple exported should be ambiguous")
 	}
 }
@@ -267,7 +267,7 @@ func TestPickCandidate_QualifierPackageMatch(t *testing.T) {
 		{ID: "a", Name: "ToUpper", QualifiedName: "strings/strings.go::ToUpper", FilePath: "strings/strings.go", IsExported: true},
 		{ID: "b", Name: "ToUpper", QualifiedName: "util/case.go::ToUpper", FilePath: "util/case.go", IsExported: true},
 	}
-	if got := pickCandidate(candidates, "strings"); got == nil || got.ID != "a" {
+	if got, _ := pickCandidate(candidates, "strings", false); got == nil || got.ID != "a" {
 		t.Errorf("qualifier matching package name should resolve: got %v", got)
 	}
 }
@@ -494,5 +494,85 @@ func TestReferenceResolver_PromotesExtendsToInterfaceToImplements(t *testing.T) 
 	}
 	if result.Impacted[0].Edge.Kind != graph.ASTEdgeKindImplements {
 		t.Errorf("expected edge kind %s for extends interface, got %s", graph.ASTEdgeKindImplements, result.Impacted[0].Edge.Kind)
+	}
+}
+
+func TestReferenceResolver_EdgeMetadataTagsResolvedBy(t *testing.T) {
+	repo := setupASTRepo(t)
+	ctx := context.Background()
+
+	caller := graph.ASTNode{ID: "caller", Kind: graph.ASTNodeKindFunction, Name: "build", QualifiedName: "a.go::build", FilePath: "a.go", Language: "go"}
+	target := graph.ASTNode{ID: "target", Kind: graph.ASTNodeKindFunction, Name: "Render", QualifiedName: "b.go::Render", FilePath: "b.go", Language: "go", IsExported: true}
+	for _, n := range []graph.ASTNode{caller, target} {
+		if err := repo.UpsertASTNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A single unambiguous candidate → strategy "unique".
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "caller", ReferenceName: "Render", ReferenceKind: string(graph.ASTEdgeKindCalls), Line: 5, FilePath: "a.go", Language: "go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewReferenceResolver(repo, nil).Resolve(ctx); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	callees, err := repo.GetCallees(ctx, "caller", 1)
+	if err != nil {
+		t.Fatalf("get callees: %v", err)
+	}
+	if len(callees) != 1 {
+		t.Fatalf("expected 1 callee, got %d", len(callees))
+	}
+	meta := callees[0].Edge.Metadata
+	if meta == "" {
+		t.Fatal("expected edge metadata to be populated")
+	}
+	if !strings.Contains(meta, `"resolvedBy":"unique"`) {
+		t.Errorf("expected resolvedBy=unique in metadata %q", meta)
+	}
+	if !strings.Contains(meta, `"confidence":1`) {
+		t.Errorf("expected confidence 1.0 in metadata %q", meta)
+	}
+}
+
+func TestReferenceResolver_ReceiverInferenceTagsLowConfidence(t *testing.T) {
+	repo := setupASTRepo(t)
+	ctx := context.Background()
+
+	caller := graph.ASTNode{ID: "caller", Kind: graph.ASTNodeKindFunction, Name: "run", QualifiedName: "a.go::run", FilePath: "a.go", Language: "go"}
+	factory := graph.ASTNode{ID: "factory", Kind: graph.ASTNodeKindFunction, Name: "NewClient", QualifiedName: "b.go::NewClient", FilePath: "b.go", Language: "go", IsExported: true, ReturnType: "Client"}
+	clientCommit := graph.ASTNode{ID: "clientCommit", Kind: graph.ASTNodeKindMethod, Name: "Commit", QualifiedName: "app/client.go::Client.Commit", FilePath: "app/client.go", Language: "go", IsExported: true}
+	serverCommit := graph.ASTNode{ID: "serverCommit", Kind: graph.ASTNodeKindMethod, Name: "Commit", QualifiedName: "app/server.go::Server.Commit", FilePath: "app/server.go", Language: "go", IsExported: true}
+	for _, n := range []graph.ASTNode{caller, factory, clientCommit, serverCommit} {
+		if err := repo.UpsertASTNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "caller", ReferenceName: "svc.Commit", ReferenceKind: string(graph.ASTEdgeKindCalls), Line: 5, FilePath: "a.go", Language: "go", VarCallHint: "NewClient",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewReferenceResolver(repo, nil).Resolve(ctx); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	callees, err := repo.GetCallees(ctx, "caller", 1)
+	if err != nil {
+		t.Fatalf("get callees: %v", err)
+	}
+	if len(callees) != 1 {
+		t.Fatalf("expected 1 callee, got %d", len(callees))
+	}
+	meta := callees[0].Edge.Metadata
+	if !strings.Contains(meta, `"resolvedBy":"receiver-inference"`) {
+		t.Errorf("expected resolvedBy=receiver-inference, got %q", meta)
+	}
+	if !strings.Contains(meta, `"confidence":0.8`) {
+		t.Errorf("expected confidence 0.8 for receiver-inference, got %q", meta)
 	}
 }
