@@ -147,7 +147,8 @@ type ASTEdge struct {
 	Kind       ASTEdgeKind `json:"kind"`
 	Line       int         `json:"line"`
 	Column     int         `json:"column"`
-	Provenance string      `json:"provenance"` // tree-sitter, heuristic
+	Provenance string      `json:"provenance"`         // tree-sitter, heuristic, resolver
+	Metadata   string      `json:"metadata,omitempty"` // JSON blob: resolvedBy, confidence, etc.
 }
 
 // ASTUnresolvedRef is a reference that could not be resolved during extraction.
