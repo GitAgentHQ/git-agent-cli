@@ -208,6 +208,61 @@ func caller() string { return target() }
 	}
 }
 
+func TestImpactAST_ReindexesWhenTrackedGoFilesChangeAtSameHead(t *testing.T) {
+	dir := newGitRepo(t)
+
+	writeFile(t, dir+"/go.mod", "module testproject\n\ngo 1.21\n")
+	writeFile(t, dir+"/target.go", `package main
+
+func target() string { return "x" }
+func callerOne() string { return target() }
+`)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-m", "init")
+
+	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	if code != 0 {
+		t.Fatalf("first impact exit %d: %s", code, out)
+	}
+
+	writeFile(t, dir+"/target.go", `package main
+
+func target() string { return "x" }
+func callerOne() string { return target() }
+func callerTwo() string { return target() }
+`)
+
+	out, code = gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	if code != 0 {
+		t.Fatalf("second impact exit %d: %s", code, out)
+	}
+
+	if !strings.Contains(out, "callerTwo") {
+		t.Fatalf("expected AST impact to refresh and include callerTwo:\n%s", out)
+	}
+}
+
+func TestImpactAST_CochangeModeUsesSymbolFile(t *testing.T) {
+	dir := newGitRepo(t)
+
+	writeFile(t, dir+"/go.mod", "module testproject\n\ngo 1.21\n")
+	for i := 0; i < 3; i++ {
+		writeFile(t, dir+"/target.go", "package main\n\nfunc target() string { return \"x\" }\n"+strings.Repeat("// target edit\n", i+1))
+		writeFile(t, dir+"/pair.go", "package main\n\nfunc pair() {}\n"+strings.Repeat("// pair edit\n", i+1))
+		runGit(t, dir, "add", "-A")
+		runGit(t, dir, "commit", "-m", "cochange")
+	}
+
+	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--mode", "cochange", "--text")
+	if code != 0 {
+		t.Fatalf("impact exit %d: %s", code, out)
+	}
+
+	if !strings.Contains(out, "pair.go") {
+		t.Fatalf("expected --symbol target --mode cochange to use target.go as seed:\n%s", out)
+	}
+}
+
 // TestImpactAST_ModeValidation verifies mode dispatch logic.
 func TestImpactAST_ModeValidation(t *testing.T) {
 	dir := newGitRepo(t)
