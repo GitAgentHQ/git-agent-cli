@@ -23,6 +23,8 @@ type GraphRepository interface {
 	IncrementalCoChanged(ctx context.Context, touchedFiles []string, minCount, maxFilesPerCommit int) error
 
 	// Index state
+	GetIndexState(ctx context.Context, key string) (string, error)
+	SetIndexState(ctx context.Context, key, value string) error
 	GetLastIndexedCommit(ctx context.Context) (string, error)
 	SetLastIndexedCommit(ctx context.Context, hash string) error
 	GetSchemaVersion(ctx context.Context) (int, error)
@@ -43,7 +45,7 @@ type GraphRepository interface {
 	CreateActionBatch(ctx context.Context, a ActionNode, modifiedFiles []FileChange) error
 	GetActionCountForSession(ctx context.Context, sessionID string) (int, error)
 	CreateActionModifies(ctx context.Context, actionID, filePath string, additions, deletions int) error
-	CreateActionProduces(ctx context.Context, actionID, commitHash string) error
+	CreateActionProduces(ctx context.Context, actionID, commitHash, filePath string) error
 	Timeline(ctx context.Context, req TimelineRequest) (*TimelineResult, error)
 	UnlinkedActionsForFiles(ctx context.Context, filePaths []string, since int64) ([]ActionNode, error)
 
