@@ -402,7 +402,7 @@ func (r *SQLiteASTRepository) DeleteASTNodesForFile(ctx context.Context, filePat
 	if err != nil {
 		return fmt.Errorf("delete ast_nodes for file: %w", err)
 	}
-	return err
+	return nil
 }
 
 func (r *SQLiteASTRepository) DeleteASTNodesExceptFiles(ctx context.Context, filePaths []string) error {

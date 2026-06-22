@@ -925,7 +925,7 @@ func (r *SQLiteRepository) UnlinkedActionsForFiles(ctx context.Context, filePath
 		args = append(args, f)
 	}
 
-	rows, err := r.client.db.QueryContext(ctx, query, args...)
+	rows, err := r.db().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
