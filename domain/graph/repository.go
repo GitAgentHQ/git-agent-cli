@@ -9,6 +9,7 @@ type GraphRepository interface {
 	Close() error
 	InitSchema(ctx context.Context) error
 	Drop(ctx context.Context) error
+	ResetIndexData(ctx context.Context) error
 
 	// Indexing writes
 	UpsertCommit(ctx context.Context, c CommitNode) error
