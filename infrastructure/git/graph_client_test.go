@@ -451,6 +451,31 @@ func TestGraphClient_DiffForFiles(t *testing.T) {
 	}
 }
 
+func TestGraphClient_DiffForFiles_IncludesUntrackedFile(t *testing.T) {
+	dir := initTestRepo(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte("package main\n\nfunc newFile() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gc := NewGraphClient(dir)
+	files, err := gc.DiffNameOnly(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "new.go" {
+		t.Fatalf("DiffNameOnly() = %v, want [new.go]", files)
+	}
+	diffOut, err := gc.DiffForFiles(context.Background(), []string{"new.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(diffOut, "new.go") || !strings.Contains(diffOut, "func newFile") {
+		t.Fatalf("DiffForFiles should include untracked file creation, got:\n%s", diffOut)
+	}
+}
+
 // TestGraphClient_NonASCIIPath verifies that DiffNameOnly, CommitLogDetailed,
 // and HashObject return verbatim non-ASCII filenames. Without -c
 // core.quotePath=false, git octal-escapes these paths and the escaped forms

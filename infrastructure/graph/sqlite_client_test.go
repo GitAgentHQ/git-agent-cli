@@ -189,6 +189,65 @@ func TestSQLiteClient_OpenExisting(t *testing.T) {
 	}
 }
 
+func TestSQLiteClient_MigratesActionProducesPrimaryKey(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	ctx := context.Background()
+
+	client := NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx, `CREATE TABLE action_modifies (
+		action_id TEXT NOT NULL,
+		file_path TEXT NOT NULL,
+		additions INTEGER DEFAULT 0,
+		deletions INTEGER DEFAULT 0,
+		PRIMARY KEY (action_id, file_path)
+	)`); err != nil {
+		t.Fatalf("create old action_modifies: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx, `CREATE TABLE action_produces (
+		action_id TEXT NOT NULL,
+		commit_hash TEXT NOT NULL,
+		PRIMARY KEY (action_id, commit_hash)
+	)`); err != nil {
+		t.Fatalf("create old action_produces: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		`INSERT INTO action_modifies (action_id, file_path) VALUES (?, ?), (?, ?)`,
+		"action-1", "a.go", "action-1", "b.go",
+	); err != nil {
+		t.Fatalf("insert action_modifies: %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		`INSERT INTO action_produces (action_id, commit_hash) VALUES (?, ?)`,
+		"action-1", "commit-1",
+	); err != nil {
+		t.Fatalf("insert old action_produces: %v", err)
+	}
+
+	if err := client.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema() error = %v", err)
+	}
+	if _, err := client.DB().ExecContext(ctx,
+		`INSERT INTO action_produces (action_id, commit_hash, file_path) VALUES (?, ?, ?)`,
+		"action-1", "commit-1", "c.go",
+	); err != nil {
+		t.Fatalf("insert per-file action_produces after migration: %v", err)
+	}
+
+	var count int
+	if err := client.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM action_produces WHERE action_id = ? AND commit_hash = ?`,
+		"action-1", "commit-1",
+	).Scan(&count); err != nil {
+		t.Fatalf("count migrated action_produces: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("migrated action_produces should contain per-file rows, got %d", count)
+	}
+}
+
 func TestSQLiteClient_WALMode(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client := NewSQLiteClient(dbPath)

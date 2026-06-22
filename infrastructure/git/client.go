@@ -96,6 +96,14 @@ func runCommit(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+func (c *Client) CommitHash(ctx context.Context) (string, error) {
+	out, err := gitCmd(ctx, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func (c *Client) AddAll(ctx context.Context) error {
 	if out, err := gitCmd(ctx, "add", "-A").CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))

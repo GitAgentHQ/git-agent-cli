@@ -47,6 +47,21 @@ func (g *GraphClient) run(ctx context.Context, args ...string) (string, error) {
 	return string(out), nil
 }
 
+func (g *GraphClient) runDiffAllowExitOne(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, gitConfigArgs...), args...)...)
+	cmd.Dir = g.repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+			return string(out), nil
+		}
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return string(out), nil
+}
+
 // runExitCode executes a git command and returns its exit code without
 // treating exit code 1 as an error (useful for commands like merge-base
 // --is-ancestor which use exit 1 to mean "false"). Exit codes >= 2 (including
@@ -367,6 +382,22 @@ func (g *GraphClient) DiffForFiles(ctx context.Context, files []string) (string,
 		return "", err
 	}
 
-	combined := unstaged + staged
+	untrackedOut, err := g.run(ctx, append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, files...)...)
+	if err != nil {
+		return "", err
+	}
+	var untracked strings.Builder
+	for _, f := range strings.Split(strings.TrimRight(untrackedOut, "\x00"), "\x00") {
+		if f == "" {
+			continue
+		}
+		out, err := g.runDiffAllowExitOne(ctx, "diff", "--no-index", "--", "/dev/null", f)
+		if err != nil {
+			return "", err
+		}
+		untracked.WriteString(out)
+	}
+
+	combined := unstaged + staged + untracked.String()
 	return strings.TrimRight(combined, "\n"), nil
 }

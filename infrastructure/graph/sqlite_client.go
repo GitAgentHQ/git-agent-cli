@@ -102,6 +102,11 @@ func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
 		}
 		ranMigration = true
 	}
+	actionProducesMigrated, err := c.migrateActionProduces(ctx)
+	if err != nil {
+		return err
+	}
+	ranMigration = ranMigration || actionProducesMigrated
 
 	// Rebuild the FTS index if a migration just changed the schema, or if the
 	// FTS table exists but is empty (e.g. triggers were absent when ast_nodes
@@ -123,6 +128,86 @@ func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c *SQLiteClient) migrateActionProduces(ctx context.Context) (bool, error) {
+	needsRebuild, hasFilePath, err := c.actionProducesNeedsRebuild(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !needsRebuild {
+		return false, nil
+	}
+
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin action_produces migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if !hasFilePath {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE action_produces ADD COLUMN file_path TEXT DEFAULT ''`); err != nil {
+			return false, fmt.Errorf("add action_produces.file_path: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS action_produces_new`); err != nil {
+		return false, fmt.Errorf("drop stale action_produces_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE action_produces_new (
+		action_id TEXT NOT NULL,
+		commit_hash TEXT NOT NULL,
+		file_path TEXT NOT NULL,
+		PRIMARY KEY (action_id, commit_hash, file_path)
+	)`); err != nil {
+		return false, fmt.Errorf("create action_produces_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO action_produces_new (action_id, commit_hash, file_path)
+		SELECT ap.action_id, ap.commit_hash, COALESCE(NULLIF(ap.file_path, ''), am.file_path, '')
+		FROM action_produces ap
+		LEFT JOIN action_modifies am ON am.action_id = ap.action_id`); err != nil {
+		return false, fmt.Errorf("backfill action_produces_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE action_produces`); err != nil {
+		return false, fmt.Errorf("drop old action_produces: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE action_produces_new RENAME TO action_produces`); err != nil {
+		return false, fmt.Errorf("rename action_produces_new: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit action_produces migration: %w", err)
+	}
+	return true, nil
+}
+
+func (c *SQLiteClient) actionProducesNeedsRebuild(ctx context.Context) (bool, bool, error) {
+	rows, err := c.db.QueryContext(ctx, `PRAGMA table_info(action_produces)`)
+	if err != nil {
+		return false, false, fmt.Errorf("inspect action_produces: %w", err)
+	}
+	defer rows.Close()
+
+	pk := map[string]int{}
+	hasFilePath := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pkIndex int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pkIndex); err != nil {
+			return false, false, err
+		}
+		if name == "file_path" {
+			hasFilePath = true
+		}
+		if pkIndex > 0 {
+			pk[name] = pkIndex
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, false, err
+	}
+	needsRebuild := pk["action_id"] != 1 || pk["commit_hash"] != 2 || pk["file_path"] != 3
+	return needsRebuild, hasFilePath, nil
 }
 
 // ftsTableEmpty reports whether the FTS index has zero rows but ast_nodes has
@@ -267,7 +352,8 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS action_produces (
 		action_id TEXT NOT NULL,
 		commit_hash TEXT NOT NULL,
-		PRIMARY KEY (action_id, commit_hash)
+		file_path TEXT NOT NULL,
+		PRIMARY KEY (action_id, commit_hash, file_path)
 	)`,
 
 	`CREATE TABLE IF NOT EXISTS capture_baseline (

@@ -108,6 +108,30 @@ func (r *SQLiteRepository) Drop(ctx context.Context) error {
 	return r.client.Drop(ctx)
 }
 
+func (r *SQLiteRepository) ResetIndexData(ctx context.Context) error {
+	tx, err := r.db().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reset index tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, stmt := range []string{
+		`DELETE FROM co_changed`,
+		`DELETE FROM renames`,
+		`DELETE FROM modifies`,
+		`DELETE FROM authored`,
+		`DELETE FROM commits`,
+		`DELETE FROM files`,
+		`DELETE FROM authors`,
+		`DELETE FROM index_state WHERE key = 'last_indexed_commit'`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("reset index data: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // --- Indexing writes ---
 
 func (r *SQLiteRepository) UpsertCommit(ctx context.Context, c graph.CommitNode) error {
@@ -167,9 +191,17 @@ func (r *SQLiteRepository) CreateRename(ctx context.Context, oldPath, newPath, c
 // --- Index state ---
 
 func (r *SQLiteRepository) GetLastIndexedCommit(ctx context.Context) (string, error) {
+	return r.GetIndexState(ctx, "last_indexed_commit")
+}
+
+func (r *SQLiteRepository) SetLastIndexedCommit(ctx context.Context, hash string) error {
+	return r.SetIndexState(ctx, "last_indexed_commit", hash)
+}
+
+func (r *SQLiteRepository) GetIndexState(ctx context.Context, key string) (string, error) {
 	var val sql.NullString
 	err := r.db().QueryRowContext(ctx,
-		`SELECT value FROM index_state WHERE key = ?`, "last_indexed_commit",
+		`SELECT value FROM index_state WHERE key = ?`, key,
 	).Scan(&val)
 	if err == sql.ErrNoRows || !val.Valid {
 		return "", nil
@@ -177,10 +209,10 @@ func (r *SQLiteRepository) GetLastIndexedCommit(ctx context.Context) (string, er
 	return val.String, err
 }
 
-func (r *SQLiteRepository) SetLastIndexedCommit(ctx context.Context, hash string) error {
+func (r *SQLiteRepository) SetIndexState(ctx context.Context, key, value string) error {
 	_, err := r.db().ExecContext(ctx,
 		`INSERT OR REPLACE INTO index_state (key, value) VALUES (?, ?)`,
-		"last_indexed_commit", hash,
+		key, value,
 	)
 	return err
 }
@@ -718,11 +750,11 @@ func (r *SQLiteRepository) CreateActionModifies(ctx context.Context, actionID, f
 	return err
 }
 
-func (r *SQLiteRepository) CreateActionProduces(ctx context.Context, actionID, commitHash string) error {
+func (r *SQLiteRepository) CreateActionProduces(ctx context.Context, actionID, commitHash, filePath string) error {
 	_, err := r.db().ExecContext(ctx,
-		`INSERT OR IGNORE INTO action_produces (action_id, commit_hash)
-		 VALUES (?, ?)`,
-		actionID, commitHash,
+		`INSERT OR IGNORE INTO action_produces (action_id, commit_hash, file_path)
+		 VALUES (?, ?, ?)`,
+		actionID, commitHash, filePath,
 	)
 	return err
 }
@@ -742,21 +774,25 @@ func (r *SQLiteRepository) Timeline(ctx context.Context, req graph.TimelineReque
 	var query string
 	var args []any
 	if req.File != "" {
-		query = `SELECT DISTINCT s.id, s.source, s.instance_id, s.started_at, s.ended_at
+		query = `SELECT s.id, s.source, s.instance_id, s.started_at, s.ended_at
 			FROM sessions s
 			JOIN actions a ON a.session_id = s.id
 			JOIN action_modifies am ON am.action_id = a.id
 			WHERE (? = '' OR s.source = ?)
-			  AND s.started_at >= ?
+			  AND a.timestamp >= ?
 			  AND am.file_path = ?
-			ORDER BY s.started_at DESC
+			GROUP BY s.id, s.source, s.instance_id, s.started_at, s.ended_at
+			ORDER BY MAX(a.timestamp) DESC
 			LIMIT ?`
 		args = []any{req.Source, req.Source, sinceTS, req.File, top}
 	} else {
-		query = `SELECT id, source, instance_id, started_at, ended_at FROM sessions
-			WHERE (? = '' OR source = ?)
-			  AND started_at >= ?
-			ORDER BY started_at DESC
+		query = `SELECT s.id, s.source, s.instance_id, s.started_at, s.ended_at
+			FROM sessions s
+			JOIN actions a ON a.session_id = s.id
+			WHERE (? = '' OR s.source = ?)
+			  AND a.timestamp >= ?
+			GROUP BY s.id, s.source, s.instance_id, s.started_at, s.ended_at
+			ORDER BY MAX(a.timestamp) DESC
 			LIMIT ?`
 		args = []any{req.Source, req.Source, sinceTS, top}
 	}
@@ -788,7 +824,7 @@ func (r *SQLiteRepository) Timeline(ctx context.Context, req graph.TimelineReque
 			sess.EndedAt = time.Unix(endedAt, 0).UTC().Format(time.RFC3339)
 		}
 
-		actions, err := r.timelineActions(ctx, id, req.File)
+		actions, err := r.timelineActions(ctx, id, req.File, sinceTS)
 		if err != nil {
 			return nil, fmt.Errorf("query actions for session %s: %w", id, err)
 		}
@@ -811,7 +847,7 @@ func (r *SQLiteRepository) Timeline(ctx context.Context, req graph.TimelineReque
 	}, nil
 }
 
-func (r *SQLiteRepository) timelineActions(ctx context.Context, sessionID, fileFilter string) ([]graph.TimelineAction, error) {
+func (r *SQLiteRepository) timelineActions(ctx context.Context, sessionID, fileFilter string, since int64) ([]graph.TimelineAction, error) {
 	var rows *sql.Rows
 	var err error
 
@@ -820,19 +856,21 @@ func (r *SQLiteRepository) timelineActions(ctx context.Context, sessionID, fileF
 			`SELECT a.id, a.tool, a.timestamp, a.files_changed
 			 FROM actions a
 			 WHERE a.session_id = ?
+			   AND a.timestamp >= ?
 			   AND EXISTS (
 			     SELECT 1 FROM action_modifies am WHERE am.action_id = a.id AND am.file_path = ?
 			   )
 			 ORDER BY a.sequence`,
-			sessionID, fileFilter,
+			sessionID, since, fileFilter,
 		)
 	} else {
 		rows, err = r.db().QueryContext(ctx,
 			`SELECT a.id, a.tool, a.timestamp, a.files_changed
 			 FROM actions a
 			 WHERE a.session_id = ?
+			   AND a.timestamp >= ?
 			 ORDER BY a.sequence`,
-			sessionID,
+			sessionID, since,
 		)
 	}
 	if err != nil {
@@ -877,7 +915,7 @@ func (r *SQLiteRepository) UnlinkedActionsForFiles(ctx context.Context, filePath
 		SELECT DISTINCT a.id, a.session_id, a.sequence, a.tool, a.diff, a.files_changed, a.timestamp, a.message
 		FROM actions a
 		JOIN action_modifies am ON am.action_id = a.id
-		LEFT JOIN action_produces ap ON ap.action_id = a.id
+		LEFT JOIN action_produces ap ON ap.action_id = a.id AND ap.file_path = am.file_path
 		WHERE ap.action_id IS NULL
 		  AND a.timestamp >= ?
 		  AND am.file_path IN (%s)
