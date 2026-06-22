@@ -61,11 +61,11 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	//   everything else → existing co-change behavior
 	switch {
 	case symbol != "" && (mode == "" || mode == "structural"):
-		return runASTImpact(cmd, ctx, root, symbol, depth, "structural", jsonFlag, textFlag)
+		return runASTImpact(cmd, ctx, root, symbol, depth, "structural", reindex, jsonFlag, textFlag)
 	case symbol != "" && mode == "combined":
-		return runASTImpact(cmd, ctx, root, symbol, depth, "combined", jsonFlag, textFlag)
+		return runASTImpact(cmd, ctx, root, symbol, depth, "combined", reindex, jsonFlag, textFlag)
 	case symbol != "" && mode == "cochange":
-		// Fall through to co-change with the symbol's file as seed.
+		return runSymbolCoChangeImpact(cmd, ctx, root, symbol, depth, top, minCount, reindex, jsonFlag, textFlag)
 	case symbol == "" && (mode == "structural" || mode == "combined"):
 		return fmt.Errorf("--mode %s requires --symbol", mode)
 	}
@@ -131,7 +131,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 }
 
 // runASTImpact handles --symbol / --mode structural|combined.
-func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, jsonFlag, textFlag bool) error {
+func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, forceIndex, jsonFlag, textFlag bool) error {
 	dbPath := filepath.Join(root, ".git-agent", "graph.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return fmt.Errorf("create .git-agent dir: %w", err)
@@ -147,27 +147,11 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 	}
 
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
+	stateRepo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
 
-	// If symbol is given but no AST data yet, auto-index.
-	if symbol != "" {
-		extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
-		indexSvc := application.NewASTIndexService(astRepo, graphGit, extractor)
-
-		nodes, err := astRepo.GetASTNodeByName(ctx, symbol)
-		if err != nil {
-			return outputError(jsonFlag, textFlag, fmt.Errorf("lookup AST symbol %q: %w", symbol, err))
-		}
-		if len(nodes) == 0 {
-			idxResult, err := indexSvc.IndexAll(ctx, root)
-			if err != nil {
-				return outputError(jsonFlag, textFlag, fmt.Errorf("index AST symbols: %w", err))
-			}
-			if idxResult.FilesProcessed > 0 {
-				fmt.Fprintf(os.Stderr, "AST indexed %d files, %d symbols [%dms]\n",
-					idxResult.FilesProcessed, idxResult.SymbolsStored, idxResult.DurationMs)
-			}
-		}
+	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+		return outputError(jsonFlag, textFlag, err)
 	}
 
 	impactSvc := application.NewASTImpactService(astRepo)
@@ -178,7 +162,13 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 
 	// Combined mode: also run co-change for the seed symbol's file.
 	if mode == "combined" {
-		coChangeResult := runCoChangeForSymbol(ctx, root, astResult.SeedNode.FilePath)
+		coChangeResult, err := runCoChangeForSymbol(ctx, root, graph.ImpactRequest{
+			Paths: []string{astResult.SeedNode.FilePath},
+			Top:   10,
+		})
+		if err != nil {
+			return outputError(jsonFlag, textFlag, err)
+		}
 		if useJSON(jsonFlag, textFlag) {
 			return outputCombinedJSON(cmd.OutOrStdout(), astResult, coChangeResult)
 		}
@@ -193,39 +183,78 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 	return nil
 }
 
-// runCoChangeForSymbol runs a co-change query for the symbol's file path,
-// returning nil if the co-change index doesn't exist yet.
-func runCoChangeForSymbol(ctx context.Context, root, filePath string) *graph.ImpactResult {
-	if filePath == "" {
-		return nil
+func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth, top, minCount int, forceIndex, jsonFlag, textFlag bool) error {
+	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return fmt.Errorf("create .git-agent dir: %w", err)
 	}
 
+	client := infraGraph.NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		return fmt.Errorf("open graph db: %w", err)
+	}
+	defer client.Close()
+	if err := client.InitSchema(ctx); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+
+	astRepo := infraGraph.NewSQLiteASTRepository(client)
+	stateRepo := infraGraph.NewSQLiteRepository(client)
+	graphGit := infraGit.NewGraphClient(root)
+	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+		return outputError(jsonFlag, textFlag, err)
+	}
+
+	astResult, err := application.NewASTImpactService(astRepo).ImpactBySymbol(ctx, symbol, 1)
+	if err != nil {
+		return outputError(jsonFlag, textFlag, err)
+	}
+	result, err := runCoChangeForSymbol(ctx, root, graph.ImpactRequest{
+		Paths:    []string{astResult.SeedNode.FilePath},
+		Depth:    depth,
+		Top:      top,
+		MinCount: minCount,
+	})
+	if err != nil {
+		return outputError(jsonFlag, textFlag, err)
+	}
+	return outputResult(cmd, result, jsonFlag, textFlag)
+}
+
+// runCoChangeForSymbol runs a co-change query for a symbol's resolved file path.
+func runCoChangeForSymbol(ctx context.Context, root string, req graph.ImpactRequest) (*graph.ImpactResult, error) {
+	if len(req.Paths) == 0 || req.Paths[0] == "" {
+		return nil, fmt.Errorf("symbol file path is empty")
+	}
 	dbPath := filepath.Join(root, ".git-agent", "graph.db")
 	repo := infraGraph.NewSQLiteRepository(infraGraph.NewSQLiteClient(dbPath))
 	if err := repo.Open(ctx); err != nil {
-		return nil
+		return nil, err
 	}
 	defer repo.Close()
 	if err := repo.InitSchema(ctx); err != nil {
-		return nil
+		return nil, err
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
 	indexSvc := application.NewIndexService(repo, graphGit)
 	ensureSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
 	if _, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{MaxFilesPerCommit: 50}); err != nil {
-		return nil
+		return nil, err
 	}
 
 	impactSvc := application.NewImpactService(repo)
-	result, err := impactSvc.Impact(ctx, graph.ImpactRequest{
-		Paths: []string{filePath},
-		Top:   10,
-	})
+	result, err := impactSvc.Impact(ctx, req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return result
+	return result, nil
+}
+
+func ensureASTIndexForSymbol(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
+	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
+	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
+		EnsureForSymbol(ctx, root, symbol, force, progress)
 }
 
 // resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
