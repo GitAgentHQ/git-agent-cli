@@ -279,8 +279,6 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*graph.GraphStats, err
 	return stats, nil
 }
 
-// --- Not yet implemented ---
-
 // recencyCoChangeQuery builds the INSERT that (re)computes co_changed with
 // recency-weighted coupling strength: each co-change is weighted by an
 // exponential decay of its commit age (half-life coChangeHalfLifeDays), so
