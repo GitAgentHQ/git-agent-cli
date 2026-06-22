@@ -128,6 +128,56 @@ func TestClient_StagedDiffNumStat(t *testing.T) {
 	}
 }
 
+func TestClient_AllChangedFilesFromSubdirIsStageable(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	// Untracked file inside a subdirectory.
+	sub := filepath.Join(dir, "skills")
+	if err := os.MkdirAll(filepath.Join(sub, "substore-openclash"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "substore-openclash", "SKILL.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	// Invoke from the subdirectory — this is where the path mismatch surfaced.
+	if err := os.Chdir(sub); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	c := NewClient()
+	ctx := context.Background()
+	files, err := c.AllChangedFiles(ctx)
+	if err != nil {
+		t.Fatalf("AllChangedFiles: %v", err)
+	}
+
+	const want = "skills/substore-openclash/SKILL.md"
+	found := false
+	for _, f := range files {
+		if f == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected root-relative path %q in %v", want, files)
+	}
+
+	// The path must be stageable, since StageFiles adds from the repo root.
+	if err := c.StageFiles(ctx, []string{want}); err != nil {
+		t.Fatalf("StageFiles: %v", err)
+	}
+}
+
 func TestParseNameStatus(t *testing.T) {
 	tests := []struct {
 		name  string
