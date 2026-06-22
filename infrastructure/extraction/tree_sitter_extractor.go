@@ -35,11 +35,18 @@ var _ extraction.SymbolExtractor = (*TreeSitterExtractor)(nil)
 
 func (e *TreeSitterExtractor) Extract(filePath string, source []byte) (*graph.ExtractionResult, error) {
 	start := time.Now()
+
+	var grammar *sitter.Language
+	switch e.lang {
+	case "go":
+		grammar = sitter.NewLanguage(tree_sitter_go.Language())
+	default:
+		return nil, fmt.Errorf("unsupported language %q", e.lang)
+	}
+
 	parser := sitter.NewParser()
 	defer parser.Close()
-
-	lang := sitter.NewLanguage(tree_sitter_go.Language())
-	parser.SetLanguage(lang)
+	parser.SetLanguage(grammar)
 
 	tree := parser.Parse(source, nil)
 	if tree == nil {
@@ -351,13 +358,6 @@ func (s *extractState) extractMethod(node *sitter.Node) bool {
 		s.registerSymbol(name, astNode)
 		if s.extractor.MethodsAreTopLevel {
 			s.emitContainsEdge(astNode.ID)
-			parentID := s.nodeStack[len(s.nodeStack)-1]
-			s.edges = append(s.edges, graph.ASTEdge{
-				Source:     parentID,
-				Target:     astNode.ID,
-				Kind:       graph.ASTEdgeKindContains,
-				Provenance: "tree-sitter",
-			})
 		}
 	} else {
 		s.registerSymbol(name, astNode)

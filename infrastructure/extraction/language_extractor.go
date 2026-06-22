@@ -13,7 +13,5 @@ type LanguageExtractor struct {
 	VariableTypes      []string
 	NameField          string
 	BodyField          string
-	ParamsField        string
-	ReturnField        string
 	MethodsAreTopLevel bool
 }

@@ -14,8 +14,6 @@ func GoExtractor() *LanguageExtractor {
 		VariableTypes:      []string{"var_declaration", "short_var_declaration", "const_declaration"},
 		NameField:          "name",
 		BodyField:          "body",
-		ParamsField:        "parameters",
-		ReturnField:        "result",
 		MethodsAreTopLevel: true,
 	}
 }
