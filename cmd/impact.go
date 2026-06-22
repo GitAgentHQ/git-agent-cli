@@ -87,22 +87,12 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
-
-	// Ensure .git-agent directory exists.
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return fmt.Errorf("create .git-agent dir: %w", err)
+	dbPath, client, err := openGraphDB(ctx, root)
+	if err != nil {
+		return err
 	}
-
-	client := infraGraph.NewSQLiteClient(dbPath)
 	repo := infraGraph.NewSQLiteRepository(client)
-	if err := repo.Open(ctx); err != nil {
-		return fmt.Errorf("open graph db: %w", err)
-	}
-	defer repo.Close()
-	if err := repo.InitSchema(ctx); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
+	defer client.Close()
 
 	indexSvc := application.NewIndexService(repo, graphGit)
 	ensureIndexSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
@@ -132,19 +122,11 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 // runASTImpact handles --symbol / --mode structural|combined.
 func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, forceIndex, jsonFlag, textFlag bool) error {
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return fmt.Errorf("create .git-agent dir: %w", err)
-	}
-
-	client := infraGraph.NewSQLiteClient(dbPath)
-	if err := client.Open(ctx); err != nil {
-		return fmt.Errorf("open graph db: %w", err)
+	_, client, err := openGraphDB(ctx, root)
+	if err != nil {
+		return err
 	}
 	defer client.Close()
-	if err := client.InitSchema(ctx); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
 
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
 	stateRepo := infraGraph.NewSQLiteRepository(client)
@@ -184,19 +166,11 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 }
 
 func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth, top, minCount int, forceIndex, jsonFlag, textFlag bool) error {
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return fmt.Errorf("create .git-agent dir: %w", err)
-	}
-
-	client := infraGraph.NewSQLiteClient(dbPath)
-	if err := client.Open(ctx); err != nil {
-		return fmt.Errorf("open graph db: %w", err)
+	_, client, err := openGraphDB(ctx, root)
+	if err != nil {
+		return err
 	}
 	defer client.Close()
-	if err := client.InitSchema(ctx); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
 
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
 	stateRepo := infraGraph.NewSQLiteRepository(client)
@@ -226,15 +200,12 @@ func runCoChangeForSymbol(ctx context.Context, root string, req graph.ImpactRequ
 	if len(req.Paths) == 0 || req.Paths[0] == "" {
 		return nil, fmt.Errorf("symbol file path is empty")
 	}
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
-	repo := infraGraph.NewSQLiteRepository(infraGraph.NewSQLiteClient(dbPath))
-	if err := repo.Open(ctx); err != nil {
+	dbPath, client, err := openGraphDB(ctx, root)
+	if err != nil {
 		return nil, err
 	}
-	defer repo.Close()
-	if err := repo.InitSchema(ctx); err != nil {
-		return nil, err
-	}
+	repo := infraGraph.NewSQLiteRepository(client)
+	defer client.Close()
 
 	graphGit := infraGit.NewGraphClient(root)
 	indexSvc := application.NewIndexService(repo, graphGit)
@@ -249,6 +220,22 @@ func runCoChangeForSymbol(ctx context.Context, root string, req graph.ImpactRequ
 		return nil, err
 	}
 	return result, nil
+}
+
+func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteClient, error) {
+	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return "", nil, fmt.Errorf("create .git-agent dir: %w", err)
+	}
+	client := infraGraph.NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		return "", nil, fmt.Errorf("open graph db: %w", err)
+	}
+	if err := client.InitSchema(ctx); err != nil {
+		client.Close()
+		return "", nil, fmt.Errorf("init schema: %w", err)
+	}
+	return dbPath, client, nil
 }
 
 func ensureASTIndexForSymbol(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
@@ -519,18 +506,13 @@ func outputCombinedJSON(w io.Writer, astResult *graph.ASTImpactResult, ccResult 
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(map[string]any{
-		"mode":         "combined",
-		"structural":   astResult,
-		"co_change":    ccResult,
-		"seed_symbol":  astResult.SeedNode.Name,
-		"seed_file":    astResult.SeedNode.FilePath,
-		"struct_total": astResult.TotalFound,
-		"cochange_total": func() int {
-			if ccResult == nil {
-				return 0
-			}
-			return ccResult.TotalFound
-		}(),
+		"mode":           "combined",
+		"structural":     astResult,
+		"co_change":      ccResult,
+		"seed_symbol":    astResult.SeedNode.Name,
+		"seed_file":      astResult.SeedNode.FilePath,
+		"struct_total":   astResult.TotalFound,
+		"cochange_total": ccResult.TotalFound,
 	})
 }
 
@@ -541,7 +523,7 @@ func outputCombinedText(w io.Writer, astResult *graph.ASTImpactResult, ccResult 
 
 	// Section 2: Co-change impact
 	fmt.Fprintf(w, "\n--- Co-change for %s ---\n", astResult.SeedNode.FilePath)
-	if ccResult == nil || len(ccResult.CoChanged) == 0 {
+	if len(ccResult.CoChanged) == 0 {
 		fmt.Fprintln(w, "  (no co-changed files found)")
 		return
 	}
