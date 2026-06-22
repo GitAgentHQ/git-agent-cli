@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,28 @@ func buildBinary() (string, error) {
 func gitAgent(t *testing.T, dir string, args ...string) (string, int) {
 	t.Helper()
 	return gitAgentEnv(t, dir, nil, args...)
+}
+
+// gitAgentSeparated runs git-agent with stdout and stderr captured separately.
+// Used where a command's contract distinguishes the two streams (e.g. diagnose
+// writes its stub message to stderr while leaving stdout empty).
+func gitAgentSeparated(t *testing.T, dir string, args ...string) (string, string, int) {
+	t.Helper()
+	c := exec.Command(agentBin, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	code := 0
+	if err := c.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("unexpected error running git-agent: %v", err)
+		}
+	}
+	return stdout.String(), stderr.String(), code
 }
 
 // gitAgentEnv runs the git-agent binary with additional environment variables.
