@@ -414,6 +414,7 @@ func (r *coChangeFailRepo) Open(context.Context) error                          
 func (r *coChangeFailRepo) Close() error                                               { return nil }
 func (r *coChangeFailRepo) InitSchema(context.Context) error                           { return nil }
 func (r *coChangeFailRepo) Drop(context.Context) error                                 { return nil }
+func (r *coChangeFailRepo) ResetIndexData(context.Context) error                       { return nil }
 func (r *coChangeFailRepo) UpsertCommit(context.Context, graph.CommitNode) error       { return nil }
 func (r *coChangeFailRepo) UpsertAuthor(context.Context, graph.AuthorNode) error       { return nil }
 func (r *coChangeFailRepo) UpsertFile(context.Context, graph.FileNode) error           { return nil }

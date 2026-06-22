@@ -669,12 +669,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 		// Link unlinked actions to this commit (graceful — never fails the commit)
 		if s.actionLinker != nil {
-			linkOutput := gitOut
 			if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil && hash != "" {
-				linkOutput += "\ncommit " + hash
-			}
-			if linkErr := s.actionLinker.LinkActionsToCommit(ctx, linkOutput, group.Files); linkErr != nil {
-				s.vlog(req, "action-to-commit linking failed: %v", linkErr)
+				if linkErr := s.actionLinker.LinkActionsToCommit(ctx, hash, group.Files); linkErr != nil {
+					s.vlog(req, "action-to-commit linking failed: %v", linkErr)
+				}
 			}
 		}
 		for _, f := range group.Files {

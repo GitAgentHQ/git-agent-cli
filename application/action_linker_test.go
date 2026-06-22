@@ -3,20 +3,10 @@ package application
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"testing"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
-
-func TestParseCommitHashPrefersFullHashLine(t *testing.T) {
-	full := "1234567890abcdef1234567890abcdef12345678"
-	got := parseCommitHash("[main abc1234] subject\ncommit " + full)
-
-	if got != full {
-		t.Fatalf("parseCommitHash() = %q, want full hash %q", got, full)
-	}
-}
 
 func TestGraphActionLinker_LinksActionToEachSplitCommit(t *testing.T) {
 	repoDir, _ := testRepo(t)
@@ -45,10 +35,10 @@ func TestGraphActionLinker_LinksActionToEachSplitCommit(t *testing.T) {
 	}
 
 	linker := NewGraphActionLinker(repo)
-	if err := linker.LinkActionsToCommit(ctx, "commit 1111111111111111111111111111111111111111", []string{"a.go"}); err != nil {
+	if err := linker.LinkActionsToCommit(ctx, "1111111111111111111111111111111111111111", []string{"a.go"}); err != nil {
 		t.Fatalf("first LinkActionsToCommit() error = %v", err)
 	}
-	if err := linker.LinkActionsToCommit(ctx, "commit 2222222222222222222222222222222222222222", []string{"b.go"}); err != nil {
+	if err := linker.LinkActionsToCommit(ctx, "2222222222222222222222222222222222222222", []string{"b.go"}); err != nil {
 		t.Fatalf("second LinkActionsToCommit() error = %v", err)
 	}
 
@@ -112,7 +102,7 @@ func TestGraphActionLinker_DoesNotRelinkAfterReindexPreservesProducesRows(t *tes
 	if err := repo.ResetIndexData(ctx); err != nil {
 		t.Fatalf("ResetIndexData() error = %v", err)
 	}
-	if err := NewGraphActionLinker(repo).LinkActionsToCommit(ctx, "commit 2222222222222222222222222222222222222222", []string{"a.go"}); err != nil {
+	if err := NewGraphActionLinker(repo).LinkActionsToCommit(ctx, "2222222222222222222222222222222222222222", []string{"a.go"}); err != nil {
 		t.Fatalf("LinkActionsToCommit() error = %v", err)
 	}
 
@@ -128,14 +118,4 @@ func TestGraphActionLinker_DoesNotRelinkAfterReindexPreservesProducesRows(t *tes
 
 func timeNowForTest() int64 {
 	return 4102444800
-}
-
-func TestParseCommitHashFallsBackToGitOutputShortHash(t *testing.T) {
-	got := parseCommitHash("[main abc1234] subject")
-	if got != "abc1234" {
-		t.Fatalf("parseCommitHash() fallback = %q", got)
-	}
-	if strings.TrimSpace(parseCommitHash("nothing useful")) != "" {
-		t.Fatal("parseCommitHash() should return empty for unparseable output")
-	}
 }
