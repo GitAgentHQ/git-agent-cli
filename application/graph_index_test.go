@@ -344,6 +344,55 @@ func TestIndexService_FullIndex_StoresLastIndexedCommit(t *testing.T) {
 	}
 }
 
+func TestIndexService_FullIndex_DoesNotAdvanceLastCommitWhenCoChangeFails(t *testing.T) {
+	repo := &coChangeFailRepo{}
+	gitClient := &staticGraphGitClient{
+		commits: []graph.CommitInfo{
+			{
+				Hash:        "commit-1",
+				Message:     "first",
+				AuthorName:  "Test",
+				AuthorEmail: "test@example.com",
+				Timestamp:   100,
+				Files:       []graph.FileChange{{Path: "a.go", Status: "M", Additions: 1}},
+			},
+		},
+	}
+
+	_, err := NewIndexService(repo, gitClient).FullIndex(context.Background(), graph.IndexRequest{})
+
+	if err == nil {
+		t.Fatal("FullIndex() expected co-change error, got nil")
+	}
+	if repo.lastIndexedCommit != "" {
+		t.Fatalf("last indexed commit advanced to %q despite co-change failure", repo.lastIndexedCommit)
+	}
+}
+
+func TestIndexService_IncrementalIndex_DoesNotAdvanceLastCommitWhenCoChangeFails(t *testing.T) {
+	repo := &coChangeFailRepo{lastIndexedCommit: "base-commit"}
+	gitClient := &staticGraphGitClient{
+		commits: []graph.CommitInfo{
+			{
+				Hash:        "commit-2",
+				Message:     "second",
+				AuthorName:  "Test",
+				AuthorEmail: "test@example.com",
+				Timestamp:   200,
+				Files:       []graph.FileChange{{Path: "b.go", Status: "M", Additions: 1}},
+			},
+		},
+	}
+
+	_, err := NewIndexService(repo, gitClient).IncrementalIndex(context.Background(), "base-commit", graph.IndexRequest{})
+	if err == nil {
+		t.Fatal("IncrementalIndex() expected co-change error, got nil")
+	}
+	if repo.lastIndexedCommit != "base-commit" {
+		t.Fatalf("last indexed commit advanced to %q despite incremental co-change failure", repo.lastIndexedCommit)
+	}
+}
+
 // writeFile creates a file with the given content inside the repo directory.
 func writeFile(t *testing.T, repoDir, name, content string) {
 	t.Helper()
@@ -354,4 +403,103 @@ func writeFile(t *testing.T, repoDir, name, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+type coChangeFailRepo struct {
+	lastIndexedCommit string
+	recomputeCalled   bool
+}
+
+func (r *coChangeFailRepo) Open(context.Context) error                                 { return nil }
+func (r *coChangeFailRepo) Close() error                                               { return nil }
+func (r *coChangeFailRepo) InitSchema(context.Context) error                           { return nil }
+func (r *coChangeFailRepo) Drop(context.Context) error                                 { return nil }
+func (r *coChangeFailRepo) UpsertCommit(context.Context, graph.CommitNode) error       { return nil }
+func (r *coChangeFailRepo) UpsertAuthor(context.Context, graph.AuthorNode) error       { return nil }
+func (r *coChangeFailRepo) UpsertFile(context.Context, graph.FileNode) error           { return nil }
+func (r *coChangeFailRepo) CreateModifies(context.Context, graph.ModifiesEdge) error   { return nil }
+func (r *coChangeFailRepo) CreateAuthored(context.Context, string, string) error       { return nil }
+func (r *coChangeFailRepo) CreateRename(context.Context, string, string, string) error { return nil }
+func (r *coChangeFailRepo) GetLastIndexedCommit(context.Context) (string, error) {
+	return r.lastIndexedCommit, nil
+}
+func (r *coChangeFailRepo) SetLastIndexedCommit(_ context.Context, hash string) error {
+	r.lastIndexedCommit = hash
+	return nil
+}
+func (r *coChangeFailRepo) GetIndexState(_ context.Context, key string) (string, error) {
+	if key == "last_indexed_commit" {
+		return r.lastIndexedCommit, nil
+	}
+	return "", nil
+}
+func (r *coChangeFailRepo) SetIndexState(_ context.Context, key, value string) error {
+	if key == "last_indexed_commit" {
+		r.lastIndexedCommit = value
+	}
+	return nil
+}
+func (r *coChangeFailRepo) GetSchemaVersion(context.Context) (int, error)            { return 0, nil }
+func (r *coChangeFailRepo) SetSchemaVersion(context.Context, int) error              { return nil }
+func (r *coChangeFailRepo) ResolveRenames(context.Context, string) ([]string, error) { return nil, nil }
+func (r *coChangeFailRepo) GetActiveSession(context.Context, string, string, int) (*graph.SessionNode, error) {
+	return nil, nil
+}
+func (r *coChangeFailRepo) UpsertSession(context.Context, graph.SessionNode) error { return nil }
+func (r *coChangeFailRepo) EndSession(context.Context, string) error               { return nil }
+func (r *coChangeFailRepo) CreateAction(context.Context, graph.ActionNode) error   { return nil }
+func (r *coChangeFailRepo) CreateActionBatch(context.Context, graph.ActionNode, []graph.FileChange) error {
+	return nil
+}
+func (r *coChangeFailRepo) GetActionCountForSession(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (r *coChangeFailRepo) CreateActionModifies(context.Context, string, string, int, int) error {
+	return nil
+}
+func (r *coChangeFailRepo) CreateActionProduces(context.Context, string, string, string) error {
+	return nil
+}
+func (r *coChangeFailRepo) GetCaptureBaseline(context.Context, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (r *coChangeFailRepo) UpdateCaptureBaseline(context.Context, map[string]string) error {
+	return nil
+}
+func (r *coChangeFailRepo) CleanupCaptureBaseline(context.Context, []string, int64) error { return nil }
+func (r *coChangeFailRepo) GetStats(context.Context) (*graph.GraphStats, error) {
+	return &graph.GraphStats{}, nil
+}
+func (r *coChangeFailRepo) Impact(context.Context, graph.ImpactRequest) (*graph.ImpactResult, error) {
+	return nil, nil
+}
+func (r *coChangeFailRepo) Timeline(context.Context, graph.TimelineRequest) (*graph.TimelineResult, error) {
+	return nil, nil
+}
+func (r *coChangeFailRepo) UnlinkedActionsForFiles(context.Context, []string, int64) ([]graph.ActionNode, error) {
+	return nil, nil
+}
+func (r *coChangeFailRepo) RecomputeCoChanged(context.Context, int, int) error {
+	r.recomputeCalled = true
+	return fmt.Errorf("forced co-change failure")
+}
+func (r *coChangeFailRepo) IncrementalCoChanged(context.Context, []string, int, int) error {
+	return fmt.Errorf("forced incremental co-change failure")
+}
+
+type staticGraphGitClient struct {
+	commits []graph.CommitInfo
+}
+
+func (g *staticGraphGitClient) CommitLogDetailed(context.Context, string, int) ([]graph.CommitInfo, error) {
+	return g.commits, nil
+}
+func (g *staticGraphGitClient) CurrentHead(context.Context) (string, error) { return "", nil }
+func (g *staticGraphGitClient) MergeBaseIsAncestor(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+func (g *staticGraphGitClient) HashObject(context.Context, string) (string, error) { return "", nil }
+func (g *staticGraphGitClient) DiffNameOnly(context.Context) ([]string, error)     { return nil, nil }
+func (g *staticGraphGitClient) DiffForFiles(context.Context, []string) (string, error) {
+	return "", nil
 }

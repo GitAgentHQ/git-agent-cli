@@ -48,8 +48,17 @@ func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitOutpu
 	}
 
 	for _, a := range actions {
-		if err := l.repo.CreateActionProduces(ctx, a.ID, commitHash); err != nil {
-			return err
+		actionFiles := make(map[string]bool, len(a.FilesChanged))
+		for _, f := range a.FilesChanged {
+			actionFiles[f] = true
+		}
+		for _, f := range files {
+			if !actionFiles[f] {
+				continue
+			}
+			if err := l.repo.CreateActionProduces(ctx, a.ID, commitHash, f); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -58,6 +67,13 @@ func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitOutpu
 // parseCommitHash extracts the short commit hash from git commit output.
 // Format: "[branch hash] subject" or "[branch (root-commit) hash] subject"
 func parseCommitHash(gitOutput string) string {
+	for _, line := range strings.Split(gitOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "commit" && len(fields[1]) >= 40 {
+			return fields[1]
+		}
+	}
+
 	start := strings.IndexByte(gitOutput, '[')
 	end := strings.IndexByte(gitOutput, ']')
 	if start < 0 || end < 0 || end <= start {

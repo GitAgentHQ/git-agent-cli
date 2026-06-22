@@ -52,6 +52,7 @@ type CommitGitClient interface {
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) (string, error)
+	CommitHash(ctx context.Context) (string, error)
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
@@ -668,7 +669,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 		// Link unlinked actions to this commit (graceful — never fails the commit)
 		if s.actionLinker != nil {
-			if linkErr := s.actionLinker.LinkActionsToCommit(ctx, gitOut, group.Files); linkErr != nil {
+			linkOutput := gitOut
+			if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil && hash != "" {
+				linkOutput += "\ncommit " + hash
+			}
+			if linkErr := s.actionLinker.LinkActionsToCommit(ctx, linkOutput, group.Files); linkErr != nil {
 				s.vlog(req, "action-to-commit linking failed: %v", linkErr)
 			}
 		}

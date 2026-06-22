@@ -134,16 +134,16 @@ func (s *IndexService) FullIndex(ctx context.Context, req graph.IndexRequest) (*
 		return nil, err
 	}
 
-	if lastHash != "" {
-		if err := s.repo.SetLastIndexedCommit(ctx, lastHash); err != nil {
-			return nil, err
-		}
-	}
-
 	// Run full co-change recompute after full index.
 	minCount := coChangeIndexFloor
 	if err := s.repo.RecomputeCoChanged(ctx, minCount, maxFiles); err != nil {
 		return nil, err
+	}
+
+	if lastHash != "" {
+		if err := s.repo.SetLastIndexedCommit(ctx, lastHash); err != nil {
+			return nil, err
+		}
 	}
 
 	return &graph.IndexResult{
@@ -246,12 +246,6 @@ func (s *IndexService) IncrementalIndex(ctx context.Context, sinceHash string, r
 		return nil, err
 	}
 
-	if lastHash != "" {
-		if err := s.repo.SetLastIndexedCommit(ctx, lastHash); err != nil {
-			return nil, err
-		}
-	}
-
 	// Collect touched files for co-change computation.
 	for f := range filesSeen {
 		touchedFiles = append(touchedFiles, f)
@@ -272,6 +266,12 @@ func (s *IndexService) IncrementalIndex(ctx context.Context, sinceHash string, r
 			if err := s.repo.IncrementalCoChanged(ctx, touchedFiles, minCount, maxFiles); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	if lastHash != "" {
+		if err := s.repo.SetLastIndexedCommit(ctx, lastHash); err != nil {
+			return nil, err
 		}
 	}
 

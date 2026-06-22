@@ -67,6 +67,7 @@ git-agent-proxy/node_modules
 git-agent-proxy/.dev.vars
 git-agent-proxy/.wrangler
 .env
+.cursor/
 
 # SQLite database and temporary files
 .git-agent/graph.db

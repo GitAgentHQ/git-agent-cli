@@ -271,6 +271,78 @@ func TestEnsureIndex_ForceFlag(t *testing.T) {
 	}
 }
 
+func TestEnsureIndex_ForceReindexPreservesCaptureHistory(t *testing.T) {
+	repoDir, git := testRepo(t)
+
+	writeFile(t, repoDir, "a.go", "package main\n")
+	git("add", ".")
+	git("commit", "-m", "commit 1")
+
+	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
+	repo := openTestDB(t, repoDir)
+	gitClient := gitinfra.NewGraphClient(repoDir)
+	indexSvc := NewIndexService(repo, gitClient)
+	ctx := context.Background()
+
+	if _, err := indexSvc.FullIndex(ctx, graph.IndexRequest{}); err != nil {
+		t.Fatalf("FullIndex() error = %v", err)
+	}
+	if err := repo.UpsertSession(ctx, graph.SessionNode{
+		ID:         "session-1",
+		Source:     "claude-code",
+		InstanceID: "agent-1",
+		StartedAt:  100,
+	}); err != nil {
+		t.Fatalf("UpsertSession() error = %v", err)
+	}
+	if err := repo.CreateActionBatch(ctx, graph.ActionNode{
+		ID:           "session-1:1",
+		SessionID:    "session-1",
+		Sequence:     1,
+		Tool:         "Edit",
+		Diff:         "diff --git a/a.go b/a.go\n",
+		FilesChanged: []string{"a.go"},
+		Timestamp:    101,
+	}, []graph.FileChange{{Path: "a.go", Additions: 1}}); err != nil {
+		t.Fatalf("CreateActionBatch() error = %v", err)
+	}
+	if err := repo.UpdateCaptureBaseline(ctx, map[string]string{"a.go": "hash-v1"}); err != nil {
+		t.Fatalf("UpdateCaptureBaseline() error = %v", err)
+	}
+	head := strings.TrimSpace(git("rev-parse", "HEAD"))
+	if err := repo.CreateActionProduces(ctx, "session-1:1", head, "a.go"); err != nil {
+		t.Fatalf("CreateActionProduces() error = %v", err)
+	}
+
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	if _, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{Force: true}); err != nil {
+		t.Fatalf("EnsureIndex(Force=true) error = %v", err)
+	}
+
+	stats, err := repo.GetStats(ctx)
+	if err != nil {
+		t.Fatalf("GetStats() error = %v", err)
+	}
+	baseline, err := repo.GetCaptureBaseline(ctx, []string{"a.go"})
+	if err != nil {
+		t.Fatalf("GetCaptureBaseline() error = %v", err)
+	}
+
+	if stats.ActionCount != 1 || stats.SessionCount != 1 || baseline["a.go"] != "hash-v1" {
+		t.Fatalf("force reindex should preserve capture data, got stats=%+v baseline=%v", stats, baseline)
+	}
+	var linkCount int
+	if err := repo.Client().DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM action_produces WHERE action_id = ? AND commit_hash = ? AND file_path = ?`,
+		"session-1:1", head, "a.go",
+	).Scan(&linkCount); err != nil {
+		t.Fatalf("query action_produces: %v", err)
+	}
+	if linkCount != 1 {
+		t.Fatalf("force reindex should preserve action_produces link, got %d", linkCount)
+	}
+}
+
 // openTestDBAt creates a SQLiteClient and SQLiteRepository at a specific path,
 // initialises the schema, and registers cleanup.
 func openTestDBAt(t *testing.T, dbPath string) *graphinfra.SQLiteRepository {

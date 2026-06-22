@@ -68,16 +68,23 @@ func (s *EnsureIndexService) EnsureIndex(ctx context.Context, req graph.IndexReq
 }
 
 func (s *EnsureIndexService) fullIndex(ctx context.Context, req graph.IndexRequest) (*graph.IndexResult, error) {
-	// Drop and recreate the database so stale history from force-pushes or
-	// rebases doesn't pollute co-change results.
-	if err := s.repo.Drop(ctx); err != nil {
-		return nil, fmt.Errorf("drop graph db: %w", err)
-	}
-	if err := s.repo.Open(ctx); err != nil {
-		return nil, fmt.Errorf("reopen graph db: %w", err)
-	}
-	if err := s.repo.InitSchema(ctx); err != nil {
-		return nil, fmt.Errorf("reinit schema: %w", err)
+	// Reset commit-derived graph data without deleting user capture history.
+	if resetter, ok := s.repo.(interface {
+		ResetIndexData(context.Context) error
+	}); ok {
+		if err := resetter.ResetIndexData(ctx); err != nil {
+			return nil, fmt.Errorf("reset graph index: %w", err)
+		}
+	} else {
+		if err := s.repo.Drop(ctx); err != nil {
+			return nil, fmt.Errorf("drop graph db: %w", err)
+		}
+		if err := s.repo.Open(ctx); err != nil {
+			return nil, fmt.Errorf("reopen graph db: %w", err)
+		}
+		if err := s.repo.InitSchema(ctx); err != nil {
+			return nil, fmt.Errorf("reinit schema: %w", err)
+		}
 	}
 	return s.indexSvc.FullIndex(ctx, req)
 }
