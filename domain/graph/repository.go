@@ -71,6 +71,10 @@ type ASTRepository interface {
 	GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*ASTImpactResult, error)
 	SearchASTNodes(ctx context.Context, query string, kinds []ASTNodeKind) ([]ASTSearchResult, error)
 	ListUnresolvedRefs(ctx context.Context) ([]ASTUnresolvedRef, error)
+	// ListUnresolvedRefsMatching returns refs in any of filePaths or whose
+	// trailing symbol name (after the last '.') matches lookupNames. When both
+	// slices are empty, all unresolved refs are returned.
+	ListUnresolvedRefsMatching(ctx context.Context, filePaths []string, lookupNames []string) ([]ASTUnresolvedRef, error)
 	ListASTNodeNames(ctx context.Context) ([]string, error)
 	DeleteASTNodesForFile(ctx context.Context, filePath string) error
 	DeleteASTNodesExceptFiles(ctx context.Context, filePaths []string) error
