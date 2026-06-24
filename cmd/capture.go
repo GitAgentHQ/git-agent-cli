@@ -33,8 +33,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	tool, instanceID = mergeHookPayload(tool, instanceID, readPipedStdin())
 
 	if source == "" {
-		fmt.Fprintln(os.Stderr, "capture: --source is required")
-		return nil
+		return fmt.Errorf("capture: --source is required")
 	}
 
 	ctx := cmd.Context()
@@ -42,26 +41,25 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	gitClient := infraGit.NewClient()
 	root, err := gitClient.RepoRoot(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "capture: repo root: %v\n", err)
-		return nil
+		return fmt.Errorf("capture: repo root: %w", err)
 	}
 
 	dbPath := filepath.Join(root, ".git-agent", "graph.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "capture: create .git-agent dir: %v\n", err)
-		return nil
+		return fmt.Errorf("capture: create .git-agent dir: %w", err)
 	}
 
 	client := infraGraph.NewSQLiteClient(dbPath)
 	repo := infraGraph.NewSQLiteRepository(client)
 	if err := repo.Open(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "capture: open graph db: %v\n", err)
-		return nil
+		return fmt.Errorf("capture: open graph db: %w", err)
 	}
 	defer repo.Close()
 	if err := repo.InitSchema(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "capture: init schema: %v\n", err)
-		return nil
+		return fmt.Errorf("capture: init schema: %w", err)
+	}
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		return err
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
@@ -75,8 +73,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		EndSession: endSession,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "capture: %v\n", err)
-		return nil
+		return fmt.Errorf("capture: %w", err)
 	}
 
 	json.NewEncoder(os.Stdout).Encode(result)

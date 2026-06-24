@@ -122,7 +122,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 // runASTImpact handles --symbol / --mode structural|combined.
 func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, forceIndex, jsonFlag, textFlag bool) error {
-	_, client, err := openGraphDB(ctx, root)
+	dbPath, client, err := openGraphDB(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -144,10 +144,11 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 
 	// Combined mode: also run co-change for the seed symbol's file.
 	if mode == "combined" {
-		coChangeResult, err := runCoChangeForSymbol(ctx, root, graph.ImpactRequest{
+		repo := infraGraph.NewSQLiteRepository(client)
+		coChangeResult, err := runCoChangeWithRepo(ctx, root, graph.ImpactRequest{
 			Paths: []string{astResult.SeedNode.FilePath},
 			Top:   10,
-		})
+		}, dbPath, repo)
 		if err != nil {
 			return outputError(jsonFlag, textFlag, err)
 		}
@@ -166,7 +167,7 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 }
 
 func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth, top, minCount int, forceIndex, jsonFlag, textFlag bool) error {
-	_, client, err := openGraphDB(ctx, root)
+	dbPath, client, err := openGraphDB(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -183,12 +184,12 @@ func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symb
 	if err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
-	result, err := runCoChangeForSymbol(ctx, root, graph.ImpactRequest{
+	result, err := runCoChangeWithRepo(ctx, root, graph.ImpactRequest{
 		Paths:    []string{astResult.SeedNode.FilePath},
 		Depth:    depth,
 		Top:      top,
 		MinCount: minCount,
-	})
+	}, dbPath, infraGraph.NewSQLiteRepository(client))
 	if err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
@@ -197,15 +198,18 @@ func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symb
 
 // runCoChangeForSymbol runs a co-change query for a symbol's resolved file path.
 func runCoChangeForSymbol(ctx context.Context, root string, req graph.ImpactRequest) (*graph.ImpactResult, error) {
-	if len(req.Paths) == 0 || req.Paths[0] == "" {
-		return nil, fmt.Errorf("symbol file path is empty")
-	}
 	dbPath, client, err := openGraphDB(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	repo := infraGraph.NewSQLiteRepository(client)
 	defer client.Close()
+	return runCoChangeWithRepo(ctx, root, req, dbPath, infraGraph.NewSQLiteRepository(client))
+}
+
+func runCoChangeWithRepo(ctx context.Context, root string, req graph.ImpactRequest, dbPath string, repo graph.GraphRepository) (*graph.ImpactResult, error) {
+	if len(req.Paths) == 0 || req.Paths[0] == "" {
+		return nil, fmt.Errorf("symbol file path is empty")
+	}
 
 	graphGit := infraGit.NewGraphClient(root)
 	indexSvc := application.NewIndexService(repo, graphGit)
@@ -234,6 +238,10 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 	if err := client.InitSchema(ctx); err != nil {
 		client.Close()
 		return "", nil, fmt.Errorf("init schema: %w", err)
+	}
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		client.Close()
+		return "", nil, err
 	}
 	return dbPath, client, nil
 }
@@ -289,7 +297,6 @@ func outputError(jsonFlag, textFlag bool, err error) error {
 	if useJSON(jsonFlag, textFlag) {
 		enc := json.NewEncoder(os.Stdout)
 		_ = enc.Encode(map[string]string{"error": err.Error()})
-		return nil
 	}
 	return err
 }
@@ -494,7 +501,7 @@ func init() {
 	impactCmd.Flags().Bool("reindex", false, "force full re-index before query")
 	impactCmd.Flags().Bool("json", false, "force JSON output")
 	impactCmd.Flags().Bool("text", false, "force text output")
-	impactCmd.Flags().String("symbol", "", "query structural impact by symbol name")
+	impactCmd.Flags().String("symbol", "", "query structural impact by Go symbol name (tree-sitter, Go only)")
 	impactCmd.Flags().String("mode", "", "impact mode: structural, combined, or cochange (default: cochange, or structural if --symbol given)")
 	impactCmd.MarkFlagsMutuallyExclusive("json", "text")
 

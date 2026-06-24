@@ -52,6 +52,9 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 	if err := repo.InitSchema(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		return err
+	}
 
 	var sinceUnix int64
 	if sinceStr != "" {

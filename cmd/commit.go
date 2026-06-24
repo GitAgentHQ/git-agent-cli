@@ -158,8 +158,10 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		graphRepo := infraGraph.NewSQLiteRepository(graphClient)
 		if err := graphRepo.Open(cmd.Context()); err == nil {
 			defer graphRepo.Close()
-			svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
-			svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
+			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
+				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
+				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
+			}
 		}
 	}
 
