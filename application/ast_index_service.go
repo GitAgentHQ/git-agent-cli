@@ -232,7 +232,7 @@ func (r *ASTIndexer) upsertFile(ctx context.Context, relPath string, ext *graph.
 	for _, n := range ext.Nodes {
 		n.FilePath = relPath
 		if n.UpdatedAt == 0 {
-			n.UpdatedAt = time.Now().Unix()
+			n.UpdatedAt = time.Now().UnixMilli()
 		}
 		if err := r.astRepo.UpsertASTNode(ctx, n); err != nil {
 			return err

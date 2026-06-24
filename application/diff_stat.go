@@ -43,9 +43,16 @@ func parseDiffStat(diff string) map[string]diffStat {
 }
 
 // diffGitPath extracts the post-image path from a "diff --git a/<p> b/<p>" line.
+// It anchors on the " a/" pre-image marker first, then locates " b/" after it,
+// so a pre-image path that itself contains " b/" doesn't trigger a mis-parse.
 func diffGitPath(line string) string {
-	if i := strings.Index(line, " b/"); i >= 0 {
-		return line[i+3:]
+	a := strings.Index(line, " a/")
+	if a < 0 {
+		return ""
+	}
+	rest := line[a+3:]
+	if i := strings.Index(rest, " b/"); i >= 0 {
+		return rest[i+3:]
 	}
 	return ""
 }

@@ -295,7 +295,7 @@ func TestEnsureIndex_ForceReindexPreservesCaptureHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertSession() error = %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, graph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, graph.ActionNode{
 		ID:           "session-1:1",
 		SessionID:    "session-1",
 		Sequence:     1,

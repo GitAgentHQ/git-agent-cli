@@ -110,25 +110,18 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 		}
 	}
 
-	// Compute next sequence.
-	count, err := s.repo.GetActionCountForSession(ctx, session.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get action count: %w", err)
-	}
-	sequence := count + 1
-	actionID := fmt.Sprintf("%s:%d", session.ID, sequence)
-
+	// The action's sequence and id are derived atomically inside CreateActionBatch
+	// to avoid a TOCTOU race between concurrent captures on the same session.
 	action := graph.ActionNode{
-		ID:           actionID,
 		SessionID:    session.ID,
-		Sequence:     sequence,
 		Tool:         req.Tool,
 		Diff:         deltaDiff,
 		FilesChanged: deltaFiles,
 		Timestamp:    time.Now().Unix(),
 		Message:      req.Message,
 	}
-	if err := s.repo.CreateActionBatch(ctx, action, modified); err != nil {
+	persisted, err := s.repo.CreateActionBatch(ctx, action, modified)
+	if err != nil {
 		return nil, fmt.Errorf("create action: %w", err)
 	}
 
@@ -138,8 +131,8 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	}
 
 	return &graph.CaptureResult{
-		ActionID:     actionID,
-		SessionID:    session.ID,
+		ActionID:     persisted.ID,
+		SessionID:    persisted.SessionID,
 		FilesChanged: deltaFiles,
 		CaptureMs:    time.Since(start).Milliseconds(),
 	}, nil

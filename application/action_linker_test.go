@@ -20,7 +20,7 @@ func TestGraphActionLinker_LinksActionToEachSplitCommit(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertSession() error = %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, graph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, graph.ActionNode{
 		ID:           "session-1:1",
 		SessionID:    "session-1",
 		Sequence:     1,
@@ -85,7 +85,7 @@ func TestGraphActionLinker_DoesNotRelinkAfterReindexPreservesProducesRows(t *tes
 	if err := repo.UpsertSession(ctx, graph.SessionNode{ID: "session-1", Source: "claude-code", StartedAt: 100}); err != nil {
 		t.Fatalf("UpsertSession() error = %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, graph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, graph.ActionNode{
 		ID:           "session-1:1",
 		SessionID:    "session-1",
 		Sequence:     1,
