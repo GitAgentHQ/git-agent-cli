@@ -235,13 +235,13 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 	if err := client.Open(ctx); err != nil {
 		return "", nil, fmt.Errorf("open graph db: %w", err)
 	}
-	if err := client.InitSchema(ctx); err != nil {
-		client.Close()
-		return "", nil, fmt.Errorf("init schema: %w", err)
-	}
 	if err := client.ValidateSchemaVersion(ctx); err != nil {
 		client.Close()
 		return "", nil, err
+	}
+	if err := client.InitSchema(ctx); err != nil {
+		client.Close()
+		return "", nil, fmt.Errorf("init schema: %w", err)
 	}
 	return dbPath, client, nil
 }

@@ -49,11 +49,11 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("open graph db: %w", err)
 	}
 	defer repo.Close()
-	if err := repo.InitSchema(ctx); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
 	if err := client.ValidateSchemaVersion(ctx); err != nil {
 		return err
+	}
+	if err := repo.InitSchema(ctx); err != nil {
+		return fmt.Errorf("init schema: %w", err)
 	}
 
 	var sinceUnix int64

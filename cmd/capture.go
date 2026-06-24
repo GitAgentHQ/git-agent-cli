@@ -55,11 +55,11 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("capture: open graph db: %w", err)
 	}
 	defer repo.Close()
-	if err := repo.InitSchema(ctx); err != nil {
-		return fmt.Errorf("capture: init schema: %w", err)
-	}
 	if err := client.ValidateSchemaVersion(ctx); err != nil {
 		return err
+	}
+	if err := repo.InitSchema(ctx); err != nil {
+		return fmt.Errorf("capture: init schema: %w", err)
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
