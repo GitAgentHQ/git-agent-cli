@@ -120,14 +120,11 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 		Timestamp:    time.Now().Unix(),
 		Message:      req.Message,
 	}
-	persisted, err := s.repo.CreateActionBatch(ctx, action, modified)
+	// Persist the action and baseline for ALL changed files (not just delta) in
+	// one transaction so a baseline failure cannot leave a dangling action row.
+	persisted, err := s.repo.CreateActionBatch(ctx, action, modified, currentHashes)
 	if err != nil {
 		return nil, fmt.Errorf("create action: %w", err)
-	}
-
-	// Update baseline for ALL changed files (not just delta).
-	if err := s.repo.UpdateCaptureBaseline(ctx, currentHashes); err != nil {
-		return nil, fmt.Errorf("update capture baseline: %w", err)
 	}
 
 	return &graph.CaptureResult{

@@ -303,7 +303,7 @@ func TestEnsureIndex_ForceReindexPreservesCaptureHistory(t *testing.T) {
 		Diff:         "diff --git a/a.go b/a.go\n",
 		FilesChanged: []string{"a.go"},
 		Timestamp:    101,
-	}, []graph.FileChange{{Path: "a.go", Additions: 1}}); err != nil {
+	}, []graph.FileChange{{Path: "a.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("CreateActionBatch() error = %v", err)
 	}
 	if err := repo.UpdateCaptureBaseline(ctx, map[string]string{"a.go": "hash-v1"}); err != nil {

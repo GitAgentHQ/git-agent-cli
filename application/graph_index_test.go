@@ -449,7 +449,7 @@ func (r *coChangeFailRepo) GetActiveSession(context.Context, string, string, int
 func (r *coChangeFailRepo) UpsertSession(context.Context, graph.SessionNode) error { return nil }
 func (r *coChangeFailRepo) EndSession(context.Context, string) error               { return nil }
 func (r *coChangeFailRepo) CreateAction(context.Context, graph.ActionNode) error   { return nil }
-func (r *coChangeFailRepo) CreateActionBatch(_ context.Context, a graph.ActionNode, _ []graph.FileChange) (graph.ActionNode, error) {
+func (r *coChangeFailRepo) CreateActionBatch(_ context.Context, a graph.ActionNode, _ []graph.FileChange, _ map[string]string) (graph.ActionNode, error) {
 	return a, nil
 }
 func (r *coChangeFailRepo) GetActionCountForSession(context.Context, string) (int, error) {

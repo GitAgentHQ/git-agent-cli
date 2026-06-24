@@ -30,7 +30,7 @@ func TestGraphActionLinker_LinksActionToEachSplitCommit(t *testing.T) {
 	}, []graph.FileChange{
 		{Path: "a.go", Additions: 1},
 		{Path: "b.go", Additions: 1},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("CreateActionBatch() error = %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestGraphActionLinker_DoesNotRelinkAfterReindexPreservesProducesRows(t *tes
 		Tool:         "Edit",
 		FilesChanged: []string{"a.go"},
 		Timestamp:    timeNowForTest(),
-	}, []graph.FileChange{{Path: "a.go", Additions: 1}}); err != nil {
+	}, []graph.FileChange{{Path: "a.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("CreateActionBatch() error = %v", err)
 	}
 
