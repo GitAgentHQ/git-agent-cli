@@ -12,6 +12,7 @@ import (
 	"github.com/gitagenthq/git-agent/domain/diff"
 	"github.com/gitagenthq/git-agent/domain/hook"
 	"github.com/gitagenthq/git-agent/domain/project"
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 var ErrHookBlocked = errors.New("hook blocked commit")
@@ -51,6 +52,7 @@ type CommitGitClient interface {
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) (string, error)
+	CommitHash(ctx context.Context) (string, error)
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
 	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
@@ -81,6 +83,8 @@ type CommitService struct {
 	filter           diff.DiffFilter         // nil = no filtering
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
+	coChange         CoChangeProvider        // nil = skip co-change (graceful)
+	actionLinker     ActionLinker            // nil = skip action-to-commit linking (graceful)
 }
 
 func NewCommitService(
@@ -92,7 +96,12 @@ func NewCommitService(
 	filter diff.DiffFilter,
 	truncator diff.DiffTruncator,
 	heuristicPlanner commit.HeuristicPlanner,
+	coChange ...CoChangeProvider,
 ) *CommitService {
+	var cp CoChangeProvider
+	if len(coChange) > 0 {
+		cp = coChange[0]
+	}
 	return &CommitService{
 		gen:              gen,
 		planner:          planner,
@@ -102,6 +111,7 @@ func NewCommitService(
 		filter:           filter,
 		truncator:        truncator,
 		heuristicPlanner: heuristicPlanner,
+		coChange:         cp,
 	}
 }
 
@@ -159,6 +169,16 @@ func plannerFallbackReason(err error) string {
 	default:
 		return "error"
 	}
+}
+
+// SetActionLinker sets an optional action-to-commit linker.
+func (s *CommitService) SetActionLinker(linker ActionLinker) {
+	s.actionLinker = linker
+}
+
+// SetCoChangeProvider sets an optional co-change hint provider.
+func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
+	s.coChange = provider
 }
 
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
@@ -327,16 +347,29 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		allFiles = append(allFiles, f)
 	}
 
+	// Inject co-change hints if available.
+	var coChangeHints []commit.CoChangeHint
+	if s.coChange != nil {
+		hints, cerr := s.coChange.GetHintsForFiles(ctx, allFiles)
+		if cerr != nil {
+			s.vlog(req, "co-change lookup failed: %v", cerr)
+		} else if len(hints) > 0 {
+			coChangeHints = hints
+			s.vlog(req, "found %d co-change hints for planning", len(hints))
+		}
+	}
+
 	if len(allFiles) == 1 {
 		s.vlog(req, "single file — skipping planning phase")
 		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
 	} else {
 		s.out(req, "Planning commits...")
 		plan, err = s.runPlan(ctx, req, commit.PlanRequest{
-			StagedDiff:   staged,
-			UnstagedDiff: unstaged,
-			Intent:       req.Intent,
-			Config:       req.Config,
+			StagedDiff:    staged,
+			UnstagedDiff:  unstaged,
+			Intent:        req.Intent,
+			Config:        req.Config,
+			CoChangeHints: coChangeHints,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("plan commits: %w", err)
@@ -370,10 +403,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				req.Config.Scopes = newScopes
 				s.out(req, "Scopes updated: %v, re-planning...", req.Config.ScopeNames())
 				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
-					StagedDiff:   staged,
-					UnstagedDiff: unstaged,
-					Intent:       req.Intent,
-					Config:       req.Config,
+					StagedDiff:    staged,
+					UnstagedDiff:  unstaged,
+					Intent:        req.Intent,
+					Config:        req.Config,
+					CoChangeHints: coChangeHints,
 				})
 				if err != nil {
 					return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
@@ -578,10 +612,16 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				allFiles = append(allFiles, r.Files...)
 			}
 
-			newPlan, err := s.planner.Plan(ctx, commit.PlanRequest{
-				StagedDiff: &diff.StagedDiff{Files: allFiles},
-				Intent:     req.Intent,
-				Config:     req.Config,
+			// Route through runPlan so the heuristic fallback applies uniformly
+			// to all three plan/re-plan call sites (initial, scope-refresh, hook).
+			// CoChangeHints is preserved here for the same reason as the other
+			// re-plan: a rejected group needs structural coupling context to be
+			// re-bucketed correctly.
+			newPlan, err := s.runPlan(ctx, req, commit.PlanRequest{
+				StagedDiff:    &diff.StagedDiff{Files: allFiles},
+				Intent:        req.Intent,
+				Config:        req.Config,
+				CoChangeHints: coChangeHints,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)
@@ -594,6 +634,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			}
 			if n := filterPlanFiles(newPlan, rePlanAllowed); n > 0 {
 				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
+			}
+			if len(newPlan.Groups) > maxCommitGroups {
+				s.vlog(req, "hook re-plan has %d groups — capping to %d", len(newPlan.Groups), maxCommitGroups)
+				newPlan.Groups = newPlan.Groups[:maxCommitGroups]
 			}
 			appendPassthroughFiles(newPlan, rePlanAllowed)
 			remaining = newPlan.Groups
@@ -614,10 +658,23 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		}
 		gitOut, err := s.git.Commit(ctx, assembled)
 		if err != nil {
+			if errors.Is(err, pkgerrors.ErrNothingToCommit) {
+				s.vlog(req, "skipping group (nothing to commit at commit time): %v", group.Files)
+				continue
+			}
 			return nil, err
 		}
 		result.GitOutput = gitOut
 		committed = append(committed, result)
+
+		// Link unlinked actions to this commit (graceful — never fails the commit)
+		if s.actionLinker != nil {
+			if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil && hash != "" {
+				if linkErr := s.actionLinker.LinkActionsToCommit(ctx, hash, group.Files); linkErr != nil {
+					s.vlog(req, "action-to-commit linking failed: %v", linkErr)
+				}
+			}
+		}
 		for _, f := range group.Files {
 			committedFiles[f] = true
 		}

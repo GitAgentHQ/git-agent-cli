@@ -37,6 +37,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	scopeChanged := cmd.Flags().Changed("scope")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	hookChanged := cmd.Flags().Changed("hook")
+	agentHookChanged := cmd.Flags().Changed("agent-hook")
 	localChanged := cmd.Flags().Changed("local")
 	userChanged := cmd.Flags().Changed("user")
 
@@ -44,6 +45,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
+	doAgentHook, _ := cmd.Flags().GetBool("agent-hook")
 	hookValues, _ := cmd.Flags().GetStringArray("hook")
 
 	if userChanged && scopeChanged {
@@ -54,9 +56,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Default: no flags → full wizard.
-	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged
+	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged && !agentHookChanged
 	if fullWizard && localChanged {
-		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, or --hook")
+		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, --hook, or --agent-hook")
 	}
 	if fullWizard && userChanged {
 		return fmt.Errorf("--user requires --hook")
@@ -64,6 +66,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if fullWizard {
 		doScope = true
 		doGitignore = true
+		doAgentHook = true
 	}
 
 	// Ensure we're in a git repo before doing anything else.
@@ -109,6 +112,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := writeHooks(configPath, hookValues); err != nil {
 			return err
 		}
+	}
+
+	// Install the Claude Code PostToolUse hook so agent edits are captured into
+	// the graph automatically. Independent of config.yml — only needs the repo.
+	if doAgentHook {
+		gitClient := infraGit.NewClient()
+		root, err := gitClient.RepoRoot(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("repo root: %w", err)
+		}
+		path, err := installAgentHook(root)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Installed Claude Code capture hook: %s\n", path)
 	}
 
 	return nil
@@ -215,6 +233,7 @@ func ResetInitFlags() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
+	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")
@@ -226,6 +245,7 @@ func init() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
+	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")

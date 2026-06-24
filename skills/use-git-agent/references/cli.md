@@ -272,6 +272,90 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ---
 
+## git-agent impact
+
+```
+git-agent impact [path...] [--symbol <name>] [--mode <mode>]
+```
+
+Find files or symbols related to the given seeds. Three modes are available:
+
+| Mode | Trigger | What it returns |
+|---|---|---|
+| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
+| `structural` | `--symbol <name>` (auto-selected when `--symbol` is given) | AST symbols that call, are called by, or reference the seed symbol |
+| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
+
+Seeds for co-change are one or more files, a directory (expands to its tracked
+files), or — with **no arguments** — the current working-tree changes ("given
+what I've edited, what else usually moves?"). Co-change neighbours are
+aggregated across all seeds, so a file coupled to several seeds ranks above one
+coupled to a single seed. The first run auto-indexes git history; queries are
+offline (no LLM / API key). Tooling directories (`.git-agent/`, `.claude/`) are
+never used as seeds.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--symbol <name>` | | Query structural impact by symbol name (auto-selects `structural` mode) |
+| `--mode <mode>` | `cochange` (or `structural` if `--symbol` given) | Impact mode: `structural`, `combined`, or `cochange` |
+| `--depth N` | 1 | Transitive co-change depth; depth > 1 entries are marked `[indirect, depth N]` |
+| `--top N` | 20 | Max results |
+| `--min-count N` | 3 | Minimum co-change count to include (index floor is 2; values below 2 cannot surface more) |
+| `--reindex` | false | Force a full re-index before querying |
+| `--json` / `--text` | auto | Force output format (default: JSON when piped, text on a TTY) |
+
+### Output — cochange mode
+
+Text shows `path  strength%  (N co-changes)`, with `[M/T seeds: ...]` when more
+than one seed. JSON fields per entry: `path`, `coupling_count`,
+`coupling_strength`, `score` (sum of strengths over matched seeds — the rank
+key), `seed_matches`, `related_to` (which seeds), `depth`. Top-level: `targets`,
+`co_changed`, `total_found`, `query_ms`.
+
+### Output — structural / combined mode
+
+JSON shape is different. Top-level: `seed_node` (the queried symbol with `id`,
+`kind`, `name`, `qualified_name`, `file_path`, `language`, `start_line`,
+`end_line`, `start_column`, `end_column`, `is_exported`, `return_type`,
+`updated_at`), `impacted` (array of structurally connected symbols with the
+same shape), `total_found`, `query_ms`. The `seed_node` is always present even
+when `impacted` is empty (symbol not found returns `{"error": "symbol ... not found"}`).
+
+```bash
+git-agent impact application/commit_service.go cmd/commit.go --json
+git-agent impact internal/auth                                  # a whole module
+git-agent impact                                                # seeds = my current edits
+git-agent impact --symbol CommitService --json                  # structural
+git-agent impact --symbol CommitService --mode combined --json  # both signals
+```
+
+---
+
+## git-agent timeline
+
+```
+git-agent timeline [--file <path>] [--source <src>] [--since <2h|7d|RFC3339>] [--top N] [--json|--text]
+```
+
+Show recent agent/human action history grouped into sessions, with the tool and
+files for each action. Populated by `git-agent capture` (see below). Offline.
+
+## git-agent capture (hidden)
+
+```
+git-agent capture --source <src> [--tool <T>] [--instance-id <id>] [--message <m>] [--end-session]
+```
+
+Record one agent action (the working-tree delta since the last capture) into the
+graph. Designed to run as a Claude Code `PostToolUse` hook — `init --agent-hook`
+installs it — and reads `tool_name`/`session_id` from the hook's stdin payload.
+Fast (<200ms), no LLM, never blocks the agent on failure. Tooling directories
+are excluded from recorded actions.
+
+---
+
 ## Defaults and legacy notes
 
 ### Hardcoded defaults

@@ -1,5 +1,12 @@
 package errors
 
+import "errors"
+
+// ErrNothingToCommit signals that `git commit` found no staged changes. Git
+// reports this on stdout (not stderr) with exit code 1; callers match it to skip
+// an empty commit group instead of aborting the whole run.
+var ErrNothingToCommit = errors.New("nothing to commit")
+
 // ExitCodeError carries an exit code alongside the error message.
 type ExitCodeError struct {
 	Code    int
@@ -19,6 +26,7 @@ var (
 	ErrNoStagedChanges = NewExitCodeError(1, "error: no staged changes to commit")
 	ErrNotGitRepo      = NewExitCodeError(1, "error: not a git repository")
 	ErrGitNotFound     = NewExitCodeError(1, "error: git not found in PATH")
+	ErrGraphNotIndexed = NewExitCodeError(3, "error: graph not indexed")
 )
 
 // APIError represents an error returned by the LLM API (rate limit, auth failure, etc.).

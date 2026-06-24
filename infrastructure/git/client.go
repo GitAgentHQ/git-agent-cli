@@ -14,6 +14,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/domain/commit"
 	"github.com/gitagenthq/git-agent/domain/diff"
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 type Client struct{}
@@ -22,11 +23,18 @@ func NewClient() *Client {
 	return &Client{}
 }
 
+// gitCmd builds a git command with core.quotePath disabled so non-ASCII file
+// paths (e.g. CJK names) are emitted verbatim instead of octal-escaped. Escaped
+// paths do not round-trip back into pathspecs, which breaks staging.
+func gitCmd(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "git", append([]string{"-c", "core.quotePath=false"}, args...)...)
+}
+
 // StagedDiffNumStat returns the output of `git diff --staged --numstat`. The summary
 // is small (one line per file) regardless of diff size, so
 // it is safe to inline into LLM prompts when the raw diff is too large.
 func (c *Client) StagedDiffNumStat(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "diff", "--staged", "--numstat", "--ignore-submodules=all").Output()
+	out, err := gitCmd(ctx, "diff", "--staged", "--numstat", "--ignore-submodules=all").Output()
 	if err != nil {
 		return "", err
 	}
@@ -41,11 +49,11 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		contentOut, contentErr = exec.CommandContext(ctx, "git", "diff", "--staged", "--ignore-submodules=all").Output()
+		contentOut, contentErr = gitCmd(ctx, "diff", "--staged", "--ignore-submodules=all").Output()
 	}()
 	go func() {
 		defer wg.Done()
-		namesOut, namesErr = exec.CommandContext(ctx, "git", "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
+		namesOut, namesErr = gitCmd(ctx, "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
 	}()
 	wg.Wait()
 
@@ -65,27 +73,46 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) Commit(ctx context.Context, message string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	return runCommit(ctx, "commit", "-m", message)
+}
+
+// runCommit executes a `git commit` variant and normalizes failures. Git reports
+// an empty index ("nothing to commit") on stdout — not stderr — with exit 1, so
+// combined output is captured: that case maps to ErrNothingToCommit (callers skip
+// the group), and any other failure surfaces the real git output instead of a
+// bare "exit status 1".
+func runCommit(ctx context.Context, args ...string) (string, error) {
+	cmd := gitCmd(ctx, args...)
 	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
+		if bytes.Contains(out, []byte("nothing to commit")) ||
+			bytes.Contains(out, []byte("nothing added to commit")) ||
+			bytes.Contains(out, []byte("no changes added to commit")) {
+			return "", pkgerrors.ErrNothingToCommit
 		}
-		return "", err
+		return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 	}
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+func (c *Client) CommitHash(ctx context.Context) (string, error) {
+	out, err := gitCmd(ctx, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func (c *Client) AddAll(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "git", "add", "-A").CombinedOutput(); err != nil {
+	if out, err := gitCmd(ctx, "add", "-A").CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 	}
 	return nil
 }
 
 func (c *Client) CommitSubjects(ctx context.Context, max int) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "git", "log", "--format=%s", "--max-count", strconv.Itoa(max)).Output()
+	out, err := gitCmd(ctx, "log", "--format=%s", "--max-count", strconv.Itoa(max)).Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
 			return []string{}, nil
@@ -108,7 +135,7 @@ func (c *Client) CommitLog(ctx context.Context, max int) ([]string, error) {
 	// --format="<subject>" followed by --name-only emits:
 	//   <subject>\n\nfile1\nfile2\n\n<subject>\n\n...
 	// We use a sentinel to delimit commits reliably.
-	out, err := exec.CommandContext(ctx, "git", "log",
+	out, err := gitCmd(ctx, "log",
 		"--format=COMMIT_START%s", "--name-only", "--max-count", strconv.Itoa(max),
 	).Output()
 	if err != nil {
@@ -163,7 +190,7 @@ func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 
 func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
 	// Try git ls-files first (works for repos with commits).
-	out, err := exec.CommandContext(ctx, "git", "ls-files").Output()
+	out, err := gitCmd(ctx, "ls-files").Output()
 	if err == nil {
 		files := splitNonEmpty(string(out))
 		if len(files) > 0 {
@@ -229,11 +256,11 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		staged.out, staged.err = exec.CommandContext(ctx, "git", "diff", "--staged", "--name-only").Output()
+		staged.out, staged.err = gitCmd(ctx, "diff", "--staged", "--name-only").Output()
 	}()
 	go func() {
 		defer wg.Done()
-		unstaged.out, unstaged.err = exec.CommandContext(ctx, "git", "diff", "--name-only").Output()
+		unstaged.out, unstaged.err = gitCmd(ctx, "diff", "--name-only").Output()
 	}()
 	go func() {
 		defer wg.Done()
@@ -241,7 +268,7 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 		// ls-files reports paths relative to the cwd while git diff reports
 		// them relative to the root, so a commit run from a subdirectory would
 		// later fail to stage untracked files (StageFiles adds from the root).
-		untracked.out, untracked.err = exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "--full-name").Output()
+		untracked.out, untracked.err = gitCmd(ctx, "ls-files", "--others", "--exclude-standard", "--full-name").Output()
 	}()
 	wg.Wait()
 
@@ -257,6 +284,7 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	var files []string
 	for _, s := range []src{staged, unstaged, untracked} {
 		for _, f := range splitNonEmpty(string(s.out)) {
+			f = gitUnquote(f)
 			if !seen[f] {
 				seen[f] = true
 				files = append(files, f)
@@ -267,11 +295,11 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) IsGitRepo(ctx context.Context) bool {
-	return exec.CommandContext(ctx, "git", "rev-parse", "--git-dir").Run() == nil
+	return gitCmd(ctx, "rev-parse", "--git-dir").Run() == nil
 }
 
 func (c *Client) RepoRoot(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	out, err := gitCmd(ctx, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return "", err
 	}
@@ -279,7 +307,7 @@ func (c *Client) RepoRoot(ctx context.Context) (string, error) {
 }
 
 func (c *Client) GitDir(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--absolute-git-dir").Output()
+	out, err := gitCmd(ctx, "rev-parse", "--absolute-git-dir").Output()
 	if err != nil {
 		return "", err
 	}
@@ -294,11 +322,11 @@ func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		contentOut, contentErr = exec.CommandContext(ctx, "git", "diff", "--ignore-submodules=all").Output()
+		contentOut, contentErr = gitCmd(ctx, "diff", "--ignore-submodules=all").Output()
 	}()
 	go func() {
 		defer wg.Done()
-		namesOut, namesErr = exec.CommandContext(ctx, "git", "diff", "--name-status", "--ignore-submodules=all").Output()
+		namesOut, namesErr = gitCmd(ctx, "diff", "--name-status", "--ignore-submodules=all").Output()
 	}()
 	wg.Wait()
 
@@ -358,12 +386,12 @@ func (c *Client) StageFiles(ctx context.Context, files []string) error {
 }
 
 func (c *Client) UnstageAll(ctx context.Context) error {
-	if _, err := exec.CommandContext(ctx, "git", "reset", "HEAD").CombinedOutput(); err == nil {
+	if _, err := gitCmd(ctx, "reset", "HEAD").CombinedOutput(); err == nil {
 		return nil
 	}
 	// In a repo with no commits yet HEAD cannot be resolved; remove everything
 	// from the index instead.
-	if _, err := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
+	if _, err := gitCmd(ctx, "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
 		// Both failed — index is already empty, which is the goal.
 		return nil
 	}
@@ -371,12 +399,12 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 }
 
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	contentOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--ignore-submodules=all").Output()
+	contentOut, err := gitCmd(ctx, "diff", "HEAD~1..HEAD", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	namesOut, err := exec.CommandContext(ctx, "git", "diff", "HEAD~1..HEAD", "--name-status", "--ignore-submodules=all").Output()
+	namesOut, err := gitCmd(ctx, "diff", "HEAD~1..HEAD", "--name-status", "--ignore-submodules=all").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -390,16 +418,7 @@ func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) AmendCommit(ctx context.Context, message string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", message)
-	cmd.Env = append(os.Environ(), "GIT_AGENT=1")
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
-		}
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\n"), nil
+	return runCommit(ctx, "commit", "--amend", "-m", message)
 }
 
 // FormatTrailers pipes message into `git interpret-trailers` and returns the
@@ -409,7 +428,7 @@ func (c *Client) FormatTrailers(ctx context.Context, message string, trailers []
 	for _, t := range trailers {
 		args = append(args, "--trailer", t.Key+": "+t.Value)
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitCmd(ctx, args...)
 	cmd.Stdin = bytes.NewBufferString(message)
 	out, err := cmd.Output()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ import (
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
@@ -147,6 +149,21 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
+
+	// Wire graph-backed co-change hints and action linking only when an index
+	// already exists; commit never forces indexing.
+	graphDBPath := filepath.Join(root, ".git-agent", "graph.db")
+	if _, err := os.Stat(graphDBPath); err == nil {
+		graphClient := infraGraph.NewSQLiteClient(graphDBPath)
+		graphRepo := infraGraph.NewSQLiteRepository(graphClient)
+		if err := graphRepo.Open(cmd.Context()); err == nil {
+			defer graphRepo.Close()
+			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
+				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
+				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
+			}
+		}
+	}
 
 	var logWriter io.Writer
 	if verbose {

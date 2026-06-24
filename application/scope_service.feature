@@ -13,6 +13,13 @@ Feature: Scope Service
     When ScopeService.Generate is called
     Then an error is returned
 
+  Scenario: Generate succeeds with empty scopes for a fresh repository
+    Given the repository has no commit history or tracked files
+    And the LLM derives no scopes
+    When ScopeService.Generate is called
+    Then no error is returned
+    And an empty scope list is returned
+
   Scenario: MergeAndSave creates a new project.yml
     Given no existing project.yml
     When ScopeService.MergeAndSave is called with scopes ["cmd", "app"]
