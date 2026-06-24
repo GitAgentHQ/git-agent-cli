@@ -41,13 +41,15 @@ type GraphRepository interface {
 	EndSession(ctx context.Context, sessionID string) error
 	CreateAction(ctx context.Context, a ActionNode) error
 	// CreateActionBatch atomically derives the action's sequence and id, then
-	// creates the action and its modifies edges in a single transaction. The
-	// caller leaves a.ID and a.Sequence unset; both are assigned inside the
+	// creates the action and its modifies edges in a single transaction. When
+	// baselineUpdates is non-empty, capture baseline rows are updated in the
+	// same transaction so a failed baseline write cannot leave a dangling action.
+	// The caller leaves a.ID and a.Sequence unset; both are assigned inside the
 	// transaction (from the session's current max sequence) so concurrent
 	// captures on the same session can't collide on the action id. The persisted
 	// action, with ID and Sequence populated, is returned. Each FileChange
 	// carries the per-file addition and deletion counts for the action.
-	CreateActionBatch(ctx context.Context, a ActionNode, modifiedFiles []FileChange) (ActionNode, error)
+	CreateActionBatch(ctx context.Context, a ActionNode, modifiedFiles []FileChange, baselineUpdates map[string]string) (ActionNode, error)
 	GetActionCountForSession(ctx context.Context, sessionID string) (int, error)
 	CreateActionModifies(ctx context.Context, actionID, filePath string, additions, deletions int) error
 	CreateActionProduces(ctx context.Context, actionID, commitHash, filePath string) error
