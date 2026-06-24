@@ -707,7 +707,7 @@ func (r *SQLiteRepository) CreateAction(ctx context.Context, a graph.ActionNode)
 	return err
 }
 
-func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange) (graph.ActionNode, error) {
+func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange, baselineUpdates map[string]string) (graph.ActionNode, error) {
 	filesJSON, err := json.Marshal(a.FilesChanged)
 	if err != nil {
 		return graph.ActionNode{}, fmt.Errorf("marshal files_changed: %w", err)
@@ -744,6 +744,22 @@ func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.Action
 		); err != nil {
 			return graph.ActionNode{}, fmt.Errorf("insert action_modifies: %w", err)
 		}
+	}
+
+	if len(baselineUpdates) > 0 {
+		stmt, err := tx.PrepareContext(ctx,
+			`INSERT OR REPLACE INTO capture_baseline (file_path, content_hash, captured_at) VALUES (?, ?, ?)`)
+		if err != nil {
+			return graph.ActionNode{}, fmt.Errorf("prepare capture baseline: %w", err)
+		}
+		now := time.Now().Unix()
+		for path, hash := range baselineUpdates {
+			if _, err := stmt.ExecContext(ctx, path, hash, now); err != nil {
+				stmt.Close()
+				return graph.ActionNode{}, fmt.Errorf("update capture baseline: %w", err)
+			}
+		}
+		stmt.Close()
 	}
 
 	if err := tx.Commit(); err != nil {

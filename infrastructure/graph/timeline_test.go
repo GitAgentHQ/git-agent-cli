@@ -35,7 +35,7 @@ func TestTimelineSinceFiltersActionsNotSessionStart(t *testing.T) {
 		Tool:         "Edit",
 		FilesChanged: []string{"old.go"},
 		Timestamp:    150,
-	}, []domaingraph.FileChange{{Path: "old.go", Additions: 1}}); err != nil {
+	}, []domaingraph.FileChange{{Path: "old.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("create old action: %v", err)
 	}
 	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
@@ -45,7 +45,7 @@ func TestTimelineSinceFiltersActionsNotSessionStart(t *testing.T) {
 		Tool:         "Edit",
 		FilesChanged: []string{"new.go"},
 		Timestamp:    250,
-	}, []domaingraph.FileChange{{Path: "new.go", Additions: 1}}); err != nil {
+	}, []domaingraph.FileChange{{Path: "new.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("create new action: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestTimelineOrdersSessionsByLatestMatchingAction(t *testing.T) {
 		Tool:         "Edit",
 		FilesChanged: []string{"newest.go"},
 		Timestamp:    300,
-	}, []domaingraph.FileChange{{Path: "newest.go", Additions: 1}}); err != nil {
+	}, []domaingraph.FileChange{{Path: "newest.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("create newest action: %v", err)
 	}
 	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
@@ -113,7 +113,7 @@ func TestTimelineOrdersSessionsByLatestMatchingAction(t *testing.T) {
 		Tool:         "Edit",
 		FilesChanged: []string{"older.go"},
 		Timestamp:    250,
-	}, []domaingraph.FileChange{{Path: "older.go", Additions: 1}}); err != nil {
+	}, []domaingraph.FileChange{{Path: "older.go", Additions: 1}}, nil); err != nil {
 		t.Fatalf("create older action: %v", err)
 	}
 
