@@ -264,7 +264,11 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		untracked.out, untracked.err = gitCmd(ctx, "ls-files", "--others", "--exclude-standard").Output()
+		// --full-name forces paths relative to the repo root. Without it,
+		// ls-files reports paths relative to the cwd while git diff reports
+		// them relative to the root, so a commit run from a subdirectory would
+		// later fail to stage untracked files (StageFiles adds from the root).
+		untracked.out, untracked.err = gitCmd(ctx, "ls-files", "--others", "--exclude-standard", "--full-name").Output()
 	}()
 	wg.Wait()
 
