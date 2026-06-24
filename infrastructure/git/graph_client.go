@@ -346,6 +346,26 @@ func (g *GraphClient) DiffNameOnly(ctx context.Context) ([]string, error) {
 	return files, nil
 }
 
+// DiffNameOnlySince returns repo-relative paths changed in commits after
+// sinceHash up to HEAD (sinceHash..HEAD). An empty sinceHash returns nil.
+func (g *GraphClient) DiffNameOnlySince(ctx context.Context, sinceHash string) ([]string, error) {
+	if sinceHash == "" {
+		return nil, nil
+	}
+	out, err := g.run(ctx, "diff", "--name-only", sinceHash+"..HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
 // DiffForFiles returns the combined diff output (staged + unstaged) for the
 // specified files.
 // TrackedFiles lists the git-tracked files under a path (a directory expands to

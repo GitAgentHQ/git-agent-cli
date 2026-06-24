@@ -421,6 +421,22 @@ func TestGraphClient_DiffNameOnly(t *testing.T) {
 	}
 }
 
+func TestGraphClient_DiffNameOnlySince(t *testing.T) {
+	dir := initTestRepo(t)
+
+	first := commitFile(t, dir, "a.go", "package a\n", "first", 3600)
+	commitFile(t, dir, "b.go", "package b\n", "second", 7200)
+
+	gc := NewGraphClient(dir)
+	files, err := gc.DiffNameOnlySince(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "b.go" {
+		t.Fatalf("DiffNameOnlySince() = %v, want [b.go]", files)
+	}
+}
+
 func TestGraphClient_DiffForFiles(t *testing.T) {
 	dir := initTestRepo(t)
 

@@ -111,6 +111,31 @@ func TestSQLiteClient_InitSchema_Idempotent(t *testing.T) {
 	}
 }
 
+func TestSQLiteClient_ValidateSchemaVersion(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	client := NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer client.Close()
+	if err := client.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema() error = %v", err)
+	}
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		t.Fatalf("ValidateSchemaVersion() error = %v", err)
+	}
+
+	if _, err := client.DB().ExecContext(ctx,
+		`INSERT OR REPLACE INTO index_state (key, value) VALUES ('schema_version', '999')`,
+	); err != nil {
+		t.Fatalf("set future schema version: %v", err)
+	}
+	if err := client.ValidateSchemaVersion(ctx); err == nil {
+		t.Fatal("expected error for future schema version")
+	}
+}
+
 func TestSQLiteClient_Close(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client := NewSQLiteClient(dbPath)

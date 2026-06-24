@@ -5,9 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
+
+// CurrentSchemaVersion is the schema version written by this git-agent build.
+// A database with a higher stored version was produced by a newer binary and
+// cannot be read safely.
+const CurrentSchemaVersion = 1
 
 // SQLiteClient wraps a database/sql connection to a SQLite database
 // using the modernc.org/sqlite pure-Go driver.
@@ -71,7 +77,54 @@ func (c *SQLiteClient) InitSchema(ctx context.Context) error {
 			return fmt.Errorf("exec schema: %w\n  statement: %s", err, stmt)
 		}
 	}
-	return c.applyMigrations(ctx)
+	if err := c.applyMigrations(ctx); err != nil {
+		return err
+	}
+	return c.setSchemaVersion(ctx)
+}
+
+// ValidateSchemaVersion rejects databases written by a newer git-agent.
+func (c *SQLiteClient) ValidateSchemaVersion(ctx context.Context) error {
+	stored, err := c.readSchemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if stored > CurrentSchemaVersion {
+		return fmt.Errorf(
+			"graph database schema version %d is newer than this git-agent (supports %d); upgrade git-agent or delete .git-agent/graph.db*",
+			stored, CurrentSchemaVersion,
+		)
+	}
+	return nil
+}
+
+func (c *SQLiteClient) readSchemaVersion(ctx context.Context) (int, error) {
+	var val sql.NullString
+	err := c.db.QueryRowContext(ctx,
+		`SELECT value FROM index_state WHERE key = 'schema_version'`,
+	).Scan(&val)
+	if err == sql.ErrNoRows || !val.Valid {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read schema_version: %w", err)
+	}
+	v, err := strconv.Atoi(val.String)
+	if err != nil {
+		return 0, fmt.Errorf("parse schema_version %q: %w", val.String, err)
+	}
+	return v, nil
+}
+
+func (c *SQLiteClient) setSchemaVersion(ctx context.Context) error {
+	_, err := c.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO index_state (key, value) VALUES ('schema_version', ?)`,
+		strconv.Itoa(CurrentSchemaVersion),
+	)
+	if err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+	return nil
 }
 
 // migrations are idempotent column additions for pre-existing databases that

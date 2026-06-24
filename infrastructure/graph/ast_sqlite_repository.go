@@ -472,6 +472,57 @@ func (r *SQLiteASTRepository) ListUnresolvedRefs(ctx context.Context) ([]graph.A
 	return refs, rows.Err()
 }
 
+func (r *SQLiteASTRepository) ListUnresolvedRefsMatching(ctx context.Context, filePaths []string, lookupNames []string) ([]graph.ASTUnresolvedRef, error) {
+	if len(filePaths) == 0 && len(lookupNames) == 0 {
+		return r.ListUnresolvedRefs(ctx)
+	}
+
+	var conds []string
+	var args []any
+
+	if len(filePaths) > 0 {
+		placeholders := strings.Repeat("?,", len(filePaths)-1) + "?"
+		conds = append(conds, fmt.Sprintf("file_path IN (%s)", placeholders))
+		for _, p := range filePaths {
+			args = append(args, p)
+		}
+	}
+	for _, name := range lookupNames {
+		if name == "" {
+			continue
+		}
+		conds = append(conds, "(lower(reference_name) = lower(?) OR lower(reference_name) LIKE lower(?))")
+		args = append(args, name, "%."+name)
+	}
+	if len(conds) == 0 {
+		return nil, nil
+	}
+
+	query := fmt.Sprintf(
+		`SELECT from_node_id, reference_name, reference_kind, line, column, file_path, language, var_call_hint
+		 FROM ast_unresolved_refs WHERE %s`,
+		strings.Join(conds, " OR "),
+	)
+	rows, err := r.db().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved refs matching: %w", err)
+	}
+	defer rows.Close()
+
+	var refs []graph.ASTUnresolvedRef
+	for rows.Next() {
+		var ref graph.ASTUnresolvedRef
+		if err := rows.Scan(
+			&ref.FromNodeID, &ref.ReferenceName, &ref.ReferenceKind,
+			&ref.Line, &ref.Column, &ref.FilePath, &ref.Language, &ref.VarCallHint,
+		); err != nil {
+			return nil, fmt.Errorf("scan unresolved ref: %w", err)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}
+
 func (r *SQLiteASTRepository) ListASTNodeNames(ctx context.Context) ([]string, error) {
 	rows, err := r.db().QueryContext(ctx, `SELECT DISTINCT name FROM ast_nodes`)
 	if err != nil {
