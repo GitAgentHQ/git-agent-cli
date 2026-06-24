@@ -7,6 +7,8 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
+const actionLinkLookback = 7 * 24 * time.Hour
+
 // ActionLinker links uncommitted actions to a newly created commit.
 // A nil linker means action-to-commit linking is unavailable (graceful degradation).
 type ActionLinker interface {
@@ -30,8 +32,9 @@ func (l *GraphActionLinker) LinkActionsToCommit(ctx context.Context, commitHash 
 		return nil
 	}
 
-	// Look back 24h for unlinked actions matching these files
-	since := time.Now().Add(-24 * time.Hour).Unix()
+	// Look back several days so actions from long sessions still link when the
+	// user commits later in the day or next morning.
+	since := time.Now().Add(-actionLinkLookback).Unix()
 	actions, err := l.repo.UnlinkedActionsForFiles(ctx, files, since)
 	if err != nil {
 		return err

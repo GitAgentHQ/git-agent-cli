@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/extraction"
 	"github.com/gitagenthq/git-agent/domain/graph"
@@ -21,6 +20,8 @@ type ASTIndexGitClient interface {
 	TrackedFileLister
 	CurrentHead(ctx context.Context) (string, error)
 	DiffNameOnly(ctx context.Context) ([]string, error)
+	DiffNameOnlySince(ctx context.Context, sinceHash string) ([]string, error)
+	MergeBaseIsAncestor(ctx context.Context, ancestor, head string) (bool, error)
 }
 
 type ASTEnsureIndexService struct {
@@ -60,15 +61,81 @@ func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbo
 		return nil
 	}
 
-	idxResult, err := NewASTIndexService(s.astRepo, s.git, s.extractor).IndexAll(ctx, root)
+	idxSvc := NewASTIndexService(s.astRepo, s.git, s.extractor)
+	var idxResult *ASTIndexResult
+
+	switch {
+	case force || indexedHead == "":
+		idxResult, err = idxSvc.IndexAll(ctx, root)
+	default:
+		reachable, reachErr := s.git.MergeBaseIsAncestor(ctx, indexedHead, head)
+		if reachErr != nil {
+			return fmt.Errorf("check AST index reachability: %w", reachErr)
+		}
+		if !reachable {
+			idxResult, err = idxSvc.IndexAll(ctx, root)
+			break
+		}
+
+		files, collectErr := s.collectIncrementalGoFiles(ctx, indexedHead, hasGoChanges)
+		if collectErr != nil {
+			return collectErr
+		}
+		pruneStale := indexedHead != head
+		if len(files) == 0 {
+			if len(nodes) == 0 {
+				idxResult, err = idxSvc.IndexAll(ctx, root)
+				break
+			}
+			if pruneStale {
+				idxResult, err = idxSvc.IndexFiles(ctx, root, nil, true)
+			}
+			break
+		}
+		idxResult, err = idxSvc.IndexFiles(ctx, root, files, pruneStale)
+	}
+
 	if err != nil {
 		return fmt.Errorf("index AST symbols: %w", err)
 	}
-	if progress != nil && idxResult.FilesProcessed > 0 {
+
+	if len(nodes) == 0 {
+		nodes, err = s.astRepo.GetASTNodeByName(ctx, symbol)
+		if err != nil {
+			return fmt.Errorf("re-check AST symbol %q: %w", symbol, err)
+		}
+		if len(nodes) == 0 {
+			idxResult, err = idxSvc.IndexAll(ctx, root)
+			if err != nil {
+				return fmt.Errorf("full AST re-index for missing symbol: %w", err)
+			}
+		}
+	}
+
+	if progress != nil && idxResult != nil && idxResult.FilesProcessed > 0 {
 		fmt.Fprintf(progress, "AST indexed %d files, %d symbols [%dms]\n",
 			idxResult.FilesProcessed, idxResult.SymbolsStored, idxResult.DurationMs)
 	}
 	return s.stateRepo.SetIndexState(ctx, astIndexHeadKey, head)
+}
+
+func (s *ASTEnsureIndexService) collectIncrementalGoFiles(ctx context.Context, indexedHead string, hasGoChanges bool) ([]string, error) {
+	var files []string
+	if hasGoChanges {
+		changed, err := s.git.DiffNameOnly(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list working-tree changes for AST index: %w", err)
+		}
+		files = mergeUniqueStrings(files, filterGoFiles(changed))
+	}
+	if indexedHead != "" {
+		committed, err := s.git.DiffNameOnlySince(ctx, indexedHead)
+		if err != nil {
+			return nil, fmt.Errorf("list commits since AST index head: %w", err)
+		}
+		files = mergeUniqueStrings(files, filterGoFiles(committed))
+	}
+	return files, nil
 }
 
 func (s *ASTEnsureIndexService) hasGoWorkingTreeChanges(ctx context.Context) (bool, error) {
@@ -77,7 +144,7 @@ func (s *ASTEnsureIndexService) hasGoWorkingTreeChanges(ctx context.Context) (bo
 		return false, fmt.Errorf("list working-tree changes for AST freshness: %w", err)
 	}
 	for _, f := range changed {
-		if strings.HasSuffix(f, ".go") && !graph.IsToolingPath(f) {
+		if isGoFile(f) && !graph.IsToolingPath(f) {
 			return true, nil
 		}
 	}

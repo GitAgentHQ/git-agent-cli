@@ -576,3 +576,38 @@ func TestReferenceResolver_ReceiverInferenceTagsLowConfidence(t *testing.T) {
 		t.Errorf("expected confidence 0.8 for receiver-inference, got %q", meta)
 	}
 }
+
+func TestReferenceResolver_ResolveForFilesAndNamesTargetsNewSymbols(t *testing.T) {
+	repo := setupASTRepo(t)
+	ctx := context.Background()
+
+	caller := graph.ASTNode{ID: "caller", Kind: graph.ASTNodeKindFunction, Name: "run", QualifiedName: "a.go::run", FilePath: "a.go", Language: "go"}
+	callee := graph.ASTNode{ID: "callee", Kind: graph.ASTNodeKindFunction, Name: "helper", QualifiedName: "b.go::helper", FilePath: "b.go", Language: "go"}
+	for _, n := range []graph.ASTNode{caller, callee} {
+		if err := repo.UpsertASTNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "caller", ReferenceName: "helper", ReferenceKind: string(graph.ASTEdgeKindCalls), Line: 3, FilePath: "a.go", Language: "go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertUnresolvedRef(ctx, graph.ASTUnresolvedRef{
+		FromNodeID: "callee", ReferenceName: "missing", ReferenceKind: string(graph.ASTEdgeKindCalls), Line: 1, FilePath: "b.go", Language: "go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := NewReferenceResolver(repo, nil)
+	result, err := resolver.ResolveForFilesAndNames(ctx, nil, []string{"helper"})
+	if err != nil {
+		t.Fatalf("resolve for names: %v", err)
+	}
+	if result.ResolvedCount != 1 {
+		t.Fatalf("expected 1 resolved ref by name, got %+v", result)
+	}
+	if result.NotFoundCount != 0 {
+		t.Fatalf("expected unrelated refs to be skipped, got not-found=%d", result.NotFoundCount)
+	}
+}

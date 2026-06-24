@@ -42,12 +42,27 @@ func NewReferenceResolver(repo graph.ASTRepository, log *slog.Logger) *Reference
 //   - multiple candidates, none/multiple exported → ambiguous, skip
 //   - 0 candidates → not found, skip
 func (r *ReferenceResolver) Resolve(ctx context.Context) (*ReferenceResolverResult, error) {
-	start := time.Now()
-
 	refs, err := r.repo.ListUnresolvedRefs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved refs: %w", err)
 	}
+	return r.resolveRefs(ctx, refs)
+}
+
+// ResolveForFilesAndNames resolves only refs originating in filePaths or whose
+// trailing symbol name appears in lookupNames. Use after incremental AST
+// indexing so cross-file refs to newly indexed symbols are updated without
+// scanning every unresolved ref in the repository.
+func (r *ReferenceResolver) ResolveForFilesAndNames(ctx context.Context, filePaths []string, lookupNames []string) (*ReferenceResolverResult, error) {
+	refs, err := r.repo.ListUnresolvedRefsMatching(ctx, filePaths, lookupNames)
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved refs matching: %w", err)
+	}
+	return r.resolveRefs(ctx, refs)
+}
+
+func (r *ReferenceResolver) resolveRefs(ctx context.Context, refs []graph.ASTUnresolvedRef) (*ReferenceResolverResult, error) {
+	start := time.Now()
 
 	result := &ReferenceResolverResult{}
 
