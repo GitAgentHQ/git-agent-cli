@@ -222,9 +222,14 @@ func (s *extractState) recordVarTypeFromDecl(node *sitter.Node) {
 		if calledName == "" {
 			return
 		}
+		// Over-approximation: this unnamed-children fallback maps every LHS name
+		// to a single RHS call. Accurate pairing happens in the field path below.
 		for _, vn := range names {
 			s.varCalls[vn] = calledName
 		}
+		return
+	}
+	if s.recordPairedVarCalls(left, right) {
 		return
 	}
 	varNames := s.extractAssignmentNames(left)
@@ -237,10 +242,42 @@ func (s *extractState) recordVarTypeFromDecl(node *sitter.Node) {
 	}
 }
 
+// recordPairedVarCalls handles multi-value declarations/assignments like
+// `a, b := f(), g()` by pairing each LHS identifier with its positionally
+// corresponding RHS call, instead of mapping every name to a single RHS. It
+// returns true when it handled the node: both sides are expression lists of
+// equal length with more than one element.
+func (s *extractState) recordPairedVarCalls(left, right *sitter.Node) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if left.Kind() != "expression_list" || right.Kind() != "expression_list" {
+		return false
+	}
+	if left.NamedChildCount() != right.NamedChildCount() || left.NamedChildCount() < 2 {
+		return false
+	}
+	for i := uint(0); i < left.NamedChildCount(); i++ {
+		lc := left.NamedChild(i)
+		if lc.Kind() != "identifier" {
+			continue
+		}
+		calledName := s.calledSymbolName(right.NamedChild(i))
+		if calledName == "" {
+			continue
+		}
+		s.varCalls[s.nodeText(lc)] = calledName
+	}
+	return true
+}
+
 func (s *extractState) recordVarTypeFromAssign(node *sitter.Node) {
 	left := node.ChildByFieldName("left")
 	right := node.ChildByFieldName("right")
 	if left == nil || right == nil {
+		return
+	}
+	if s.recordPairedVarCalls(left, right) {
 		return
 	}
 	varNames := s.extractAssignmentNames(left)

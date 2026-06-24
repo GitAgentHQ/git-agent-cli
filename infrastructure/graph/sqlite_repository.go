@@ -613,7 +613,11 @@ func (r *SQLiteRepository) ResolveRenames(ctx context.Context, filePath string) 
 				queue = append(queue, old)
 			}
 		}
+		err = rows.Err()
 		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("iterate renames (new_path): %w", err)
+		}
 
 		// Find paths this file was renamed TO.
 		rows, err = r.db().QueryContext(ctx,
@@ -633,7 +637,11 @@ func (r *SQLiteRepository) ResolveRenames(ctx context.Context, filePath string) 
 				queue = append(queue, newP)
 			}
 		}
+		err = rows.Err()
 		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("iterate renames (old_path): %w", err)
+		}
 	}
 
 	// Collect all paths except the original.
@@ -699,24 +707,34 @@ func (r *SQLiteRepository) CreateAction(ctx context.Context, a graph.ActionNode)
 	return err
 }
 
-func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange) error {
+func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange) (graph.ActionNode, error) {
+	filesJSON, err := json.Marshal(a.FilesChanged)
+	if err != nil {
+		return graph.ActionNode{}, fmt.Errorf("marshal files_changed: %w", err)
+	}
+
 	tx, err := r.db().BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return graph.ActionNode{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	filesJSON, err := json.Marshal(a.FilesChanged)
-	if err != nil {
-		return fmt.Errorf("marshal files_changed: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
+	// Derive the sequence and id atomically inside the write transaction. A
+	// single INSERT...SELECT computes MAX(sequence)+1 under the writer lock, so
+	// two concurrent captures on the same session serialize and the second sees
+	// the first's row rather than re-deriving the same id.
+	var seq int
+	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO actions (id, session_id, sequence, tool, diff, files_changed, timestamp, message)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.SessionID, a.Sequence, a.Tool, a.Diff, string(filesJSON), a.Timestamp, a.Message,
-	); err != nil {
-		return fmt.Errorf("insert action: %w", err)
+		 SELECT printf('%s:%d', ?, seq), ?, seq, ?, ?, ?, ?, ?
+		 FROM (SELECT COALESCE(MAX(sequence), 0) + 1 AS seq FROM actions WHERE session_id = ?)
+		 RETURNING sequence`,
+		a.SessionID, a.SessionID, a.Tool, a.Diff, string(filesJSON), a.Timestamp, a.Message, a.SessionID,
+	).Scan(&seq); err != nil {
+		return graph.ActionNode{}, fmt.Errorf("insert action: %w", err)
 	}
+	a.Sequence = seq
+	a.ID = fmt.Sprintf("%s:%d", a.SessionID, seq)
 
 	for _, f := range modifiedFiles {
 		if _, err := tx.ExecContext(ctx,
@@ -724,11 +742,14 @@ func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.Action
 			 VALUES (?, ?, ?, ?)`,
 			a.ID, f.Path, f.Additions, f.Deletions,
 		); err != nil {
-			return fmt.Errorf("insert action_modifies: %w", err)
+			return graph.ActionNode{}, fmt.Errorf("insert action_modifies: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return graph.ActionNode{}, fmt.Errorf("commit action batch: %w", err)
+	}
+	return a, nil
 }
 
 func (r *SQLiteRepository) GetActionCountForSession(ctx context.Context, sessionID string) (int, error) {

@@ -28,7 +28,7 @@ func TestTimelineSinceFiltersActionsNotSessionStart(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert session: %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
 		ID:           "session-1:1",
 		SessionID:    "session-1",
 		Sequence:     1,
@@ -38,7 +38,7 @@ func TestTimelineSinceFiltersActionsNotSessionStart(t *testing.T) {
 	}, []domaingraph.FileChange{{Path: "old.go", Additions: 1}}); err != nil {
 		t.Fatalf("create old action: %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
 		ID:           "session-1:2",
 		SessionID:    "session-1",
 		Sequence:     2,
@@ -96,7 +96,7 @@ func TestTimelineOrdersSessionsByLatestMatchingAction(t *testing.T) {
 			t.Fatalf("upsert session: %v", err)
 		}
 	}
-	if err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
 		ID:           "session-old-start-new-action:1",
 		SessionID:    "session-old-start-new-action",
 		Sequence:     1,
@@ -106,7 +106,7 @@ func TestTimelineOrdersSessionsByLatestMatchingAction(t *testing.T) {
 	}, []domaingraph.FileChange{{Path: "newest.go", Additions: 1}}); err != nil {
 		t.Fatalf("create newest action: %v", err)
 	}
-	if err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
+	if _, err := repo.CreateActionBatch(ctx, domaingraph.ActionNode{
 		ID:           "session-new-start-old-action:1",
 		SessionID:    "session-new-start-old-action",
 		Sequence:     1,

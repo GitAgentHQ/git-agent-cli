@@ -293,10 +293,10 @@ func (r *SQLiteASTRepository) SearchASTNodes(ctx context.Context, query string, 
 	} else {
 		args := append([]any{query}, kindArgs...)
 		rows, err = r.db().QueryContext(ctx,
-			fmt.Sprintf(`SELECT id, kind, name, qualified_name, file_path, language,
-			 start_line, end_line, start_column, end_column, signature, visibility,
-			 is_exported, is_async, is_static, is_abstract, return_type, updated_at, 0.0
-			 FROM ast_nodes WHERE name LIKE ? || '%%'%s ORDER BY name LIMIT 50`, kindFilter),
+			fmt.Sprintf(`SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
+			 n.start_line, n.end_line, n.start_column, n.end_column, n.signature, n.visibility,
+			 n.is_exported, n.is_async, n.is_static, n.is_abstract, n.return_type, n.updated_at, 0.0
+			 FROM ast_nodes n WHERE n.name LIKE ? || '%%'%s ORDER BY n.name LIMIT 50`, kindFilter),
 			args...,
 		)
 		if err != nil {

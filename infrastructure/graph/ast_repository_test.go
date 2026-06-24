@@ -381,6 +381,22 @@ func TestASTRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("LIKE fallback with kind filter does not error", func(t *testing.T) {
+		_, repo := setupDB(t)
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "function:h.go:Run", Kind: graph.ASTNodeKindFunction, Name: "Run", QualifiedName: "h.go::Run", FilePath: "h.go", Language: "go", StartLine: 1, EndLine: 2, UpdatedAt: 1000})
+		repo.UpsertASTNode(ctx, graph.ASTNode{ID: "struct:h.go:Thing", Kind: graph.ASTNodeKindStruct, Name: "Thing", QualifiedName: "h.go::Thing", FilePath: "h.go", Language: "go", StartLine: 3, EndLine: 4, UpdatedAt: 1000})
+		// An empty/all-punctuation query sanitizes to "" and takes the LIKE
+		// branch; a non-empty kind filter previously failed with
+		// "no such column: n.kind" because that branch had no table alias.
+		results, err := repo.SearchASTNodes(ctx, "", []graph.ASTNodeKind{graph.ASTNodeKindFunction})
+		if err != nil {
+			t.Fatalf("LIKE fallback with kind filter: %v", err)
+		}
+		if len(results) != 1 || results[0].Node.Name != "Run" {
+			t.Errorf("expected only the Run function, got %+v", results)
+		}
+	})
+
 	t.Run("impact reaches promoted method via struct embedding", func(t *testing.T) {
 		_, repo := setupDB(t)
 		// Service embeds Base; Base has method Save; handler calls Save directly.

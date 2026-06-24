@@ -60,7 +60,9 @@ func (c *SQLiteClient) Open(ctx context.Context) error {
 // Close closes the database connection.
 func (c *SQLiteClient) Close() error {
 	if c.db != nil {
-		return c.db.Close()
+		err := c.db.Close()
+		c.db = nil
+		return err
 	}
 	return nil
 }
@@ -99,11 +101,23 @@ func (c *SQLiteClient) ValidateSchemaVersion(ctx context.Context) error {
 }
 
 func (c *SQLiteClient) readSchemaVersion(ctx context.Context) (int, error) {
+	// A fresh database has no index_state table yet (validation runs before
+	// InitSchema), so treat a missing table as version 0 rather than erroring.
+	var tableCount int
+	if err := c.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'index_state'`,
+	).Scan(&tableCount); err != nil {
+		return 0, fmt.Errorf("probe index_state: %w", err)
+	}
+	if tableCount == 0 {
+		return 0, nil
+	}
+
 	var val sql.NullString
 	err := c.db.QueryRowContext(ctx,
 		`SELECT value FROM index_state WHERE key = 'schema_version'`,
 	).Scan(&val)
-	if err == sql.ErrNoRows || !val.Valid {
+	if err == sql.ErrNoRows || (err == nil && !val.Valid) {
 		return 0, nil
 	}
 	if err != nil {

@@ -136,6 +136,59 @@ func TestSQLiteClient_ValidateSchemaVersion(t *testing.T) {
 	}
 }
 
+// TestSQLiteClient_ValidateBeforeInitRejectsNewerDB guards the call ordering in
+// the CLI entry points: validation must run before InitSchema, because
+// InitSchema rewrites schema_version to the current value. It also covers the
+// fresh-database path, where validation runs before any table exists.
+func TestSQLiteClient_ValidateBeforeInitRejectsNewerDB(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "graph.db")
+
+	// Seed a database written by a hypothetical newer binary.
+	seed := NewSQLiteClient(dbPath)
+	if err := seed.Open(ctx); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := seed.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema() error = %v", err)
+	}
+	if _, err := seed.DB().ExecContext(ctx,
+		`INSERT OR REPLACE INTO index_state (key, value) VALUES ('schema_version', ?)`,
+		CurrentSchemaVersion+1,
+	); err != nil {
+		t.Fatalf("seed future version: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	// Reopen and validate BEFORE InitSchema, mirroring the CLI entry points.
+	client := NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer client.Close()
+	if err := client.ValidateSchemaVersion(ctx); err == nil {
+		t.Fatal("expected ValidateSchemaVersion to reject a newer database before InitSchema")
+	}
+}
+
+// TestSQLiteClient_ValidateFreshDatabase verifies validation before InitSchema
+// succeeds on a brand-new database where index_state does not yet exist.
+func TestSQLiteClient_ValidateFreshDatabase(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "graph.db")
+	client := NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer client.Close()
+
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		t.Fatalf("ValidateSchemaVersion() on fresh db error = %v", err)
+	}
+}
+
 func TestSQLiteClient_Close(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client := NewSQLiteClient(dbPath)
@@ -147,9 +200,9 @@ func TestSQLiteClient_Close(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	// Subsequent query should fail.
-	if err := client.DB().Ping(); err == nil {
-		t.Fatal("expected error after Close(), got nil")
+	// After Close, the handle is cleared so callers can't reuse a dead connection.
+	if client.DB() != nil {
+		t.Fatal("expected DB() to be nil after Close()")
 	}
 }
 

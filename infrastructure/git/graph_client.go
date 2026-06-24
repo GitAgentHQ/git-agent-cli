@@ -84,7 +84,11 @@ func (g *GraphClient) runExitCode(ctx context.Context, args ...string) (int, err
 	return -1, err
 }
 
-const commitSep = "COMMIT_START"
+// commitRecordSep is the NUL byte git emits (via the %x00 format directive)
+// before each commit's metadata. NUL can never appear in a commit message,
+// path, or hash, so it is a collision-proof record separator — unlike a
+// printable marker, which a --raw/--numstat path could legitimately contain.
+const commitRecordSep = "\x00"
 
 // CommitLogDetailed returns structured commit data from git log. If sinceHash
 // is non-empty, only commits after that hash are returned. If maxCommits is
@@ -92,7 +96,7 @@ const commitSep = "COMMIT_START"
 func (g *GraphClient) CommitLogDetailed(ctx context.Context, sinceHash string, maxCommits int) ([]graph.CommitInfo, error) {
 	args := []string{
 		"log",
-		"--format=" + commitSep + "%nH:%H%nM:%s%nAN:%an%nAE:%ae%nAT:%at%nP:%P",
+		"--format=%x00H:%H%nM:%s%nAN:%an%nAE:%ae%nAT:%at%nP:%P",
 		"--raw",
 		"--numstat",
 		"-M",
@@ -113,11 +117,11 @@ func (g *GraphClient) CommitLogDetailed(ctx context.Context, sinceHash string, m
 }
 
 // parseCommitLog parses the structured output from git log into CommitInfo
-// slices. The format uses COMMIT_START as a delimiter between commits, with
+// slices. The format uses a NUL byte as the delimiter between commits, with
 // metadata on prefixed lines, --raw lines (starting with ":") for status, and
 // --numstat lines for additions/deletions.
 func parseCommitLog(raw string) []graph.CommitInfo {
-	blocks := strings.Split(raw, commitSep+"\n")
+	blocks := strings.Split(raw, commitRecordSep)
 	var commits []graph.CommitInfo
 
 	for _, block := range blocks {
