@@ -237,8 +237,11 @@ func (r *SQLiteASTRepository) GetImpactRadius(ctx context.Context, nodeID string
 	start := time.Now()
 
 	seedNode, err := r.GetASTNodeByQualifiedNameOrID(ctx, nodeID)
-	if err != nil || seedNode == nil {
+	if err != nil {
 		return nil, fmt.Errorf("find seed node %s: %w", nodeID, err)
+	}
+	if seedNode == nil {
+		return nil, fmt.Errorf("seed node not found: %s", nodeID)
 	}
 
 	impactKinds := []graph.ASTEdgeKind{graph.ASTEdgeKindCalls, graph.ASTEdgeKindReferences, graph.ASTEdgeKindImports, graph.ASTEdgeKindInstantiates, graph.ASTEdgeKindExtends, graph.ASTEdgeKindImplements}
