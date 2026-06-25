@@ -103,6 +103,21 @@ func (r *SQLiteASTRepository) GetASTNodeByName(ctx context.Context, name string)
 	return scanASTNodes(rows)
 }
 
+// ListASTNodesByFile returns every AST symbol declared in the given file path.
+func (r *SQLiteASTRepository) ListASTNodesByFile(ctx context.Context, filePath string) ([]graph.ASTNode, error) {
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT id, kind, name, qualified_name, file_path, language,
+		 start_line, end_line, start_column, end_column, signature, visibility,
+		 is_exported, is_async, is_static, is_abstract, return_type, updated_at
+		 FROM ast_nodes WHERE file_path = ? ORDER BY start_line`, filePath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query ast_nodes by file: %w", err)
+	}
+	defer rows.Close()
+	return scanASTNodes(rows)
+}
+
 func (r *SQLiteASTRepository) GetASTNodeByQualifiedName(ctx context.Context, qname string) (*graph.ASTNode, error) {
 	var n graph.ASTNode
 	err := r.db().QueryRowContext(ctx,

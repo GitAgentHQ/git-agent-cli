@@ -295,6 +295,23 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*graph.GraphStats, err
 	return stats, nil
 }
 
+// MaxEventSeq returns the highest seq in the Event Log, or 0 when empty. It is
+// the source-of-truth high-water mark for sync staleness.
+func (r *SQLiteRepository) MaxEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM events`).Scan(&seq)
+	return seq, err
+}
+
+// MaxProjectedEventSeq returns the highest event_seq reflected in the event_files
+// projection, or 0 when empty. Since one Rebuild pass derives all projections
+// together, this equal to MaxEventSeq means the cold path is current.
+func (r *SQLiteRepository) MaxProjectedEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_files`).Scan(&seq)
+	return seq, err
+}
+
 // recencyCoChangeQuery builds the INSERT that (re)computes co_changed with
 // recency-weighted coupling strength: each co-change is weighted by an
 // exponential decay of its commit age (half-life coChangeHalfLifeDays), so
