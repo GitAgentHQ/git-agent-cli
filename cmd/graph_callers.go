@@ -49,12 +49,11 @@ func runASTNeighbors(cmd *cobra.Command, symbol, direction string) error {
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
 
-	root, astRepo, _, client, err := openASTQuery(ctx, symbol, force, cmd.ErrOrStderr())
+	_, astRepo, client, err := openASTQuery(ctx, symbol, force, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	_ = root
 
 	nodes, err := astRepo.GetASTNodeByName(ctx, symbol)
 	if err != nil {

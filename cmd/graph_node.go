@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,7 +30,7 @@ func runGraphNode(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	name := args[0]
 
-	_, astRepo, _, client, err := openASTQuery(ctx, name, force, cmd.ErrOrStderr())
+	root, astRepo, client, err := openASTQuery(ctx, name, force, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -49,11 +50,12 @@ func runGraphNode(cmd *cobra.Command, args []string) error {
 		Callers []graph.ASTImpactEntry `json:"callers"`
 		Callees []graph.ASTImpactEntry `json:"callees"`
 	}
+	reader := newSourceReader(root)
 	views := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
 		callers, _ := astRepo.GetCallers(ctx, n.ID, 1)
 		callees, _ := astRepo.GetCallees(ctx, n.ID, 1)
-		views = append(views, nodeView{Node: n, Source: readSourceSnippet(n), Callers: callers, Callees: callees})
+		views = append(views, nodeView{Node: n, Source: reader.snippet(n), Callers: callers, Callees: callees})
 	}
 
 	out := cmd.OutOrStdout()
@@ -86,24 +88,41 @@ func runGraphNode(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// readSourceSnippet returns the source lines [StartLine, EndLine] of the node
-// read from the working tree, or "" when the file or range is unavailable.
-func readSourceSnippet(n graph.ASTNode) string {
+// sourceReader reads source-line ranges from the working tree, caching each
+// file's lines so multiple nodes in the same file are read once.
+type sourceReader struct {
+	root  string
+	cache map[string][]string
+}
+
+func newSourceReader(root string) *sourceReader {
+	return &sourceReader{root: root, cache: make(map[string][]string)}
+}
+
+// snippet returns the source lines [StartLine, EndLine] of the node, or "" when
+// the file or range is unavailable.
+func (s *sourceReader) snippet(n graph.ASTNode) string {
 	if n.FilePath == "" || n.StartLine <= 0 || n.EndLine < n.StartLine {
 		return ""
 	}
-	b, err := os.ReadFile(n.FilePath)
-	if err != nil {
+	lines, ok := s.cache[n.FilePath]
+	if !ok {
+		b, err := os.ReadFile(filepath.Join(s.root, n.FilePath))
+		if err != nil {
+			s.cache[n.FilePath] = nil
+			return ""
+		}
+		lines = strings.Split(string(b), "\n")
+		s.cache[n.FilePath] = lines
+	}
+	if lines == nil || n.StartLine > len(lines) {
 		return ""
 	}
-	lines := strings.Split(string(b), "\n")
-	if n.EndLine > len(lines) {
-		n.EndLine = len(lines)
+	end := n.EndLine
+	if end > len(lines) {
+		end = len(lines)
 	}
-	if n.StartLine > len(lines) {
-		return ""
-	}
-	return strings.Join(lines[n.StartLine-1:n.EndLine], "\n")
+	return strings.Join(lines[n.StartLine-1:end], "\n")
 }
 
 func init() {

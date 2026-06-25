@@ -41,12 +41,11 @@ func runGraphAffected(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no changed files to analyze")
 	}
 
-	_, astRepo, graphGit, client, err := openASTQuery(ctx, "", force, cmd.ErrOrStderr())
+	_, astRepo, client, err := openASTQuery(ctx, "", force, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	_ = graphGit
 
 	result, err := application.NewAffectedService(astRepo).Affected(ctx, files, depth)
 	if err != nil {

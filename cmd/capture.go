@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	"github.com/gitagenthq/git-agent/infrastructure/redact"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var captureCmd = &cobra.Command{
@@ -59,7 +59,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if result != nil {
-		json.NewEncoder(os.Stdout).Encode(result)
+		_ = output.EncodeJSON(os.Stdout, result)
 	}
 	return nil
 }

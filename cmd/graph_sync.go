@@ -16,8 +16,9 @@ var graphSyncCmd = &cobra.Command{
 	Short: "Bring projections up to date with the Event Log",
 	Long: `Bring the derived projections (sessions, actions, event_files, co-change)
 up to date with the Event Log. If the projections already reflect the latest
-event seq this is a no-op; otherwise the cold path runs (replay + reconcile).
-Lighter than ` + "`rebuild`" + `, which always resets and replays the whole log.
+event seq this is a no-op; otherwise it runs the same cold path as ` + "`rebuild`" + `
+(replay + reconcile). Use ` + "`sync`" + ` to avoid a full reset-and-replay when the
+index is already current; use ` + "`rebuild`" + ` to force one unconditionally.
 Read-only to the Event Log; mutates only the derived projection tables.`,
 	RunE: runGraphSync,
 }
@@ -42,39 +43,21 @@ func runGraphSync(cmd *cobra.Command, _ []string) error {
 	repo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
 
-	maxEvent, err := repo.MaxEventSeq(ctx)
+	summary, err := application.SyncIfStale(ctx, repo, graphGit)
 	if err != nil {
-		return fmt.Errorf("max event seq: %w", err)
-	}
-	maxProjected, err := repo.MaxProjectedEventSeq(ctx)
-	if err != nil {
-		return fmt.Errorf("max projected seq: %w", err)
-	}
-
-	upToDate := maxProjected >= maxEvent
-	var res application.ReconcileResult
-	if !upToDate {
-		res, err = application.SyncEventLog(ctx, repo, graphGit)
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	out := cmd.OutOrStdout()
-	summary := map[string]any{
-		"max_event_seq":        maxEvent,
-		"max_projected_seq":    maxProjected,
-		"up_to_date":           upToDate,
-		"out_of_band_appended": res.OutOfBandAppended,
-	}
 	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
 		return output.EncodeJSON(out, summary)
 	}
-	if upToDate {
-		fmt.Fprintf(out, "Projections up to date (event seq %d)\n", maxEvent)
+	if summary.UpToDate {
+		fmt.Fprintf(out, "Projections up to date (event seq %d)\n", summary.MaxEventSeq)
 		return nil
 	}
-	fmt.Fprintf(out, "Synced projections to event seq %d (out-of-band appended: %d)\n", maxEvent, res.OutOfBandAppended)
+	fmt.Fprintf(out, "Synced projections to event seq %d (out-of-band appended: %d)\n",
+		summary.MaxEventSeq, summary.OutOfBandAppended)
 	return nil
 }
 

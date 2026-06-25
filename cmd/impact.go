@@ -131,7 +131,7 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 	stateRepo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
 
-	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
 
@@ -175,7 +175,7 @@ func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symb
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
 	stateRepo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
-	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
 
@@ -245,18 +245,13 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 	return dbPath, client, nil
 }
 
-func ensureASTIndexForSymbol(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
+// ensureASTIndex brings the AST index up to date. When symbol is non-empty the
+// index is ensured for that symbol; otherwise the whole index is ensured for
+// unscoped queries (graph query, graph node by name).
+func ensureASTIndex(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
 	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
 	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
-		EnsureForSymbol(ctx, root, symbol, force, progress)
-}
-
-// ensureASTIndexAll brings the AST index up to date for queries that are not
-// scoped to a single symbol (graph query, graph node by name).
-func ensureASTIndexAll(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, force bool, progress io.Writer) error {
-	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
-	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
-		EnsureAll(ctx, root, force, progress)
+		Ensure(ctx, root, symbol, force, progress)
 }
 
 // resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
@@ -440,7 +435,7 @@ func outputASTImpactText(w io.Writer, result *graph.ASTImpactResult) {
 	// each group.
 	var prod, tests []graph.ASTImpactEntry
 	for _, e := range result.Impacted {
-		if isTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
+		if graph.IsTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
 			tests = append(tests, e)
 		} else {
 			prod = append(prod, e)
@@ -474,11 +469,6 @@ func renderImpactEntries(w io.Writer, entries []graph.ASTImpactEntry) {
 		}
 		fmt.Fprintln(w, line)
 	}
-}
-
-// isTestFile reports whether a Go file path is a test file.
-func isTestFile(filePath string) bool {
-	return strings.HasSuffix(filePath, "_test.go")
 }
 
 // isTestSymbol reports whether a symbol name looks like a Go test function/benchmark.

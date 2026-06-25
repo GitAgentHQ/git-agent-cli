@@ -29,7 +29,7 @@ func runGraphQuery(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	query := args[0]
 
-	_, astRepo, _, client, err := openASTQuery(ctx, "", force, cmd.ErrOrStderr())
+	_, astRepo, client, err := openASTQuery(ctx, "", force, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
