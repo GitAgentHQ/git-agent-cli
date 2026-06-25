@@ -155,18 +155,18 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | Command | What it does |
 |---|---|
 | `git-agent graph impact [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes). Finds the other files a feature change is likely to need. JSON via `--json` |
-| `git-agent graph impact --symbol <name>` | AST-structural impact: find symbols that call or are called by the given symbol. `--mode combined` merges co-change + structural |
+| `git-agent graph impact --symbol <name>` | AST-structural impact: symbols that call or reference the given symbol (incoming edges — who depends on it). `--mode combined` returns co-change + structural as separate fields |
 | `git-agent graph timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
-| `git-agent graph diagnose [symptom]` | Trace a failing symptom to the agent action that most likely introduced it (suspect window + co-change + ranking). Add `--llm` to re-rank candidates via the configured diagnose LLM |
+| `git-agent graph diagnose [symptom] --file <source>` | Trace a failing symptom to the agent action that most likely introduced it (suspect window + co-change + ranking). `--file <source>` seeds the relevant file set (effectively required for candidates); `[symptom]` is optional context. Add `--llm` to re-rank candidates via the configured diagnose LLM |
 | `git-agent graph provenance <file>` | Rename-aware change history for one file: every captured change plus out-of-band changes, folding in pre-rename identities |
 | `git-agent graph status` | Show graph index health and row counts (commits, files, authors, co-change pairs, sessions, actions) |
 | `git-agent graph verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
-| `git-agent graph rebuild` | Rebuild the derived projections (sessions, actions, co-change) from the Event Log |
-| `git-agent graph sync` | Bring projections up to date with the Event Log (no-op when already current; full replay when stale) |
+| `git-agent graph index` | Build/refresh all derived indexes: replay the Event Log into projections (sessions, actions, co-change) and ensure the AST index. `--reindex` forces a full AST re-index |
+| `git-agent graph sync` | Bring projections up to date with the Event Log (no-op when already current; otherwise incrementally replays only the new events) |
 | `git-agent graph callers <symbol>` | AST nodes that call or reference a symbol (incoming edges), up to `--depth` |
 | `git-agent graph callees <symbol>` | AST nodes a symbol calls or references (outgoing edges), up to `--depth` |
-| `git-agent graph node <name>` | A symbol's location, signature, source snippet, and one-hop caller/callee trail |
-| `git-agent graph query <search>` | FTS5 symbol search by name, qualified name, or signature; filter with `--kind` |
+| `git-agent graph node <name>` | Symbols matching the name: each one's location, signature, source snippet, and one-hop caller/callee trail. Returns an array (one entry per match) |
+| `git-agent graph query <search>` | FTS5 prefix search over symbol name, qualified name, or signature (e.g. `process` matches `processData`); filter with `--kind` |
 | `git-agent graph affected [files...]` | Test files transitively affected by changes to the given files (stdin: `git diff --name-only`) |
 | `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |

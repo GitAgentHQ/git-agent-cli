@@ -220,6 +220,68 @@ func TestProjectionRebuilder_ConcurrentInstancesSplitSessions(t *testing.T) {
 	}
 }
 
+// TestProjectionRebuilder_SyncIncrementalMatchesRebuild is the correctness gate
+// for incremental sync: folding only the events past a cursor must yield
+// projections byte-identical to a full Rebuild over the whole Event Log. The
+// fixture exercises the hard cases — a file touched both before and after the
+// cursor (its prior final's after_blob must be cleared) and multiple new events
+// on the same file (only the new final derives after_blob).
+func TestProjectionRebuilder_SyncIncrementalMatchesRebuild(t *testing.T) {
+	ctx := context.Background()
+	// events: seq → (instance, file). shared.go and c.go straddle the cursor.
+	events := []struct {
+		instance, file string
+	}{
+		{"agent-A", "a.go"},      // 1
+		{"agent-A", "shared.go"}, // 2
+		{"agent-A", "b.go"},      // 3
+		{"agent-A", "shared.go"}, // 4  (final for shared.go in first half)
+		{"agent-A", "c.go"},      // 5  (final for c.go in first half) — cursor here
+		{"agent-A", "shared.go"}, // 6  (supersedes seq4)
+		{"agent-A", "c.go"},      // 7  (supersedes seq5; not final — seq8 is)
+		{"agent-A", "c.go"},      // 8  (final for c.go)
+		{"agent-B", "d.go"},      // 9  (new instance → session B)
+		{"agent-B", "shared.go"}, // 10 (final for shared.go, supersedes seq6)
+	}
+
+	// Full Rebuild over all events → snapshot A.
+	repoFull := newProjectionTestRepo(t)
+	for i, e := range events {
+		seededEvent(t, repoFull, graph.EventSourceClaudeCode, e.instance, 1000+int64(i)*10,
+			e.file, "old", "new")
+	}
+	rb := application.NewProjectionRebuilder(repoFull, &hashObjectFakeGit{})
+	if err := rb.Rebuild(ctx); err != nil {
+		t.Fatalf("full Rebuild: %v", err)
+	}
+	snapshotFull := dumpProjections(t, repoFull)
+
+	// Incremental: Rebuild first 5, then SyncIncremental for the rest → snapshot B.
+	repoInc := newProjectionTestRepo(t)
+	for i, e := range events[:5] {
+		seededEvent(t, repoInc, graph.EventSourceClaudeCode, e.instance, 1000+int64(i)*10,
+			e.file, "old", "new")
+	}
+	rbInc := application.NewProjectionRebuilder(repoInc, &hashObjectFakeGit{})
+	if err := rbInc.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild first half: %v", err)
+	}
+	for i, e := range events[5:] {
+		seededEvent(t, repoInc, graph.EventSourceClaudeCode, e.instance, 1000+int64(i+5)*10,
+			e.file, "old", "new")
+	}
+	// Fold everything past the cursor (seq > 5) incrementally — no reset.
+	if err := rbInc.SyncIncremental(ctx, 5); err != nil {
+		t.Fatalf("SyncIncremental: %v", err)
+	}
+	snapshotInc := dumpProjections(t, repoInc)
+
+	if string(snapshotFull) != string(snapshotInc) {
+		t.Errorf("incremental sync does not match full rebuild:\n--- full ---\n%s\n--- incremental ---\n%s",
+			snapshotFull, snapshotInc)
+	}
+}
+
 func TestProjectionRebuilder_RefusesOnBrokenChain(t *testing.T) {
 	ctx := context.Background()
 	repo := newProjectionTestRepo(t)

@@ -272,10 +272,10 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ---
 
-## git-agent impact
+## git-agent graph impact
 
 ```
-git-agent impact [path...] [--symbol <name>] [--mode <mode>]
+git-agent graph impact [path...] [--symbol <name>] [--mode <mode>]
 ```
 
 Find files or symbols related to the given seeds. Three modes are available:
@@ -283,8 +283,8 @@ Find files or symbols related to the given seeds. Three modes are available:
 | Mode | Trigger | What it returns |
 |---|---|---|
 | `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
-| `structural` | `--symbol <name>` (auto-selected when `--symbol` is given) | AST symbols that call, are called by, or reference the seed symbol |
-| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
+| `structural` | `--symbol <name>` (auto-selected when `--symbol` is given) | AST symbols that call or reference the seed symbol (incoming edges — who depends on it) |
+| `combined` | `--symbol <name> --mode combined` | Co-change and structural results returned as separate `co_change` and `structural` fields |
 
 Seeds for co-change are one or more files, a directory (expands to its tracked
 files), or — with **no arguments** — the current working-tree changes ("given
@@ -324,23 +324,240 @@ same shape), `total_found`, `query_ms`. The `seed_node` is always present even
 when `impacted` is empty (symbol not found returns `{"error": "symbol ... not found"}`).
 
 ```bash
-git-agent impact application/commit_service.go cmd/commit.go --json
-git-agent impact internal/auth                                  # a whole module
-git-agent impact                                                # seeds = my current edits
-git-agent impact --symbol CommitService --json                  # structural
-git-agent impact --symbol CommitService --mode combined --json  # both signals
+git-agent graph impact application/commit_service.go cmd/commit.go --json
+git-agent graph impact internal/auth                                  # a whole module
+git-agent graph impact                                                # seeds = my current edits
+git-agent graph impact --symbol CommitService --json                  # structural
+git-agent graph impact --symbol CommitService --mode combined --json  # both signals
 ```
 
 ---
 
-## git-agent timeline
+## git-agent graph timeline
 
 ```
-git-agent timeline [--file <path>] [--source <src>] [--since <2h|7d|RFC3339>] [--top N] [--json|--text]
+git-agent graph timeline [--file <path>] [--source <src>] [--since <2h|7d|RFC3339>] [--top N] [--json|--text]
 ```
 
 Show recent agent/human action history grouped into sessions, with the tool and
 files for each action. Populated by `git-agent capture` (see below). Offline.
+
+## git-agent graph status
+
+```
+git-agent graph status [--json|--text]
+```
+
+Snapshot of graph index health: whether the index exists, the last indexed
+commit, and row counts. Read-only. The first `graph impact` run auto-indexes
+git history, so `commit_count`/`file_count`/`author_count`/`co_changed_count`
+stay 0 until then.
+
+### Fields
+
+`exists`, `last_indexed_commit`, `commit_count`, `file_count`, `author_count`,
+`co_changed_count`, `session_count`, `action_count`, `db_size_bytes`.
+
+## git-agent graph verify
+
+```
+git-agent graph verify [--json|--text]
+```
+
+Walk the hash-chained Event Log and verify it has not been tampered with:
+recompute each event's `this_hash`, follow the genesis `prev_hash` linkage, and
+check seq continuity. Read-only. **Exits 4** on any integrity break.
+
+### Fields
+
+`Status` (`ok`/`broken`), `EventsTotal`, `EventsVerified`, `FirstBreak`
+(`{Kind, Seq, EventID, ExpectedThisHash, StoredThisHash}` — null when clean).
+
+## git-agent graph index
+
+```
+git-agent graph index [--reindex]
+```
+
+Build (or refresh) every derived index — the codegraph `index` analogue:
+1. Verify the hash-chained Event Log, then rebuild the event-log projections
+   (sessions, actions, event_files, co-change) by replaying it, reconciling
+   unexplained working-tree changes into out-of-band Events, and replaying
+   again when any were appended.
+2. Ensure the AST index is fresh against the current working tree (the
+   symbol/call-graph index that `graph impact --symbol` / `callers` / `callees`
+   / `node` / `query` / `affected` read). `--reindex` forces a full AST re-index.
+
+Mutates only derived tables; the append-only Event Log is never touched. No
+`--json` flag (status line only). Use `graph sync` for a no-op-when-current
+refresh of just the event-log projections.
+
+## git-agent graph sync
+
+```
+git-agent graph sync [--json|--text]
+```
+
+Bring the derived projections up to date with the Event Log. A no-op when the
+projections already reflect the latest event seq (`max_projected_seq >=
+max_event_seq`); otherwise INCREMENTALLY replays only the new events (no reset —
+appends to existing projections) and reconciles unexplained working-tree
+changes, folding any out-of-band Events appended. Use `sync` for the common
+refresh; use `index` to force a full reset-and-rebuild. The incremental fold
+reuses the same state machine as `index`, so `sync` produces projections
+byte-identical to `index` over the same Event Log.
+
+### Fields
+
+`max_event_seq`, `max_projected_seq` (pre-sync), `up_to_date` (was already
+current / no-op), `replayed` (an incremental replay ran), `out_of_band_appended`.
+
+## git-agent graph provenance
+
+```
+git-agent graph provenance <file> [--json|--text]
+```
+
+Reconstruct a file's full, rename-aware chronological history from the Event
+Log. `ResolveRenames` folds in the file's pre-rename identities, then a single
+ordered read over `event_files` covers both observed and out-of-band changes.
+Out-of-band rows (source `unknown` — content no captured action explains) are
+flagged. Read-only.
+
+### Fields
+
+`File`, `Rows[]`: `{Seq, When, Who, Tool, BeforeBlob, AfterBlob, ChangeKind,
+LinkedCommit, OutOfBand}`.
+
+## git-agent graph callers
+
+```
+git-agent graph callers <symbol> [--depth N] [--reindex] [--json|--text]
+```
+
+AST nodes that call or reference the given symbol (incoming edges), traversed
+up to `--depth`. The inverse of `callees`. Auto-indexes the AST on first run.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--depth N` | 1 | Transitive traversal depth |
+| `--reindex` | false | Force a full AST re-index before query |
+| `--json` / `--text` | auto | Force output format |
+
+### Fields
+
+`symbol`, `direction`, `depth`, `results[]` (`{Node, Edge, Depth}`), `total`.
+
+## git-agent graph callees
+
+```
+git-agent graph callees <symbol> [--depth N] [--reindex] [--json|--text]
+```
+
+AST nodes the given symbol calls or references (outgoing edges), traversed up to
+`--depth`. The inverse of `callers`. Same flags and output shape as `callers`
+(with `direction: "callees"`).
+
+## git-agent graph node
+
+```
+git-agent graph node <name> [--reindex] [--json|--text]
+```
+
+Look up AST symbols by name and print each one's kind, file, line range, and
+signature, plus a source snippet read from the working tree and the one-hop
+caller/callee trails. Returns an **array** (one entry per matching symbol —
+names can be ambiguous). Auto-indexes the AST on first run.
+
+### Fields (per entry)
+
+`node` (full `ASTNode`), `source` (snippet, omit if unavailable), `callers[]`,
+`callees[]` (`{Node, Edge, Depth}`).
+
+## git-agent graph query
+
+```
+git-agent graph query <search> [--kind <k>] [--reindex] [--json|--text]
+```
+
+FTS5 **prefix** search over indexed symbols: matches the `name`,
+`qualified_name`, or `signature` columns (e.g. `process` matches
+`processData`; `data` does not — it is not a name prefix). `bm25`-ranked.
+Filter by node kind with `--kind` (e.g. `function`, `method`, `type`).
+
+### Fields
+
+`query`, `results[]` (`{Node, Score}`), `total`.
+
+## git-agent graph affected
+
+```
+git-agent graph affected [files...] [--depth N] [--reindex] [--json|--text]
+```
+
+Trace transitive dependents of the symbols declared in the changed files and
+filter them to test files (Go: `*_test.go`). The inverse question of `impact`:
+given what I changed, which tests should I run? With no file args and stdin
+piped, reads `git diff --name-only` from stdin; with no args and a TTY, uses
+the working-tree changes.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--depth N` | 2 | Transitive caller traversal depth |
+| `--reindex` | false | Force a full AST re-index before tracing |
+| `--json` / `--text` | auto | Force output format |
+
+### Fields
+
+`changed_files[]`, `tests[]` (`{TestFile, Symbol, Kind, Line, Depth, Via}`),
+`total`.
+
+## git-agent graph diagnose
+
+```
+git-agent graph diagnose [symptom] [--file <source>] [--llm] [--top N] [--force] [--json|--text]
+```
+
+Trace a regression to the agent action that most likely introduced it. Verifies
+the Event Log, derives the Suspect Window between the last passing and first
+failing test **Outcome Event**, expands the relevant file set via co-change
+`impact`, then ranks the suspect Events deterministically. Each Candidate
+carries before/after File Blob Refs so the introducing diff can be
+reconstructed. Exits 4 on a chain integrity break unless `--force`.
+
+`--file <source>` seeds the relevant file set and is **effectively required**
+for candidates — without it the suspect window has no file set to expand and
+diagnose returns no candidates even when the green/red boundary is found.
+`[symptom]` (a test name) is optional context. `--llm` re-ranks the top-N
+candidates via the `git-agent.diagnose-*` config keys (model, base-url,
+api-key, timeout — each falling back to the main provider); it reorders but
+never adds candidates. Set them with `git-agent config set diagnose-model
+<value>`.
+
+### How Outcome Events are created
+
+diagnose depends on **Outcome Events** in the Event Log marking test pass/fail.
+These are created when `capture` records a Bash action whose `tool_response`
+contains `go test` output — `capture` parses the response for an exit code and
+failure markers (`--- FAIL`, `PASS`, `ok`/`FAIL` lines) and promotes the Event
+to `Kind: "outcome"` with the test name and pass/fail. Without Outcome Events
+there is no green/red boundary, so diagnose returns no candidates. To use
+diagnose: capture the agent's test-run actions (the PostToolUse hook does this
+automatically for Bash), then `graph rebuild`, then `graph diagnose`.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--file <source>` | | Seed source file(s) for the relevant set (repeatable). Effectively required for candidates |
+| `--llm` | false | Re-rank the top-N candidates with the configured diagnose LLM |
+| `--top N` | 5 | Number of candidates passed to the LLM re-rank |
+| `--force` | false | Proceed despite an Event Log chain integrity break |
+| `--json` / `--text` | auto | Force output format |
 
 ## git-agent capture (hidden)
 

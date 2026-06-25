@@ -1048,6 +1048,60 @@ func (r *SQLiteRepository) CreateEventFile(ctx context.Context, ef graph.EventFi
 	return err
 }
 
+// LastEventFileSeqForPath returns the highest event_seq projected for filePath.
+func (r *SQLiteRepository) LastEventFileSeqForPath(ctx context.Context, filePath string) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(event_seq), 0) FROM event_files WHERE file_path = ?`, filePath,
+	).Scan(&seq)
+	return seq, err
+}
+
+// ClearEventFileAfterBlob empties the after_blob of one (filePath, eventSeq) row
+// so a superseded final touch no longer claims to be the path's current state.
+func (r *SQLiteRepository) ClearEventFileAfterBlob(ctx context.Context, filePath string, eventSeq int64) error {
+	_, err := r.db().ExecContext(ctx,
+		`UPDATE event_files SET after_blob = NULL WHERE file_path = ? AND event_seq = ?`,
+		filePath, eventSeq,
+	)
+	return err
+}
+
+// LoadOpenSession returns the latest session for (source, instanceID) with its
+// last action's timestamp and next sequence number. Returns ("",0,0) when none.
+func (r *SQLiteRepository) LoadOpenSession(ctx context.Context, source, instanceID string) (string, int64, int, error) {
+	var (
+		id        string
+		startedAt int64
+		lastAt    sql.NullInt64
+		maxSeq    sql.NullInt64
+	)
+	err := r.db().QueryRowContext(ctx,
+		`SELECT s.id, s.started_at,
+		        (SELECT MAX(a.timestamp) FROM actions a WHERE a.session_id = s.id),
+		        (SELECT MAX(a.sequence)  FROM actions a WHERE a.session_id = s.id)
+		 FROM sessions s
+		 WHERE s.source = ? AND (s.instance_id = ? OR s.instance_id IS NULL)
+		 ORDER BY s.started_at DESC LIMIT 1`,
+		source, instanceID,
+	).Scan(&id, &startedAt, &lastAt, &maxSeq)
+	if err == sql.ErrNoRows {
+		return "", 0, 0, nil
+	}
+	if err != nil {
+		return "", 0, 0, err
+	}
+	la := startedAt
+	if lastAt.Valid {
+		la = lastAt.Int64
+	}
+	next := 1
+	if maxSeq.Valid {
+		next = int(maxSeq.Int64) + 1
+	}
+	return id, la, next, nil
+}
+
 // nullableString stores "" as SQL NULL so absent File Blob Refs read back as
 // NULL rather than the empty string.
 func nullableString(s string) any {

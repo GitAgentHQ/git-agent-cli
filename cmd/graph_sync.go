@@ -16,10 +16,11 @@ var graphSyncCmd = &cobra.Command{
 	Short: "Bring projections up to date with the Event Log",
 	Long: `Bring the derived projections (sessions, actions, event_files, co-change)
 up to date with the Event Log. If the projections already reflect the latest
-event seq this is a no-op; otherwise it runs the same cold path as ` + "`rebuild`" + `
-(replay + reconcile). Use ` + "`sync`" + ` to avoid a full reset-and-replay when the
-index is already current; use ` + "`rebuild`" + ` to force one unconditionally.
-Read-only to the Event Log; mutates only the derived projection tables.`,
+event seq this is a no-op; otherwise it INCREMENTALLY replays only the new
+events (no reset) and reconciles unexplained working-tree changes, folding any
+out-of-band Events appended. Use ` + "`sync`" + ` for the common refresh; use
+` + "`index`" + ` to force a full reset-and-rebuild unconditionally. Read-only to the
+Event Log; mutates only the derived projection tables.`,
 	RunE: runGraphSync,
 }
 

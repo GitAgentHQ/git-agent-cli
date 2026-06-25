@@ -502,6 +502,15 @@ func (r *coChangeFailRepo) IncrementalCoChanged(context.Context, []string, int, 
 }
 func (r *coChangeFailRepo) MaxEventSeq(context.Context) (int64, error)          { return 0, nil }
 func (r *coChangeFailRepo) MaxProjectedEventSeq(context.Context) (int64, error) { return 0, nil }
+func (r *coChangeFailRepo) LastEventFileSeqForPath(context.Context, string) (int64, error) {
+	return 0, nil
+}
+func (r *coChangeFailRepo) ClearEventFileAfterBlob(context.Context, string, int64) error {
+	return nil
+}
+func (r *coChangeFailRepo) LoadOpenSession(_ context.Context, _, _ string) (string, int64, int, error) {
+	return "", 0, 0, nil
+}
 
 type staticGraphGitClient struct {
 	commits []graph.CommitInfo

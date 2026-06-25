@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
@@ -207,8 +208,147 @@ func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord
 	return nil
 }
 
-// sessionID is a deterministic id derived solely from Event fields, so a rebuild
-// always reproduces the same id for the same session.
+// SyncIncremental appends events with seq > sinceSeq to the projections WITHOUT
+// a reset, so a sync that is behind only replays the new events. It is the
+// incremental codegraph `sync` analogue.
+//
+// State the full Rebuild carries in memory is reconstructed from existing
+// projections for just the paths/keys the new events touch:
+//   - sessions: the latest session per (source, instance_id) is loaded with its
+//     last action timestamp and next sequence; a new event extends it when the
+//     inter-event gap is within timeout, else opens a new session.
+//   - lastBlob / lastTouch: a new event supersedes the path's prior final touch,
+//     so the prior final's git-derived after_blob is cleared (it is no longer
+//     the current state); the new final derives after_blob from the working tree.
+//
+// Because the fold reuses foldEvent with the same lastBlob/lastTouch/open state
+// a full Rebuild would hold at that point, SyncIncremental produces projections
+// byte-identical to a full Rebuild over the same Event Log.
+func (r *ProjectionRebuilder) SyncIncremental(ctx context.Context, sinceSeq int64) error {
+	vr, err := r.repo.VerifyChain(ctx)
+	if err != nil {
+		return fmt.Errorf("verify chain: %w", err)
+	}
+	if vr.Status != "ok" {
+		if vr.FirstBreak != nil {
+			b := vr.FirstBreak
+			return fmt.Errorf("refusing to sync: chain broken (%s) at seq %d (event %s)",
+				b.Kind, b.Seq, b.EventID)
+		}
+		return fmt.Errorf("refusing to sync: chain status %q", vr.Status)
+	}
+
+	// First pass: collect touched paths, the new final seq per path, and the
+	// (source, instance_id) keys the new events belong to.
+	touchedPaths := make(map[string]int64) // path -> max new seq touching it
+	keys := make(map[string]bool)
+	cur, err := r.repo.StreamEvents(ctx, sinceSeq)
+	if err != nil {
+		return fmt.Errorf("stream events (pre-scan): %w", err)
+	}
+	for cur.Next() {
+		e := cur.Event()
+		keys[string(e.Source)+"\x00"+e.InstanceID] = true
+		for _, f := range extractEventFileProjections(e) {
+			if e.Seq > touchedPaths[f.path] {
+				touchedPaths[f.path] = e.Seq
+			}
+		}
+	}
+	if err := cur.Err(); err != nil {
+		cur.Close()
+		return fmt.Errorf("pre-scan events: %w", err)
+	}
+	cur.Close()
+
+	// Fixup + state load for touched paths: clear the superseded prior final's
+	// after_blob, seed lastBlob empty, and set lastTouch to the new final seq.
+	lastBlob := make(map[string]string)
+	lastTouch := make(map[string]int64)
+	for path, newMax := range touchedPaths {
+		priorFinal, perr := r.repo.LastEventFileSeqForPath(ctx, path)
+		if perr != nil {
+			return fmt.Errorf("last event_file seq for %s: %w", path, perr)
+		}
+		if priorFinal > 0 && priorFinal < newMax {
+			if cerr := r.repo.ClearEventFileAfterBlob(ctx, path, priorFinal); cerr != nil {
+				return fmt.Errorf("clear after_blob for %s seq %d: %w", path, priorFinal, cerr)
+			}
+		}
+		lastBlob[path] = ""      // prior final's after_blob is now cleared
+		lastTouch[path] = newMax // new final derives after_blob from the working tree
+	}
+
+	// Load the latest open session per key so new events extend or branch.
+	open := make(map[string]*projectionSession)
+	timeoutSecs := int64(sessionTimeoutMins * 60)
+	for k := range keys {
+		source, instanceID := splitSessionKey(k)
+		sid, lastAt, nextSeq, lerr := r.repo.LoadOpenSession(ctx, source, instanceID)
+		if lerr != nil {
+			return fmt.Errorf("load open session for %s/%s: %w", source, instanceID, lerr)
+		}
+		if sid != "" {
+			open[k] = &projectionSession{
+				id:         sid,
+				source:     source,
+				instanceID: instanceID,
+				startedAt:  lastAt,
+				lastAt:     lastAt,
+				nextSeq:    nextSeq,
+			}
+		}
+	}
+
+	// Second pass: fold the new events with the reconstructed state.
+	cur, err = r.repo.StreamEvents(ctx, sinceSeq)
+	if err != nil {
+		return fmt.Errorf("stream events: %w", err)
+	}
+	defer cur.Close()
+	for cur.Next() {
+		e := cur.Event()
+		key := string(e.Source) + "\x00" + e.InstanceID
+		sess := open[key]
+		if sess == nil || e.RecordedAt-sess.lastAt > timeoutSecs {
+			sess = &projectionSession{
+				id:         sessionID(string(e.Source), e.InstanceID, e.Seq),
+				source:     string(e.Source),
+				instanceID: e.InstanceID,
+				startedAt:  e.RecordedAt,
+				lastAt:     e.RecordedAt,
+				nextSeq:    1,
+			}
+			open[key] = sess
+			if err := r.repo.UpsertSession(ctx, graph.SessionNode{
+				ID:         sess.id,
+				Source:     sess.source,
+				InstanceID: sess.instanceID,
+				StartedAt:  sess.startedAt,
+			}); err != nil {
+				return fmt.Errorf("upsert session: %w", err)
+			}
+		}
+		sess.lastAt = e.RecordedAt
+		if err := r.foldEvent(ctx, e, sess, lastBlob, lastTouch); err != nil {
+			return err
+		}
+	}
+	if err := cur.Err(); err != nil {
+		return fmt.Errorf("replay events: %w", err)
+	}
+	return nil
+}
+
+// splitSessionKey reverses the "\x00"-joined (source, instance_id) key.
+func splitSessionKey(k string) (source, instanceID string) {
+	i := strings.IndexByte(k, 0)
+	if i < 0 {
+		return k, ""
+	}
+	return k[:i], k[i+1:]
+}
+
 func sessionID(source, instanceID string, firstSeq int64) string {
 	return fmt.Sprintf("%s:%s:%d", source, instanceID, firstSeq)
 }
@@ -280,6 +420,22 @@ func extractOutOfBandFileProjections(e graph.EventRecord) []eventFileProjection 
 	}}
 }
 
+// repoRelPath normalizes a captured file path to repo-relative form so it
+// matches the out-of-band paths reconcile derives from `git diff --name-only`.
+// Hook payloads (Claude Code) usually carry absolute paths; e.Cwd is the
+// capture-time working directory (the repo root when run from the workspace).
+// Already-relative paths and paths outside cwd are returned unchanged.
+func repoRelPath(filePath, cwd string) string {
+	if filePath == "" || !filepath.IsAbs(filePath) || cwd == "" {
+		return filePath
+	}
+	rel, err := filepath.Rel(cwd, filePath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filePath
+	}
+	return rel
+}
+
 // extractToolFileProjections derives the touched files and line counts from a
 // tool Event payload. Edit/Write set file_path; MultiEdit folds each edit's line
 // delta onto the one file_path. Non-file tools (Bash, outcomes) touch no files.
@@ -292,7 +448,7 @@ func extractToolFileProjections(e graph.EventRecord) []eventFileProjection {
 		return nil
 	}
 
-	fc := eventFileProjection{path: p.ToolInput.FilePath, changeKind: "M"}
+	fc := eventFileProjection{path: repoRelPath(p.ToolInput.FilePath, e.Cwd), changeKind: "M"}
 	switch e.ToolName {
 	case "Write":
 		fc.additions = countLines(p.ToolInput.Content)

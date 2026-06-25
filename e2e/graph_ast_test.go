@@ -129,8 +129,8 @@ func TestGraph_Sync_NoOpWhenCurrent(t *testing.T) {
 	if out, code := gitAgentStdin(t, dir, payload, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture: exit %d\n%s", code, out)
 	}
-	if out, code := gitAgent(t, dir, "graph", "rebuild"); code != 0 {
-		t.Fatalf("rebuild: exit %d\n%s", code, out)
+	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
+		t.Fatalf("index: exit %d\n%s", code, out)
 	}
 
 	// Projections already reflect the latest event: sync is a no-op.
@@ -155,7 +155,7 @@ func TestGraph_Sync_ReplaysWhenStale(t *testing.T) {
 	if out, code := gitAgentStdin(t, dir, payload, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture: exit %d\n%s", code, out)
 	}
-	// No rebuild yet: projections lag the Event Log, so sync must replay.
+	// No index yet: projections lag the Event Log, so sync must replay.
 	out, code := gitAgent(t, dir, "graph", "sync", "--json")
 	if code != 0 {
 		t.Fatalf("sync: exit %d\n%s", code, out)

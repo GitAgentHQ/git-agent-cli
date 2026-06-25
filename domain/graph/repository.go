@@ -77,6 +77,19 @@ type GraphRepository interface {
 	// CreateEventFile records one touched-file row for an Event (the File Blob
 	// Refs derived on the cold path). event_seq + file_path is the key.
 	CreateEventFile(ctx context.Context, ef EventFile) error
+	// LastEventFileSeqForPath returns the highest event_seq currently projected
+	// for filePath (0 when none). Used by incremental sync to find the row whose
+	// after_blob was git-derived as the path's final touch.
+	LastEventFileSeqForPath(ctx context.Context, filePath string) (int64, error)
+	// ClearEventFileAfterBlob sets after_blob to empty for one (filePath, eventSeq)
+	// row. Incremental sync clears a superseded final touch so its after_blob no
+	// longer claims to be the path's current state.
+	ClearEventFileAfterBlob(ctx context.Context, filePath string, eventSeq int64) error
+	// LoadOpenSession returns the latest session for (source, instanceID) with
+	// its last action's timestamp and next sequence number, so incremental sync
+	// can extend an existing session or open a new one by inter-event gap.
+	// Returns ("", 0, 0) when no session exists for the key.
+	LoadOpenSession(ctx context.Context, source, instanceID string) (sessionID string, lastAt int64, nextSeq int, err error)
 	// FileChanges returns the event_files rows for any of filePaths, joined to
 	// their events row (and any action_produces linked commit), in ascending seq
 	// order. It is the read behind graph provenance and the diagnose Candidate

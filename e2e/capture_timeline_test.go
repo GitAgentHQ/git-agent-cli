@@ -57,7 +57,7 @@ func TestCapture_HiddenFromHelp(t *testing.T) {
 // TestCapture_AppendsObservedPayload exercises the append-only hot path
 // end-to-end: a PostToolUse payload on stdin is appended verbatim as one Event,
 // the hook exits 0, and a second payload chains onto the first. Timeline is now
-// a cold projection (built by `graph rebuild`, later task) and is intentionally
+// a cold projection (built by `graph index`, later task) and is intentionally
 // not asserted here.
 func TestCapture_AppendsObservedPayload(t *testing.T) {
 	dir := newGitRepo(t)
@@ -105,7 +105,7 @@ func TestCapture_AppendsObservedPayload(t *testing.T) {
 }
 
 // TestGraphStatus_ReportsProjectionCounts locks the read-only status contract:
-// after capturing two events and rebuilding, `graph status` reports the session
+// after capturing two events and running `graph index`, `graph status` reports the session
 // and action counts that the projections now hold.
 func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 	dir := newGitRepo(t)
@@ -120,8 +120,8 @@ func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 	if out, code := gitAgentStdin(t, dir, payload2, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture #2: exit %d\n%s", code, out)
 	}
-	if out, code := gitAgent(t, dir, "graph", "rebuild"); code != 0 {
-		t.Fatalf("graph rebuild: exit %d\n%s", code, out)
+	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
+		t.Fatalf("graph index: exit %d\n%s", code, out)
 	}
 
 	out, code := gitAgent(t, dir, "graph", "status", "--json")
@@ -145,7 +145,7 @@ func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 
 // TestCapture_RebuildReflectsTimeline restores the timeline coverage carried
 // forward from the append-only rewrite: capture two PostToolUse Events, run
-// `graph rebuild` to replay the Event Log into the projections, then assert the
+// `graph index` to replay the Event Log into the projections, then assert the
 // timeline reflects one session with both captured actions.
 func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 	dir := newGitRepo(t)
@@ -161,8 +161,8 @@ func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 		t.Fatalf("capture #2: exit %d\n%s", code, out)
 	}
 
-	if out, code := gitAgent(t, dir, "graph", "rebuild"); code != 0 {
-		t.Fatalf("graph rebuild: exit %d\n%s", code, out)
+	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
+		t.Fatalf("graph index: exit %d\n%s", code, out)
 	}
 
 	out, code := gitAgent(t, dir, "graph", "timeline", "--json")
@@ -219,5 +219,57 @@ func TestCapture_EndSessionIsNonBlocking(t *testing.T) {
 	}
 	if !res.Skipped {
 		t.Errorf("end-session must be a skip result\noutput: %s", out)
+	}
+}
+
+// TestCapture_AbsolutePathNormalizedForFileFilter locks the path-normalization
+// contract: a PostToolUse payload carrying an ABSOLUTE file_path (as Claude Code
+// does) must be stored repo-relative so `graph timeline --file <relative>` and
+// `graph provenance <relative>` match it — and so captured rows join the same
+// path key as out-of-band reconciled rows.
+func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
+	dir := newGitRepo(t)
+
+	absPath := dir + "/src/a.go"
+	payload := []byte(`{"session_id":"sess-abs","hook_event_name":"PostToolUse",` +
+		`"tool_name":"Edit","cwd":"` + dir + `",` +
+		`"tool_input":{"file_path":"` + absPath + `","old_string":"x","new_string":"y"}}`)
+	if out, code := gitAgentStdin(t, dir, payload, "capture", "--source", "claude-code"); code != 0 {
+		t.Fatalf("capture: exit %d\n%s", code, out)
+	}
+	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
+		t.Fatalf("graph index: exit %d\n%s", code, out)
+	}
+
+	// Relative path filter must match the captured row despite the payload's
+	// absolute file_path.
+	out, code := gitAgent(t, dir, "graph", "timeline", "--file", "src/a.go", "--json")
+	if code != 0 {
+		t.Fatalf("timeline --file: exit %d\n%s", code, out)
+	}
+	var tl graph.TimelineResult
+	if err := json.Unmarshal([]byte(out), &tl); err != nil {
+		t.Fatalf("timeline not JSON: %v\n%s", err, out)
+	}
+	if tl.TotalActions != 1 {
+		t.Errorf("TotalActions = %d, want 1 (absolute file_path not normalized to relative)\n%s", tl.TotalActions, out)
+	}
+
+	// Provenance on the relative path must return the captured row.
+	out, code = gitAgent(t, dir, "graph", "provenance", "src/a.go", "--json")
+	if code != 0 {
+		t.Fatalf("provenance: exit %d\n%s", code, out)
+	}
+	var prov struct {
+		File string `json:"File"`
+		Rows []struct {
+			Who string `json:"Who"`
+		} `json:"Rows"`
+	}
+	if err := json.Unmarshal([]byte(out), &prov); err != nil {
+		t.Fatalf("provenance not JSON: %v\n%s", err, out)
+	}
+	if len(prov.Rows) == 0 {
+		t.Errorf("provenance src/a.go returned no rows (path mismatch)\n%s", out)
 	}
 }
