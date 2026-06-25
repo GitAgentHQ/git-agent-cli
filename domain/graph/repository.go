@@ -93,6 +93,7 @@ type ASTRepository interface {
 	UpsertUnresolvedRef(ctx context.Context, ref ASTUnresolvedRef) error
 	GetASTNodeByName(ctx context.Context, name string) ([]ASTNode, error)
 	GetASTNodeByQualifiedName(ctx context.Context, qname string) (*ASTNode, error)
+	ListASTNodesByFile(ctx context.Context, filePath string) ([]ASTNode, error)
 	GetCallers(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
 	GetCallees(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
 	GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*ASTImpactResult, error)
