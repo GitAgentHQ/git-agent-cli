@@ -500,6 +500,8 @@ func (r *coChangeFailRepo) RecomputeCoChanged(context.Context, int, int) error {
 func (r *coChangeFailRepo) IncrementalCoChanged(context.Context, []string, int, int) error {
 	return fmt.Errorf("forced incremental co-change failure")
 }
+func (r *coChangeFailRepo) MaxEventSeq(context.Context) (int64, error)          { return 0, nil }
+func (r *coChangeFailRepo) MaxProjectedEventSeq(context.Context) (int64, error) { return 0, nil }
 
 type staticGraphGitClient struct {
 	commits []graph.CommitInfo
