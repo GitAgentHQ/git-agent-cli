@@ -174,6 +174,12 @@ func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord
 		if before == "" {
 			before = lastBlob[f.path]
 		}
+		// A Write overwriting a file with a known prior blob is a modify, not
+		// an add; only a Write touching a path with no prior blob is an add.
+		changeKind := f.changeKind
+		if e.ToolName == "Write" && before != "" {
+			changeKind = "M"
+		}
 		after := f.afterBlob
 		if after == "" && e.Seq == lastTouch[f.path] {
 			// Only the final touch of this path matches the working tree; earlier
@@ -190,7 +196,7 @@ func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord
 			FilePath:   f.path,
 			BeforeBlob: before,
 			AfterBlob:  after,
-			ChangeKind: f.changeKind,
+			ChangeKind: changeKind,
 			Additions:  f.additions,
 			Deletions:  f.deletions,
 		}); err != nil {

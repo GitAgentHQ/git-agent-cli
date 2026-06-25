@@ -12,25 +12,26 @@ import (
 const sessionTimeoutMins = 30
 
 // CaptureService appends observed agent actions to the hash-chained Event Log.
-// The hot path does one thing: build the EventRecord, read the chain head, hash,
-// and append. All git/diff/projection work lives on the cold Enrichment path.
+// The hot path does one thing: build the EventRecord and append. The chain
+// head read, seq assignment, and this_hash computation all live inside
+// AppendEvent's transaction so there is one place that computes the hash. All
+// git/diff/projection work lives on the cold Enrichment path.
 type CaptureService struct {
-	repo   graph.GraphRepository
-	git    graph.GraphGitClient
-	idGen  graph.SessionIDGenerator
-	hasher graph.EventHasher
+	repo  graph.GraphRepository
+	git   graph.GraphGitClient
+	idGen graph.SessionIDGenerator
 }
 
 // NewCaptureService creates a CaptureService. git is retained only for the cold
 // Enrichment/Reconciliation paths; the hot path never calls it.
-func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient, idGen graph.SessionIDGenerator, hasher graph.EventHasher) *CaptureService {
-	return &CaptureService{repo: repo, git: git, idGen: idGen, hasher: hasher}
+func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient, idGen graph.SessionIDGenerator) *CaptureService {
+	return &CaptureService{repo: repo, git: git, idGen: idGen}
 }
 
 // Capture appends one Event to the chain. It builds the record from req.Event
-// (already redacted upstream), links it to the current chain head, and appends
-// it inside a single BEGIN IMMEDIATE transaction. On lock contention it skips
-// without error so the agent is never blocked.
+// (already redacted upstream) and appends it; AppendEvent reads the chain head,
+// assigns seq, and computes prev/this hash inside one transaction. On lock
+// contention it skips without error so the agent is never blocked.
 func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) (*graph.CaptureResult, error) {
 	start := time.Now()
 
@@ -59,13 +60,6 @@ func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) 
 	if e.ToolName == "Bash" && e.Command != "" {
 		classifyOutcome(&e, req.ToolResponse)
 	}
-
-	prev, err := s.repo.HeadHash(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("head hash: %w", err)
-	}
-	e.PrevHash = prev
-	e.ThisHash = s.hasher.Hash(prev, e)
 
 	persisted, err := s.repo.AppendEvent(ctx, e)
 	if err != nil {

@@ -30,7 +30,8 @@ type DiagnosisResult struct {
 	WindowSize    int
 	Candidates    []Candidate // ranked, total order
 	ChainVerified bool
-	LowConfidence string // e.g. "no_green_baseline", empty when high-confidence
+	LowConfidence string   // e.g. "no_green_baseline", empty when high-confidence
+	Warnings      []string // non-fatal degradations, e.g. an LLM re-rank that fell back to deterministic order
 }
 
 // DiagnoseRequest carries the symptom and diagnose options.
@@ -122,13 +123,18 @@ func (s *DiagnoseService) Diagnose(ctx context.Context, req DiagnoseRequest) (*D
 	result.WindowSize = len(candidates)
 	result.Candidates = candidates
 
-	// 5. Optional bounded LLM re-rank over the top-N only.
+	// 5. Optional bounded LLM re-rank over the top-N only. A re-rank failure is
+	// non-fatal: the deterministic candidates are already final, so the result
+	// degrades to deterministic order with a warning rather than failing the
+	// whole command. The LLM may reorder but never add candidates.
 	if req.UseLLM && s.llm != nil && len(candidates) > 0 {
 		reranked, err := s.rerank(ctx, req, candidates)
 		if err != nil {
-			return nil, fmt.Errorf("llm re-rank: %w", err)
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("llm re-rank failed, using deterministic order: %v", err))
+		} else {
+			result.Candidates = reranked
 		}
-		result.Candidates = reranked
 	}
 
 	return result, nil

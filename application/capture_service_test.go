@@ -14,7 +14,9 @@ import (
 // fakeGraphRepository records AppendEvent calls and serves a programmable
 // HeadHash. It embeds graph.GraphRepository so it satisfies the full interface;
 // only the Event Log methods the hot path uses are implemented. busyErr, when
-// set, makes AppendEvent simulate SQLITE_BUSY lock contention.
+// set, makes AppendEvent simulate SQLITE_BUSY lock contention. AppendEvent
+// mirrors the real repository: it assigns seq, sets prev_hash from the current
+// head, and computes this_hash itself — never trusting caller-supplied hashes.
 type fakeGraphRepository struct {
 	graph.GraphRepository
 	head     string
@@ -36,9 +38,12 @@ func (f *fakeGraphRepository) AppendEvent(_ context.Context, e graph.EventRecord
 	}
 	f.nextSeq++
 	e.Seq = f.nextSeq
-	if e.ThisHash == "" {
-		e.ThisHash = fmt.Sprintf("hash-%d", e.Seq)
+	prev := f.head
+	if prev == "" {
+		prev = graph.GenesisHash
 	}
+	e.PrevHash = prev
+	e.ThisHash = fakeEventHasher{}.Hash(e.PrevHash, e)
 	f.appended = append(f.appended, e)
 	f.head = e.ThisHash
 	return e, nil
@@ -87,7 +92,7 @@ func (g failGitClient) MergeBaseIsAncestor(context.Context, string, string) (boo
 }
 
 func newCaptureSvc(repo graph.GraphRepository, git graph.GraphGitClient) *application.CaptureService {
-	return application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator(), fakeEventHasher{})
+	return application.NewCaptureService(repo, git, infragraph.NewUUIDSessionIDGenerator())
 }
 
 func TestCaptureService_AppendsObservedEventVerbatim(t *testing.T) {

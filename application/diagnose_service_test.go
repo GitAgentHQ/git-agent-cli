@@ -364,3 +364,44 @@ func TestDiagnose_LLMRerankCannotAddCandidates(t *testing.T) {
 		}
 	}
 }
+
+// failingReranker always errors, simulating a transient LLM failure (bad JSON,
+// network timeout, empty order). Diagnose must degrade to the deterministic
+// order with a warning rather than failing the whole command.
+type failingReranker struct{}
+
+func (failingReranker) Rerank(_ context.Context, _ string, _ []application.Candidate) ([]application.Candidate, error) {
+	return nil, errors.New("llm unavailable")
+}
+
+func TestDiagnose_LLMRerankFailureDegradesToDeterministic(t *testing.T) {
+	ctx := context.Background()
+	repo := seedSuspectWindow()
+
+	res, err := newDiagnoseSvc(repo, failingReranker{}).Diagnose(ctx, application.DiagnoseRequest{
+		Symptom: "TestThing",
+		Files:   []string{"seed.go"},
+		UseLLM:  true,
+		TopN:    5,
+	})
+	if err != nil {
+		t.Fatalf("rerank failure must not fail Diagnose, got: %v", err)
+	}
+	if len(res.Candidates) == 0 {
+		t.Fatal("expected deterministic candidates despite rerank failure")
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("expected a warning explaining the rerank fallback")
+	}
+	// The deterministic top candidate (most recent seed touch, seq 860) must
+	// still rank first when the LLM could not reorder.
+	if res.Candidates[0].Seq != 860 {
+		t.Errorf("top candidate seq = %d, want 860 (deterministic order)", res.Candidates[0].Seq)
+	}
+	// Every candidate must remain a real window Event.
+	for _, c := range res.Candidates {
+		if c.Seq <= 804 || c.Seq >= 871 {
+			t.Errorf("result candidate seq %d not from deterministic window", c.Seq)
+		}
+	}
+}
