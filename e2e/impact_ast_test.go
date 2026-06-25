@@ -7,7 +7,7 @@ import (
 
 // TestImpactAST_StructuralImpact is a full end-to-end test of the AST-based
 // structural impact feature. It creates a multi-file Go repo, runs
-// `git-agent impact --symbol`, and verifies cross-file call resolution.
+// `git-agent graph impact --symbol`, and verifies cross-file call resolution.
 func TestImpactAST_StructuralImpact(t *testing.T) {
 	dir := newGitRepo(t)
 
@@ -58,7 +58,7 @@ func runCLI() {
 	runGit(t, dir, "commit", "-m", "init")
 
 	// Query 1: impact --symbol validateData should find runHandler as caller.
-	out, code := gitAgent(t, dir, "impact", "--symbol", "validateData", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "validateData", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -70,7 +70,7 @@ func runCLI() {
 	}
 
 	// Query 2: depth 2 should also find main (transitive caller via runHandler).
-	out, code = gitAgent(t, dir, "impact", "--symbol", "validateData", "--depth", "2", "--text")
+	out, code = gitAgent(t, dir, "graph", "impact", "--symbol", "validateData", "--depth", "2", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -82,7 +82,7 @@ func runCLI() {
 	}
 
 	// Query 3: depth 3 should find runCLI (transitive via dispatch).
-	out, code = gitAgent(t, dir, "impact", "--symbol", "validateData", "--depth", "3", "--text")
+	out, code = gitAgent(t, dir, "graph", "impact", "--symbol", "validateData", "--depth", "3", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -116,7 +116,7 @@ func sharedFunc() string {
 	runGit(t, dir, "commit", "-m", "init")
 
 	// Query: impact --symbol sharedFunc should find callerA from a.go.
-	out, code := gitAgent(t, dir, "impact", "--symbol", "sharedFunc", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "sharedFunc", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -137,7 +137,7 @@ func TestImpactAST_SymbolNotFound(t *testing.T) {
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "nonexistentFunc", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "nonexistentFunc", "--text")
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code for missing symbol:\n%s", out)
 	}
@@ -159,7 +159,7 @@ func caller() string { return target() }
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--json")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--json")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -189,13 +189,13 @@ func caller() string { return target() }
 	runGit(t, dir, "commit", "-m", "init")
 
 	// First run — auto-indexes.
-	out1, code := gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	out1, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--text")
 	if code != 0 {
 		t.Fatalf("first run exit %d: %s", code, out1)
 	}
 
 	// Second run — should use existing index, no duplicates.
-	out2, code := gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	out2, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--text")
 	if code != 0 {
 		t.Fatalf("second run exit %d: %s", code, out2)
 	}
@@ -220,7 +220,7 @@ func callerOne() string { return target() }
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--text")
 	if code != 0 {
 		t.Fatalf("first impact exit %d: %s", code, out)
 	}
@@ -232,7 +232,7 @@ func callerOne() string { return target() }
 func callerTwo() string { return target() }
 `)
 
-	out, code = gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	out, code = gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--text")
 	if code != 0 {
 		t.Fatalf("second impact exit %d: %s", code, out)
 	}
@@ -253,7 +253,7 @@ func TestImpactAST_CochangeModeUsesSymbolFile(t *testing.T) {
 		runGit(t, dir, "commit", "-m", "cochange")
 	}
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--mode", "cochange", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--mode", "cochange", "--text")
 	if code != 0 {
 		t.Fatalf("impact exit %d: %s", code, out)
 	}
@@ -272,7 +272,7 @@ func TestImpactAST_ModeValidation(t *testing.T) {
 	runGit(t, dir, "commit", "-m", "init")
 
 	// --mode structural without --symbol should error.
-	out, code := gitAgent(t, dir, "impact", "--mode", "structural", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--mode", "structural", "--text")
 	if code == 0 {
 		t.Errorf("expected error for --mode structural without --symbol:\n%s", out)
 	}
@@ -281,7 +281,7 @@ func TestImpactAST_ModeValidation(t *testing.T) {
 	}
 
 	// --mode combined without --symbol should error.
-	out, code = gitAgent(t, dir, "impact", "--mode", "combined", "--text")
+	out, code = gitAgent(t, dir, "graph", "impact", "--mode", "combined", "--text")
 	if code == 0 {
 		t.Errorf("expected error for --mode combined without --symbol:\n%s", out)
 	}
@@ -297,7 +297,7 @@ func TestImpactAST_CoChangeUnchanged(t *testing.T) {
 	runGit(t, dir, "commit", "-m", "init")
 
 	// Plain impact without --symbol should go to co-change mode.
-	out, code := gitAgent(t, dir, "impact", "main.go", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "main.go", "--text")
 	if code != 0 {
 		t.Fatalf("co-change exit %d: %s", code, out)
 	}
@@ -327,7 +327,7 @@ func TestTarget(t *testing.T) { _ = target() }
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "target", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "target", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -371,7 +371,7 @@ func main() { _ = alpha.Dup() }
 
 	// Bare "Dup" would be ambiguous across two packages, so a query by symbol
 	// name should not crash and the qualified call should still be indexed.
-	out, code := gitAgent(t, dir, "impact", "--symbol", "Dup", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "Dup", "--text")
 	// Either resolves (to alpha via package qualifier match) or reports
 	// ambiguity cleanly — both acceptable. What's not acceptable is a crash
 	// or exit code from an unexpected failure mode.
@@ -409,7 +409,7 @@ func run() string {
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "Connect", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "Connect", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -450,7 +450,7 @@ func run() string {
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "init")
 
-	out, code := gitAgent(t, dir, "impact", "--symbol", "Connect", "--text")
+	out, code := gitAgent(t, dir, "graph", "impact", "--symbol", "Connect", "--text")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}

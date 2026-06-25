@@ -13,7 +13,7 @@ import (
 // Event exists, so diagnose reports zero candidates and exits 0.
 func TestDiagnose_EmptyLogReportsNoCandidates(t *testing.T) {
 	dir := newGitRepo(t)
-	stdout, stderr, code := gitAgentSeparated(t, dir, "diagnose", "test bug")
+	stdout, stderr, code := gitAgentSeparated(t, dir, "graph", "diagnose", "test bug", "--text")
 	if code != 0 {
 		t.Fatalf("diagnose: exit code %d (want 0)\nstderr: %s", code, stderr)
 	}
@@ -23,8 +23,8 @@ func TestDiagnose_EmptyLogReportsNoCandidates(t *testing.T) {
 }
 
 // TestCapture_HiddenFromHelp locks the command visibility contract: capture
-// is an internal hook target and must stay hidden, while timeline and diagnose
-// are user-facing.
+// is an internal hook target and must stay hidden, while the graph read
+// commands (timeline, diagnose) are user-facing under the `graph` parent.
 func TestCapture_HiddenFromHelp(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "--help")
@@ -34,11 +34,23 @@ func TestCapture_HiddenFromHelp(t *testing.T) {
 	if strings.Contains(out, "capture") {
 		t.Errorf("capture must be hidden from --help\noutput: %s", out)
 	}
-	if !strings.Contains(out, "timeline") {
-		t.Errorf("timeline missing from --help\noutput: %s", out)
+	if !strings.Contains(out, "graph") {
+		t.Errorf("graph parent missing from --help\noutput: %s", out)
 	}
-	if !strings.Contains(out, "diagnose") {
-		t.Errorf("diagnose missing from --help\noutput: %s", out)
+	// timeline and diagnose moved under `graph`; they must not appear at the
+	// top level, only under `git-agent graph --help`.
+	if strings.Contains(out, "timeline") || strings.Contains(out, "diagnose") {
+		t.Errorf("timeline/diagnose must not appear at top-level --help (now under graph)\noutput: %s", out)
+	}
+	graphHelp, code := gitAgent(t, dir, "graph", "--help")
+	if code != 0 {
+		t.Fatalf("graph --help: exit code %d\noutput: %s", code, graphHelp)
+	}
+	if !strings.Contains(graphHelp, "timeline") {
+		t.Errorf("timeline missing from graph --help\noutput: %s", graphHelp)
+	}
+	if !strings.Contains(graphHelp, "diagnose") {
+		t.Errorf("diagnose missing from graph --help\noutput: %s", graphHelp)
 	}
 }
 
@@ -92,6 +104,45 @@ func TestCapture_AppendsObservedPayload(t *testing.T) {
 	}
 }
 
+// TestGraphStatus_ReportsProjectionCounts locks the read-only status contract:
+// after capturing two events and rebuilding, `graph status` reports the session
+// and action counts that the projections now hold.
+func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
+	dir := newGitRepo(t)
+
+	payload1 := []byte(`{"session_id":"sess-1","hook_event_name":"PostToolUse",` +
+		`"tool_name":"Edit","tool_input":{"file_path":"src/a.go","old_string":"x","new_string":"y"}}`)
+	if out, code := gitAgentStdin(t, dir, payload1, "capture", "--source", "claude-code"); code != 0 {
+		t.Fatalf("capture #1: exit %d\n%s", code, out)
+	}
+	payload2 := []byte(`{"session_id":"sess-1","hook_event_name":"PostToolUse",` +
+		`"tool_name":"Write","tool_input":{"file_path":"src/b.go","content":"package main\n"}}`)
+	if out, code := gitAgentStdin(t, dir, payload2, "capture", "--source", "claude-code"); code != 0 {
+		t.Fatalf("capture #2: exit %d\n%s", code, out)
+	}
+	if out, code := gitAgent(t, dir, "graph", "rebuild"); code != 0 {
+		t.Fatalf("graph rebuild: exit %d\n%s", code, out)
+	}
+
+	out, code := gitAgent(t, dir, "graph", "status", "--json")
+	if code != 0 {
+		t.Fatalf("graph status: exit %d\n%s", code, out)
+	}
+	var stats graph.GraphStats
+	if err := json.Unmarshal([]byte(out), &stats); err != nil {
+		t.Fatalf("graph status output not JSON: %v\n%s", err, out)
+	}
+	if !stats.Exists {
+		t.Errorf("stats.Exists = false, want true")
+	}
+	if stats.SessionCount != 1 {
+		t.Errorf("SessionCount = %d, want 1\n%s", stats.SessionCount, out)
+	}
+	if stats.ActionCount != 2 {
+		t.Errorf("ActionCount = %d, want 2\n%s", stats.ActionCount, out)
+	}
+}
+
 // TestCapture_RebuildReflectsTimeline restores the timeline coverage carried
 // forward from the append-only rewrite: capture two PostToolUse Events, run
 // `graph rebuild` to replay the Event Log into the projections, then assert the
@@ -114,7 +165,7 @@ func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 		t.Fatalf("graph rebuild: exit %d\n%s", code, out)
 	}
 
-	out, code := gitAgent(t, dir, "timeline", "--json")
+	out, code := gitAgent(t, dir, "graph", "timeline", "--json")
 	if code != 0 {
 		t.Fatalf("timeline: exit %d\n%s", code, out)
 	}
