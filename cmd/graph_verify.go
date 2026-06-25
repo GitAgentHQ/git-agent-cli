@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -10,6 +9,7 @@ import (
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var graphVerifyCmd = &cobra.Command{
@@ -23,6 +23,7 @@ checks sequence continuity. Exits 4 on any integrity break. Read-only.`,
 
 func runGraphVerify(cmd *cobra.Command, _ []string) error {
 	jsonFlag, _ := cmd.Flags().GetBool("json")
+	textFlag, _ := cmd.Flags().GetBool("text")
 	ctx := cmd.Context()
 
 	gitClient := infraGit.NewClient()
@@ -44,10 +45,8 @@ func runGraphVerify(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if jsonFlag {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(result); err != nil {
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		if err := output.EncodeJSON(out, result); err != nil {
 			return err
 		}
 	} else {
@@ -69,5 +68,7 @@ func runGraphVerify(cmd *cobra.Command, _ []string) error {
 
 func init() {
 	graphVerifyCmd.Flags().Bool("json", false, "emit the verify result as JSON")
+	graphVerifyCmd.Flags().Bool("text", false, "emit the verify result as text")
+	graphVerifyCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphVerifyCmd)
 }

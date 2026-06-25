@@ -162,7 +162,7 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Show git-agent configuration",
+	Short: "Manage git-agent configuration",
 }
 
 var configShowCmd = &cobra.Command{

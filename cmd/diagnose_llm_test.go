@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -25,12 +26,10 @@ func newDiagnoseCmdForTest(t *testing.T) *cobra.Command {
 	}{
 		{"file", []string{}},
 		{"llm", false},
-		{"llm-model", ""},
-		{"llm-base-url", ""},
-		{"llm-api-key", ""},
 		{"force", false},
 		{"top", 5},
 		{"json", false},
+		{"text", false},
 	} {
 		switch d := f.def.(type) {
 		case bool:
@@ -43,8 +42,6 @@ func newDiagnoseCmdForTest(t *testing.T) *cobra.Command {
 			c.Flags().StringSlice(f.name, d, "")
 		}
 	}
-	// --llm-timeout is a duration.
-	c.Flags().Duration("llm-timeout", 0, "")
 	return c
 }
 
@@ -69,10 +66,27 @@ func withIsolatedConfig(t *testing.T, fn func()) {
 	fn()
 }
 
+// writeUserConfig writes a YAML user config into the isolated HOME so the
+// resolver picks up diagnose-* keys without any CLI flags.
+func writeUserConfig(t *testing.T, body string) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home: %v", err)
+	}
+	path := filepath.Join(home, ".config", "git-agent", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
 func TestBuildDiagnoseReranker_NoKeyErrorsExitOne(t *testing.T) {
 	withIsolatedConfig(t, func() {
 		c := newDiagnoseCmdForTest(t)
-		// No --llm-api-key, no user/git config, no build-time creds, no --free:
+		// No diagnose-api-key, no main api-key, no build-time creds, no --free:
 		// the reranker must refuse with an actionable exit-code-1 error.
 		_, err := buildDiagnoseReranker(c)
 		if err == nil {
@@ -88,28 +102,34 @@ func TestBuildDiagnoseReranker_NoKeyErrorsExitOne(t *testing.T) {
 	})
 }
 
-func TestBuildDiagnoseReranker_FlagOverrideModel(t *testing.T) {
+func TestBuildDiagnoseReranker_ConfigKeyBuildsReranker(t *testing.T) {
 	withIsolatedConfig(t, func() {
+		writeUserConfig(t, "api_key: test-key\n"+
+			"diagnose_model: claude-opus-4-8\n"+
+			"diagnose_base_url: https://example.test/v1\n")
 		c := newDiagnoseCmdForTest(t)
-		_ = c.Flags().Set("llm-api-key", "test-key")
-		_ = c.Flags().Set("llm-model", "claude-opus-4-8")
-		_ = c.Flags().Set("llm-base-url", "https://example.test/v1")
 
 		reranker, err := buildDiagnoseReranker(c)
 		if err != nil {
 			t.Fatalf("buildDiagnoseReranker: %v", err)
 		}
 		if reranker == nil {
-			t.Fatal("expected a non-nil reranker when --llm-api-key is set")
+			t.Fatal("expected a non-nil reranker when diagnose-api-key (via main api_key fallback) is set")
 		}
 	})
 }
 
 func TestDiagnoseFlagsRegistered(t *testing.T) {
-	// Sanity: the public diagnoseCmd exposes the --llm-* surface.
-	for _, flag := range []string{"llm", "llm-model", "llm-base-url", "llm-api-key", "llm-timeout", "top"} {
+	// Sanity: the public diagnoseCmd exposes only behavioral flags — provider
+	// values come from config keys, not flags.
+	for _, flag := range []string{"file", "llm", "force", "top", "json", "text"} {
 		if diagnoseCmd.Flags().Lookup(flag) == nil {
 			t.Errorf("diagnoseCmd missing flag %q", flag)
+		}
+	}
+	for _, flag := range []string{"llm-model", "llm-base-url", "llm-api-key", "llm-timeout"} {
+		if diagnoseCmd.Flags().Lookup(flag) != nil {
+			t.Errorf("diagnoseCmd must not expose removed flag %q (use a config key)", flag)
 		}
 	}
 }

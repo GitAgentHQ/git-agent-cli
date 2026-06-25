@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/gitagenthq/git-agent/application"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var graphProvenanceCmd = &cobra.Command{
@@ -25,6 +25,7 @@ changes, folding in the file's pre-rename identities. Out-of-band rows (source
 
 func runGraphProvenance(cmd *cobra.Command, args []string) error {
 	jsonFlag, _ := cmd.Flags().GetBool("json")
+	textFlag, _ := cmd.Flags().GetBool("text")
 	ctx := cmd.Context()
 	file := args[0]
 
@@ -47,10 +48,8 @@ func runGraphProvenance(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if jsonFlag {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(view)
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		return output.EncodeJSON(out, view)
 	}
 
 	fmt.Fprintf(out, "Provenance for %s (%d changes)\n", view.File, len(view.Rows))
@@ -72,5 +71,7 @@ func runGraphProvenance(cmd *cobra.Command, args []string) error {
 
 func init() {
 	graphProvenanceCmd.Flags().Bool("json", false, "emit the provenance view as JSON")
+	graphProvenanceCmd.Flags().Bool("text", false, "emit the provenance view as text")
+	graphProvenanceCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphProvenanceCmd)
 }

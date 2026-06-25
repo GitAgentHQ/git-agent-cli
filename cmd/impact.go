@@ -2,14 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/gitagenthq/git-agent/application"
@@ -17,6 +15,7 @@ import (
 	infraExtraction "github.com/gitagenthq/git-agent/infrastructure/extraction"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var impactCmd = &cobra.Command{
@@ -152,14 +151,14 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 		if err != nil {
 			return outputError(jsonFlag, textFlag, err)
 		}
-		if useJSON(jsonFlag, textFlag) {
+		if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
 			return outputCombinedJSON(cmd.OutOrStdout(), astResult, coChangeResult)
 		}
 		outputCombinedText(cmd.OutOrStdout(), astResult, coChangeResult)
 		return nil
 	}
 
-	if useJSON(jsonFlag, textFlag) {
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
 		return outputASTImpactJSON(cmd.OutOrStdout(), astResult)
 	}
 	outputASTImpactText(cmd.OutOrStdout(), astResult)
@@ -294,18 +293,15 @@ func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit
 }
 
 func outputError(jsonFlag, textFlag bool, err error) error {
-	if useJSON(jsonFlag, textFlag) {
-		enc := json.NewEncoder(os.Stdout)
-		_ = enc.Encode(map[string]string{"error": err.Error()})
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		_ = output.EncodeJSON(os.Stdout, map[string]string{"error": err.Error()})
 	}
 	return err
 }
 
 func outputResult(cmd *cobra.Command, result *graph.ImpactResult, jsonFlag, textFlag bool) error {
-	if useJSON(jsonFlag, textFlag) {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 	return outputText(cmd, result)
 }
@@ -416,21 +412,9 @@ func realPath(p string) string {
 	return filepath.Join(parent, base)
 }
 
-func useJSON(jsonFlag, textFlag bool) bool {
-	if jsonFlag {
-		return true
-	}
-	if textFlag {
-		return false
-	}
-	return !isatty.IsTerminal(os.Stdout.Fd())
-}
-
 // outputASTImpactJSON renders the structural impact result as JSON.
 func outputASTImpactJSON(w io.Writer, result *graph.ASTImpactResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	return output.EncodeJSON(w, result)
 }
 
 // outputASTImpactText renders the structural impact result as human-readable text.
@@ -505,14 +489,12 @@ func init() {
 	impactCmd.Flags().String("mode", "", "impact mode: structural, combined, or cochange (default: cochange, or structural if --symbol given)")
 	impactCmd.MarkFlagsMutuallyExclusive("json", "text")
 
-	rootCmd.AddCommand(impactCmd)
+	graphCmd.AddCommand(impactCmd)
 }
 
 // outputCombinedJSON renders both co-change and structural results as JSON.
 func outputCombinedJSON(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(map[string]any{
+	return output.EncodeJSON(w, map[string]any{
 		"mode":           "combined",
 		"structural":     astResult,
 		"co_change":      ccResult,

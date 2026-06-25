@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var diagnoseCmd = &cobra.Command{
@@ -24,10 +24,11 @@ impact, then ranks the suspect Events deterministically. Each Candidate carries
 the before/after File Blob Refs so the introducing diff can be reconstructed.
 Exits 4 on a chain integrity break unless --force.
 
-With --llm, the top-N candidates are re-ranked by an LLM. The re-rank model is
-configured via git-agent.diagnose-model (falling back to the main model); pass
---llm-model to override it for one run. The LLM may reorder but never add
-candidates.`,
+With --llm, the top-N candidates are re-ranked by an LLM. The re-rank client is
+configured via git-agent.diagnose-model / diagnose-base-url / diagnose-api-key
+(each falling back to the main provider value), set with
+'git-agent config set diagnose-model <value>'. The LLM may reorder but never
+add candidates.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runDiagnose,
 }
@@ -39,6 +40,7 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	topN, _ := cmd.Flags().GetInt("top")
 	jsonFlag, _ := cmd.Flags().GetBool("json")
+	textFlag, _ := cmd.Flags().GetBool("text")
 	symptom := strings.TrimSpace(strings.Join(args, " "))
 
 	gitClient := infraGit.NewClient()
@@ -80,10 +82,8 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if jsonFlag {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		return output.EncodeJSON(out, result)
 	}
 
 	fmt.Fprintf(out, "Diagnose: chain_verified=%v window=seq %d..%d (%d candidates)\n",
@@ -105,31 +105,16 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 // re-ranker adapter. The re-rank client uses the diagnose-specific
 // model/base-url/key when set, falling back to the main provider config (so a
 // user who wants a single smarter model sets only git-agent.diagnose-model).
-// --llm-* flags override at the highest precedence.
+// All four are config keys, not flags.
 func buildDiagnoseReranker(cmd *cobra.Command) (application.DiagnoseReranker, error) {
 	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
-	// --llm-* overrides take precedence over the resolved diagnose-* fields,
-	// which already fall back to the main provider config.
-	if v, _ := cmd.Flags().GetString("llm-model"); v != "" {
-		providerCfg.DiagnoseModel = v
-	}
-	if v, _ := cmd.Flags().GetString("llm-base-url"); v != "" {
-		providerCfg.DiagnoseBaseURL = v
-	}
-	if v, _ := cmd.Flags().GetString("llm-api-key"); v != "" {
-		providerCfg.DiagnoseAPIKey = v
-	}
-	if v, _ := cmd.Flags().GetDuration("llm-timeout"); v > 0 {
-		providerCfg.DiagnoseTimeout = v
-	}
-
 	if providerCfg.DiagnoseAPIKey == "" {
 		return nil, agentErrors.NewExitCodeError(1, "error: no API key configured for --llm\n"+
-			"hint: set --llm-api-key, configure git-agent.api-key, or use --free with a built-in key")
+			"hint: set git-agent.diagnose-api-key (or git-agent.api-key), or use --free with a built-in key")
 	}
 
 	llmClient := infraOpenAI.NewClient(
@@ -146,12 +131,10 @@ func buildDiagnoseReranker(cmd *cobra.Command) (application.DiagnoseReranker, er
 func init() {
 	diagnoseCmd.Flags().StringSlice("file", nil, "seed file(s) to anchor the relevant set")
 	diagnoseCmd.Flags().Bool("llm", false, "re-rank the top candidates with the configured LLM")
-	diagnoseCmd.Flags().String("llm-model", "", "model for the re-rank LLM (overrides git-agent.diagnose-model; default: the main model)")
-	diagnoseCmd.Flags().String("llm-base-url", "", "base URL for the re-rank LLM (overrides git-agent.diagnose-base-url)")
-	diagnoseCmd.Flags().String("llm-api-key", "", "API key for the re-rank LLM (overrides git-agent.diagnose-api-key)")
-	diagnoseCmd.Flags().Duration("llm-timeout", 0, "per-attempt HTTP timeout for the re-rank LLM (default 120s)")
 	diagnoseCmd.Flags().Bool("force", false, "proceed despite an Event Log chain integrity break")
 	diagnoseCmd.Flags().Int("top", 5, "number of candidates passed to the LLM re-rank")
 	diagnoseCmd.Flags().Bool("json", false, "emit the diagnosis result as JSON")
-	rootCmd.AddCommand(diagnoseCmd)
+	diagnoseCmd.Flags().Bool("text", false, "emit the diagnosis result as text")
+	diagnoseCmd.MarkFlagsMutuallyExclusive("json", "text")
+	graphCmd.AddCommand(diagnoseCmd)
 }
