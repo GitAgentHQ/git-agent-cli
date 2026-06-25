@@ -1,6 +1,6 @@
 ---
 name: use-git-agent
-description: Operates the git-agent CLI — commits, init, config, provider setup, and the code graph (`git-agent impact` for co-change and AST-structural analysis, `git-agent timeline` for action history). Use whenever the user mentions git-agent, wants to commit/init, configure a provider, or — when modifying a feature — needs to find the other files likely to need changes.
+description: Operates the git-agent CLI — commits, init, config, provider setup, and the code graph (`git-agent graph impact` for co-change and AST-structural analysis, `git-agent graph timeline` for action history). Use whenever the user mentions git-agent, wants to commit/init, configure a provider, or — when modifying a feature — needs to find the other files likely to need changes.
 ---
 
 # Git Agent CLI
@@ -18,14 +18,14 @@ and are easy to forget. Two analysis modes are available:
 
 ```
 # Given the files of a feature, rank the files that usually change with them:
-git-agent impact application/commit_service.go cmd/commit.go --json
+git-agent graph impact application/commit_service.go cmd/commit.go --json
 
 # Given a directory (a whole module/feature area):
-git-agent impact infrastructure/hook --json
+git-agent graph impact infrastructure/hook --json
 
 # No arguments: use your CURRENT uncommitted edits as the seeds —
 # "given what I've already changed, what else usually moves with it?"
-git-agent impact --json
+git-agent graph impact --json
 ```
 
 Read the JSON to prioritise: each entry has `seed_matches` (how many of the seed
@@ -43,10 +43,10 @@ needed. Pass `--symbol <name>` (mode defaults to `structural`):
 
 ```
 # Find all symbols structurally linked to CommitService:
-git-agent impact --symbol CommitService --json
+git-agent graph impact --symbol CommitService --json
 
 # Combine both signals — co-change AND structural — for the richest view:
-git-agent impact --symbol CommitService --mode combined --json
+git-agent graph impact --symbol CommitService --mode combined --json
 ```
 
 The JSON shape is different from co-change: a `seed_node` object (the symbol
@@ -154,10 +154,14 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 
 | Command | What it does |
 |---|---|
-| `git-agent impact [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes). Finds the other files a feature change is likely to need. JSON via `--json` |
-| `git-agent impact --symbol <name>` | AST-structural impact: find symbols that call or are called by the given symbol. `--mode combined` merges co-change + structural |
-| `git-agent timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
-| `git-agent diagnose` | Combine impact + timeline to identify which agent action introduced a regression (not yet implemented — reserved) |
+| `git-agent graph impact [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes). Finds the other files a feature change is likely to need. JSON via `--json` |
+| `git-agent graph impact --symbol <name>` | AST-structural impact: find symbols that call or are called by the given symbol. `--mode combined` merges co-change + structural |
+| `git-agent graph timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
+| `git-agent graph diagnose [symptom]` | Trace a failing symptom to the agent action that most likely introduced it (suspect window + co-change + ranking). Add `--llm` to re-rank candidates via the configured diagnose LLM |
+| `git-agent graph provenance <file>` | Rename-aware change history for one file: every captured change plus out-of-band changes, folding in pre-rename identities |
+| `git-agent graph status` | Show graph index health and row counts (commits, files, authors, co-change pairs, sessions, actions) |
+| `git-agent graph verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
+| `git-agent graph rebuild` | Rebuild the derived projections (sessions, actions, co-change) from the Event Log |
 | `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
 | `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
