@@ -162,6 +162,12 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | `git-agent graph status` | Show graph index health and row counts (commits, files, authors, co-change pairs, sessions, actions) |
 | `git-agent graph verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
 | `git-agent graph rebuild` | Rebuild the derived projections (sessions, actions, co-change) from the Event Log |
+| `git-agent graph sync` | Bring projections up to date with the Event Log (no-op when already current; full replay when stale) |
+| `git-agent graph callers <symbol>` | AST nodes that call or reference a symbol (incoming edges), up to `--depth` |
+| `git-agent graph callees <symbol>` | AST nodes a symbol calls or references (outgoing edges), up to `--depth` |
+| `git-agent graph node <name>` | A symbol's location, signature, source snippet, and one-hop caller/callee trail |
+| `git-agent graph query <search>` | FTS5 symbol search by name, qualified name, or signature; filter with `--kind` |
+| `git-agent graph affected [files...]` | Test files transitively affected by changes to the given files (stdin: `git diff --name-only`) |
 | `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
 | `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
