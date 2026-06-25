@@ -292,6 +292,14 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*graph.GraphStats, err
 		}
 	}
 
+	// DB file size via page_count * page_size (WAL-aware: main file pages).
+	var pageCount, pageSize int64
+	if err := r.db().QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err == nil {
+		if err := r.db().QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err == nil {
+			stats.DBSizeBytes = pageCount * pageSize
+		}
+	}
+
 	return stats, nil
 }
 
