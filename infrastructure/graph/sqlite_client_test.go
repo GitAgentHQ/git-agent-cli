@@ -34,12 +34,12 @@ func TestSQLiteClient_InitSchema(t *testing.T) {
 		t.Fatalf("InitSchema() error = %v", err)
 	}
 
-	// Verify all 13 tables exist.
+	// Verify all 14 tables exist.
 	wantTables := []string{
 		"commits", "files", "authors", "modifies", "authored",
 		"co_changed", "renames", "index_state",
 		"sessions", "actions", "action_modifies", "action_produces",
-		"capture_baseline",
+		"events", "event_files",
 	}
 
 	db := client.DB()

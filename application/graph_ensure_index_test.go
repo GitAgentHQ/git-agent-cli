@@ -303,11 +303,8 @@ func TestEnsureIndex_ForceReindexPreservesCaptureHistory(t *testing.T) {
 		Diff:         "diff --git a/a.go b/a.go\n",
 		FilesChanged: []string{"a.go"},
 		Timestamp:    101,
-	}, []graph.FileChange{{Path: "a.go", Additions: 1}}, nil); err != nil {
+	}, []graph.FileChange{{Path: "a.go", Additions: 1}}); err != nil {
 		t.Fatalf("CreateActionBatch() error = %v", err)
-	}
-	if err := repo.UpdateCaptureBaseline(ctx, map[string]string{"a.go": "hash-v1"}); err != nil {
-		t.Fatalf("UpdateCaptureBaseline() error = %v", err)
 	}
 	head := strings.TrimSpace(git("rev-parse", "HEAD"))
 	if err := repo.CreateActionProduces(ctx, "session-1:1", head, "a.go"); err != nil {
@@ -323,13 +320,8 @@ func TestEnsureIndex_ForceReindexPreservesCaptureHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStats() error = %v", err)
 	}
-	baseline, err := repo.GetCaptureBaseline(ctx, []string{"a.go"})
-	if err != nil {
-		t.Fatalf("GetCaptureBaseline() error = %v", err)
-	}
-
-	if stats.ActionCount != 1 || stats.SessionCount != 1 || baseline["a.go"] != "hash-v1" {
-		t.Fatalf("force reindex should preserve capture data, got stats=%+v baseline=%v", stats, baseline)
+	if stats.ActionCount != 1 || stats.SessionCount != 1 {
+		t.Fatalf("force reindex should preserve capture data, got stats=%+v", stats)
 	}
 	var linkCount int
 	if err := repo.Client().DB().QueryRowContext(ctx,

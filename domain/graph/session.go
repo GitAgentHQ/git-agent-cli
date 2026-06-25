@@ -1,6 +1,7 @@
 package graph
 
-// SessionNode represents a group of sequential agent actions.
+// SessionNode represents a group of sequential agent actions. It is a Projection
+// DTO derived from the Event Log, not a source-of-truth record.
 type SessionNode struct {
 	ID         string
 	Source     string // "claude-code", "cursor", "windsurf", "human"
@@ -16,7 +17,8 @@ type SessionIDGenerator interface {
 	NewSessionID() string
 }
 
-// ActionNode represents a single agent tool call or human edit.
+// ActionNode represents a single agent tool call or human edit. It is a
+// Projection DTO derived from the Event Log, not a source-of-truth record.
 type ActionNode struct {
 	ID           string // "{session_id}:{sequence}"
 	SessionID    string
@@ -28,28 +30,28 @@ type ActionNode struct {
 	Message      string
 }
 
-// CaptureRequest is the input for recording an agent action.
+// CaptureRequest is the input for recording an agent action. Event carries the
+// observed, already-redacted hook payload to append; it is nil when the caller
+// has no payload (interactive/malformed) or is ending a session.
 type CaptureRequest struct {
 	Source     string
 	Tool       string
 	InstanceID string
 	Message    string
 	EndSession bool
+	Event      *EventRecord
+	// ToolResponse is the redacted Bash tool_response bytes, used only to derive
+	// the Outcome Event exit code. It is a transient classification input, not a
+	// stored field — the hashed unit remains Event.PayloadRaw.
+	ToolResponse []byte
 }
 
 // CaptureResult is the output of a capture operation.
 type CaptureResult struct {
-	ActionID     string   `json:"action_id"`
-	SessionID    string   `json:"session_id"`
-	FilesChanged []string `json:"files_changed"`
-	CaptureMs    int64    `json:"capture_ms"`
-	Skipped      bool     `json:"skipped,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-}
-
-// CaptureBaseline tracks file content hashes for delta-based capture.
-type CaptureBaseline struct {
-	FilePath    string
-	ContentHash string
-	CapturedAt  int64
+	EventID   string `json:"event_id,omitempty"`
+	Seq       int64  `json:"seq,omitempty"`
+	Source    string `json:"source,omitempty"`
+	CaptureMs int64  `json:"capture_ms"`
+	Skipped   bool   `json:"skipped,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }

@@ -13,7 +13,7 @@ import (
 // CurrentSchemaVersion is the schema version written by this git-agent build.
 // A database with a higher stored version was produced by a newer binary and
 // cannot be read safely.
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 // SQLiteClient wraps a database/sql connection to a SQLite database
 // using the modernc.org/sqlite pure-Go driver.
@@ -423,11 +423,49 @@ var schemaStatements = []string{
 		PRIMARY KEY (action_id, commit_hash, file_path)
 	)`,
 
-	`CREATE TABLE IF NOT EXISTS capture_baseline (
-		file_path TEXT PRIMARY KEY,
-		content_hash TEXT NOT NULL,
-		captured_at INTEGER NOT NULL
+	// Event Log (append-only, hash-chained source of truth)
+	`CREATE TABLE IF NOT EXISTS events (
+		seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_id        TEXT NOT NULL UNIQUE,
+		recorded_at     INTEGER NOT NULL,
+		source          TEXT NOT NULL,
+		instance_id     TEXT,
+		kind            TEXT NOT NULL,
+		hook_event_name TEXT,
+		tool_name       TEXT,
+		cwd             TEXT,
+		transcript_path TEXT,
+		permission_mode TEXT,
+		payload_raw     TEXT NOT NULL,
+		payload_size    INTEGER NOT NULL DEFAULT 0,
+		truncated       INTEGER NOT NULL DEFAULT 0,
+		command         TEXT,
+		exit_code       INTEGER,
+		exit_code_source TEXT,
+		is_test         INTEGER NOT NULL DEFAULT 0,
+		is_build        INTEGER NOT NULL DEFAULT 0,
+		test_name       TEXT,
+		prev_hash       TEXT NOT NULL,
+		this_hash       TEXT NOT NULL
 	)`,
+
+	// Derived (Enrichment-populated; rebuildable). One row per touched file.
+	`CREATE TABLE IF NOT EXISTS event_files (
+		event_seq   INTEGER NOT NULL,
+		file_path   TEXT NOT NULL,
+		before_blob TEXT,
+		after_blob  TEXT,
+		change_kind TEXT,
+		additions   INTEGER NOT NULL DEFAULT 0,
+		deletions   INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (event_seq, file_path)
+	)`,
+
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_events_this_hash ON events(this_hash)`,
+	`CREATE INDEX IF NOT EXISTS idx_events_recorded_at ON events(recorded_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_events_source ON events(source)`,
+	`CREATE INDEX IF NOT EXISTS idx_events_instance ON events(source, instance_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_event_files_path ON event_files(file_path)`,
 
 	// Performance indexes
 	`CREATE INDEX IF NOT EXISTS idx_commits_timestamp ON commits(timestamp)`,

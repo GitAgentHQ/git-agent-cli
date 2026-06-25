@@ -2,178 +2,119 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
 
-const (
-	maxDiffBytes       = 100 * 1024 // 100KB
-	sessionTimeoutMins = 30
-)
+const sessionTimeoutMins = 30
 
-// CaptureService records delta-based agent actions into the graph.
+// CaptureService appends observed agent actions to the hash-chained Event Log.
+// The hot path does one thing: build the EventRecord, read the chain head, hash,
+// and append. All git/diff/projection work lives on the cold Enrichment path.
 type CaptureService struct {
-	repo  graph.GraphRepository
-	git   graph.GraphGitClient
-	idGen graph.SessionIDGenerator
+	repo   graph.GraphRepository
+	git    graph.GraphGitClient
+	idGen  graph.SessionIDGenerator
+	hasher graph.EventHasher
 }
 
-// NewCaptureService creates a CaptureService with the given repository, git
-// client, and session ID generator.
-func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient, idGen graph.SessionIDGenerator) *CaptureService {
-	return &CaptureService{repo: repo, git: git, idGen: idGen}
+// NewCaptureService creates a CaptureService. git is retained only for the cold
+// Enrichment/Reconciliation paths; the hot path never calls it.
+func NewCaptureService(repo graph.GraphRepository, git graph.GraphGitClient, idGen graph.SessionIDGenerator, hasher graph.EventHasher) *CaptureService {
+	return &CaptureService{repo: repo, git: git, idGen: idGen, hasher: hasher}
 }
 
-// Capture records a delta-based action. It detects which files changed since
-// the last capture by comparing content hashes, then stores only the delta.
+// Capture appends one Event to the chain. It builds the record from req.Event
+// (already redacted upstream), links it to the current chain head, and appends
+// it inside a single BEGIN IMMEDIATE transaction. On lock contention it skips
+// without error so the agent is never blocked.
 func (s *CaptureService) Capture(ctx context.Context, req graph.CaptureRequest) (*graph.CaptureResult, error) {
 	start := time.Now()
 
 	if req.EndSession {
-		return s.endSession(ctx, req.Source, req.InstanceID, start)
-	}
-
-	changedFiles, err := s.git.DiffNameOnly(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("diff name only: %w", err)
-	}
-	changedFiles = excludeToolingPaths(changedFiles)
-	if len(changedFiles) == 0 {
 		return &graph.CaptureResult{
 			Skipped:   true,
-			Reason:    "no changes detected",
+			Reason:    "session ended",
 			CaptureMs: time.Since(start).Milliseconds(),
 		}, nil
 	}
 
-	// Hash every changed file.
-	currentHashes := make(map[string]string, len(changedFiles))
-	for _, f := range changedFiles {
-		h, err := s.git.HashObject(ctx, f)
-		if err != nil {
-			return nil, fmt.Errorf("hash object %s: %w", f, err)
-		}
-		currentHashes[f] = h
-	}
-
-	// Compare against the baseline to find true deltas.
-	baselineHashes, err := s.repo.GetCaptureBaseline(ctx, changedFiles)
-	if err != nil {
-		return nil, fmt.Errorf("get capture baseline: %w", err)
-	}
-
-	var deltaFiles []string
-	for _, f := range changedFiles {
-		baseHash, exists := baselineHashes[f]
-		if !exists || baseHash != currentHashes[f] {
-			deltaFiles = append(deltaFiles, f)
-		}
-	}
-
-	if len(deltaFiles) == 0 {
+	if req.Event == nil {
 		return &graph.CaptureResult{
 			Skipped:   true,
-			Reason:    "no changes detected",
+			Reason:    "no payload observed",
 			CaptureMs: time.Since(start).Milliseconds(),
 		}, nil
 	}
 
-	// Get the diff for delta files only.
-	deltaDiff, err := s.git.DiffForFiles(ctx, deltaFiles)
-	if err != nil {
-		return nil, fmt.Errorf("diff for files: %w", err)
-	}
-	// Tally per-file +/- from the full diff before truncating it for storage.
-	stats := parseDiffStat(deltaDiff)
-	modified := make([]graph.FileChange, len(deltaFiles))
-	for i, f := range deltaFiles {
-		modified[i] = graph.FileChange{Path: f, Additions: stats[f].Additions, Deletions: stats[f].Deletions}
-	}
-	deltaDiff = truncateDiff(deltaDiff)
-
-	// Find or create session.
-	session, err := s.repo.GetActiveSession(ctx, req.Source, req.InstanceID, sessionTimeoutMins)
-	if err != nil {
-		return nil, fmt.Errorf("get active session: %w", err)
-	}
-	if session == nil {
-		session = &graph.SessionNode{
-			ID:         s.idGen.NewSessionID(),
-			Source:     req.Source,
-			InstanceID: req.InstanceID,
-			StartedAt:  time.Now().Unix(),
-		}
-		if err := s.repo.UpsertSession(ctx, *session); err != nil {
-			return nil, fmt.Errorf("upsert session: %w", err)
-		}
+	e := *req.Event
+	e.EventID = s.idGen.NewSessionID()
+	if e.RecordedAt == 0 {
+		e.RecordedAt = time.Now().Unix()
 	}
 
-	// The action's sequence and id are derived atomically inside CreateActionBatch
-	// to avoid a TOCTOU race between concurrent captures on the same session.
-	action := graph.ActionNode{
-		SessionID:    session.ID,
-		Tool:         req.Tool,
-		Diff:         deltaDiff,
-		FilesChanged: deltaFiles,
-		Timestamp:    time.Now().Unix(),
-		Message:      req.Message,
+	if e.ToolName == "Bash" && e.Command != "" {
+		classifyOutcome(&e, req.ToolResponse)
 	}
-	// Persist the action and baseline for ALL changed files (not just delta) in
-	// one transaction so a baseline failure cannot leave a dangling action row.
-	persisted, err := s.repo.CreateActionBatch(ctx, action, modified, currentHashes)
+
+	prev, err := s.repo.HeadHash(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create action: %w", err)
+		return nil, fmt.Errorf("head hash: %w", err)
+	}
+	e.PrevHash = prev
+	e.ThisHash = s.hasher.Hash(prev, e)
+
+	persisted, err := s.repo.AppendEvent(ctx, e)
+	if err != nil {
+		if errors.Is(err, graph.ErrChainBusy) {
+			return &graph.CaptureResult{
+				Skipped:   true,
+				Reason:    "event chain busy",
+				CaptureMs: time.Since(start).Milliseconds(),
+			}, nil
+		}
+		return nil, fmt.Errorf("append event: %w", err)
 	}
 
 	return &graph.CaptureResult{
-		ActionID:     persisted.ID,
-		SessionID:    persisted.SessionID,
-		FilesChanged: deltaFiles,
-		CaptureMs:    time.Since(start).Milliseconds(),
-	}, nil
-}
-
-// EndSession finds and ends the active session for the given source/instance.
-func (s *CaptureService) EndSession(ctx context.Context, source, instanceID string) error {
-	session, err := s.repo.GetActiveSession(ctx, source, instanceID, sessionTimeoutMins)
-	if err != nil {
-		return fmt.Errorf("get active session: %w", err)
-	}
-	if session == nil {
-		return nil
-	}
-	return s.repo.EndSession(ctx, session.ID)
-}
-
-func (s *CaptureService) endSession(ctx context.Context, source, instanceID string, start time.Time) (*graph.CaptureResult, error) {
-	if err := s.EndSession(ctx, source, instanceID); err != nil {
-		return nil, err
-	}
-	return &graph.CaptureResult{
-		Skipped:   true,
-		Reason:    "session ended",
+		EventID:   persisted.EventID,
+		Seq:       persisted.Seq,
+		Source:    string(persisted.Source),
 		CaptureMs: time.Since(start).Milliseconds(),
 	}, nil
 }
 
-// excludeToolingPaths drops agent-tooling directories from the captured file
-// set so each action reflects only the codebase changes the agent made.
-func excludeToolingPaths(files []string) []string {
-	filtered := files[:0:0]
-	for _, f := range files {
-		if graph.IsToolingPath(f) {
-			continue
-		}
-		filtered = append(filtered, f)
+// classifyOutcome promotes a Bash tool Event to an Outcome Event in place. It
+// classifies the command as test/build, resolves the exit code from the
+// tool_response (reported) or infers it from failure markers (inferred), and
+// records the result on e. Parse failure never fabricates an exit code: with no
+// reported code and no failure marker the outcome is a reported-clean success
+// only when the response itself states it, else an inferred success (0).
+func classifyOutcome(e *graph.EventRecord, toolResponse []byte) {
+	e.Kind = graph.EventKindOutcome
+
+	cls := ClassifyCommand(e.Command)
+	e.IsTest = cls.IsTest
+	e.IsBuild = cls.IsBuild
+	e.TestName = cls.TestName
+
+	if code, ok := ExtractReportedExitCode(toolResponse); ok {
+		e.ExitCode = &code
+		e.ExitCodeSource = "reported"
+		return
 	}
-	return filtered
+
+	code, _ := InferExitCode(toolResponse)
+	e.ExitCode = &code
+	e.ExitCodeSource = "inferred"
 }
 
-func truncateDiff(d string) string {
-	if len(d) <= maxDiffBytes {
-		return d
-	}
-	return d[:maxDiffBytes] + "\n[truncated]"
+// EndSession is retained for the cmd-layer end-session hook. Session boundaries
+// are derived on the cold projection path from inter-Event gaps, so there is no
+// live session row to close; this is a no-op on the append-only hot path.
+func (s *CaptureService) EndSession(ctx context.Context, source, instanceID string) error {
+	return nil
 }

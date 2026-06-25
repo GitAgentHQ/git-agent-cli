@@ -161,6 +161,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
 				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
 				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
+				// Reconcile the working tree against the Event Log before committing
+				// so any out-of-band edit is recorded and attributable. Best-effort:
+				// a reconcile failure must never block a commit.
+				graphGit := infraGit.NewGraphClient(root)
+				_, _ = application.NewReconcileService(graphRepo, graphGit).Reconcile(cmd.Context())
 			}
 		}
 	}

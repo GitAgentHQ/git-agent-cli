@@ -7,6 +7,10 @@
 - modify (run-only, no edits to test bodies): `e2e/impact_ast_test.go`,
   `e2e/capture_timeline_test.go` and the existing `application`/`infrastructure`
   index/impact unit tests — execute them unchanged and confirm identical results.
+  Note (Batch 4): `e2e/capture_timeline_test.go` gained one *additive* capture
+  test, `TestCapture_RebuildReflectsTimeline`, restoring the projection-derived
+  timeline coverage once `graph rebuild` landed (task 013). It exercises capture
+  only (no code index), so the scope boundary still holds; run it unchanged.
 - create (only if a guard is missing): a small regression guard test asserting
   the untouched index files were not modified by the redesign (a source/diff
   check), placed beside the existing index tests.
