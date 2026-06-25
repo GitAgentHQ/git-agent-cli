@@ -251,6 +251,14 @@ func ensureASTIndexForSymbol(ctx context.Context, root string, astRepo graph.AST
 		EnsureForSymbol(ctx, root, symbol, force, progress)
 }
 
+// ensureASTIndexAll brings the AST index up to date for queries that are not
+// scoped to a single symbol (graph query, graph node by name).
+func ensureASTIndexAll(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, force bool, progress io.Writer) error {
+	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
+	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
+		EnsureAll(ctx, root, force, progress)
+}
+
 // resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
 // the working-tree changes are used. Each arg is normalized (git pathspec
 // semantics); a directory expands to the git-tracked files beneath it.
