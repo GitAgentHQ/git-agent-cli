@@ -35,11 +35,12 @@ A file with `seed_matches` equal to the number of seeds is coupled to the whole
 feature; open it before you finish. The first run auto-indexes git history;
 queries are offline and need no LLM or API key.
 
-### Structural mode — symbols that call or are called by a given symbol
+### Structural mode — symbols that call or reference a given symbol
 
 When you know the function, struct, or type you're changing, structural mode
-walks the AST to find direct callers, callees, and references — no history
-needed. Pass `--symbol <name>` (mode defaults to `structural`):
+walks the AST to find direct callers and references (incoming edges — who
+depends on it) — no history needed. Pass `--symbol <name>` (mode defaults to
+`structural`):
 
 ```
 # Find all symbols structurally linked to CommitService:

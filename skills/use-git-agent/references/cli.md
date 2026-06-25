@@ -355,8 +355,10 @@ stay 0 until then.
 
 ### Fields
 
-`exists`, `last_indexed_commit`, `commit_count`, `file_count`, `author_count`,
-`co_changed_count`, `session_count`, `action_count`, `db_size_bytes`.
+`exists`, `last_indexed_commit` (omitempty — absent until git history is
+indexed by the first `graph impact`), `commit_count`, `file_count`,
+`author_count`, `co_changed_count`, `session_count`, `action_count`,
+`db_size_bytes` (SQLite page_count × page_size).
 
 ## git-agent graph verify
 
@@ -448,7 +450,7 @@ up to `--depth`. The inverse of `callees`. Auto-indexes the AST on first run.
 
 ### Fields
 
-`symbol`, `direction`, `depth`, `results[]` (`{Node, Edge, Depth}`), `total`.
+`symbol`, `direction`, `depth`, `results[]` (`{node, edge, depth}`), `total`.
 
 ## git-agent graph callees
 
@@ -474,7 +476,7 @@ names can be ambiguous). Auto-indexes the AST on first run.
 ### Fields (per entry)
 
 `node` (full `ASTNode`), `source` (snippet, omit if unavailable), `callers[]`,
-`callees[]` (`{Node, Edge, Depth}`).
+`callees[]` (`{node, edge, depth}`).
 
 ## git-agent graph query
 
@@ -513,7 +515,7 @@ the working-tree changes.
 
 ### Fields
 
-`changed_files[]`, `tests[]` (`{TestFile, Symbol, Kind, Line, Depth, Via}`),
+`changed_files[]`, `tests[]` (`{test_file, symbol, kind, line, depth, via}`),
 `total`.
 
 ## git-agent graph diagnose
@@ -547,7 +549,7 @@ failure markers (`--- FAIL`, `PASS`, `ok`/`FAIL` lines) and promotes the Event
 to `Kind: "outcome"` with the test name and pass/fail. Without Outcome Events
 there is no green/red boundary, so diagnose returns no candidates. To use
 diagnose: capture the agent's test-run actions (the PostToolUse hook does this
-automatically for Bash), then `graph rebuild`, then `graph diagnose`.
+automatically for Bash), then `graph index`, then `graph diagnose`.
 
 ### Flags
 
