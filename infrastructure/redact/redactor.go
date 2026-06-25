@@ -5,17 +5,23 @@
 package redact
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 // maxPayloadBytes caps the stored payload. Anything larger is truncated and
 // flagged; the chain hash then covers exactly the stored (truncated) bytes.
 const maxPayloadBytes = 512 * 1024
+
+// maxFieldBytes caps a single JSON string value. Oversized values are replaced
+// in place by a Truncation Marker so the stored payload stays valid JSON (a tool
+// Event whose huge output would otherwise be sliced into unparseable bytes still
+// yields its file/command structure on Replay).
+const maxFieldBytes = 64 * 1024
 
 // Result is the outcome of redacting a payload.
 type Result struct {
@@ -37,14 +43,24 @@ type tokenRule struct {
 	id    string
 	gate  string // cheap substring pre-filter; empty means always scan
 	regex *regexp.Regexp
+	repl  string // replacement template ($1 groups); empty => typed placeholder
 }
 
-// tokenRules is the compiled-once set of inline-secret detectors (Layer B).
+// tokenRules is the compiled-once set of inline-secret detectors (Layer B). It
+// covers the common credential shapes an agent hook payload can carry: cloud
+// keys, VCS tokens, generic API keys, JWT/bearer headers, and URL userinfo.
 var tokenRules = []tokenRule{
 	{id: "aws-access-token", gate: "", regex: regexp.MustCompile(`(AKIA|ASIA)[A-Z0-9]{16}`)},
-	{id: "github-token", gate: "ghp_", regex: regexp.MustCompile(`ghp_[0-9A-Za-z]{36}`)},
+	{id: "github-token", gate: "gh", regex: regexp.MustCompile(`gh[posru]_[0-9A-Za-z]{36,255}`)},
+	{id: "github-pat", gate: "github_pat_", regex: regexp.MustCompile(`github_pat_[0-9A-Za-z_]{22,255}`)},
 	{id: "slack-token", gate: "xox", regex: regexp.MustCompile(`xox[baprs]-[0-9A-Za-z-]{10,}`)},
-	{id: "private-key", gate: "PRIVATE KEY", regex: regexp.MustCompile(`-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----`)},
+	{id: "openai-key", gate: "sk-", regex: regexp.MustCompile(`sk-(?:proj-|ant-)?[0-9A-Za-z_-]{20,}`)},
+	{id: "stripe-key", gate: "sk_", regex: regexp.MustCompile(`sk_(?:live|test)_[0-9A-Za-z]{16,}`)},
+	{id: "google-api-key", gate: "AIza", regex: regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)},
+	{id: "jwt", gate: "eyJ", regex: regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
+	{id: "bearer-token", gate: "earer", regex: regexp.MustCompile(`(?i)(bearer\s+)[0-9A-Za-z._\-+/=]{16,}`), repl: "${1}[REDACTED:bearer-token]"},
+	{id: "url-credentials", gate: "://", regex: regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://[^:/\s@\[\]]+:)[^@/\s\[\]]+(@)`), repl: "${1}[REDACTED:url-credentials]${2}"},
+	{id: "private-key", gate: "PRIVATE KEY", regex: regexp.MustCompile(`-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[A-Za-z0-9+/=\s\\]*(?:-----END (?:[A-Z ]+ )?PRIVATE KEY-----)?`)},
 }
 
 // sensitivePatterns is the path denylist (Layer A). A field whose value looks
@@ -76,6 +92,14 @@ func (jsonRedactor) Redact(payload []byte) Result {
 	redacted = redactTokens(redacted)
 
 	truncated := false
+	// Prefer field-level truncation so the stored payload stays valid JSON; fall
+	// back to a raw slice only when the payload is not parseable JSON.
+	if int64(len(redacted)) > maxPayloadBytes {
+		if capped, ok := truncateJSONFields(redacted); ok && int64(len(capped)) <= maxPayloadBytes {
+			redacted = capped
+			truncated = true
+		}
+	}
 	if int64(len(redacted)) > maxPayloadBytes {
 		redacted = redacted[:maxPayloadBytes]
 		truncated = true
@@ -84,55 +108,46 @@ func (jsonRedactor) Redact(payload []byte) Result {
 	return Result{Bytes: redacted, OrigSize: orig, Truncated: truncated}
 }
 
-// redactSensitivePaths inspects the payload as JSON and, when a file_path field
-// names a denylisted path, replaces the sibling content/old_string/new_string
-// values with a Redaction Digest. On any JSON shape it does not recognize it
-// returns the input unchanged (the token scan still applies).
+// redactSensitivePaths inspects the payload as JSON and, wherever an object
+// carries a denylisted file_path, replaces that object's
+// content/old_string/new_string values with a Redaction Digest. It recurses into
+// every nested object so a secret file's body is caught regardless of nesting
+// depth (e.g. a tool_response.file.content shape), and returns the input
+// unchanged when it is not a JSON object (the token scan still applies).
 func redactSensitivePaths(payload []byte) []byte {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &root); err != nil {
-		return payload
-	}
-
-	changed := false
-	for _, key := range []string{"tool_input", "tool_response"} {
-		raw, ok := root[key]
-		if !ok {
-			continue
-		}
-		if newRaw, did := redactSensitiveObject(raw); did {
-			root[key] = newRaw
-			changed = true
-		}
-	}
-	// Also handle a flat object that carries file_path at the top level.
-	if newRoot, did := redactSensitiveFields(root); did {
-		root = newRoot
-		changed = true
-	}
-
+	newRaw, changed := redactRawObject(payload)
 	if !changed {
 		return payload
 	}
-	out, err := json.Marshal(root)
-	if err != nil {
-		return payload
-	}
-	return out
+	return newRaw
 }
 
-// redactSensitiveObject decodes a nested JSON object (tool_input/tool_response),
-// redacts its content fields when its file_path is denylisted, and re-encodes.
-func redactSensitiveObject(raw json.RawMessage) (json.RawMessage, bool) {
+// redactRawObject parses raw as a JSON object, redacts its content fields when
+// its own file_path is denylisted, recurses into nested object values, and
+// re-encodes only when something changed (untouched subtrees keep their verbatim
+// bytes).
+func redactRawObject(raw json.RawMessage) (json.RawMessage, bool) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return raw, false
 	}
-	newObj, did := redactSensitiveFields(obj)
-	if !did {
+
+	changed := false
+	if newObj, did := redactSensitiveFields(obj); did {
+		obj = newObj
+		changed = true
+	}
+	for k, v := range obj {
+		if newV, did := redactRawObject(v); did {
+			obj[k] = newV
+			changed = true
+		}
+	}
+
+	if !changed {
 		return raw, false
 	}
-	out, err := json.Marshal(newObj)
+	out, err := json.Marshal(obj)
 	if err != nil {
 		return raw, false
 	}
@@ -189,16 +204,66 @@ func isSensitivePath(path string) bool {
 	return false
 }
 
-// redactTokens replaces every inline-secret match with its Typed Placeholder.
+// redactTokens replaces every inline-secret match with its Typed Placeholder (or
+// the rule's group-preserving replacement template when one is set).
 func redactTokens(payload []byte) []byte {
 	out := payload
 	for _, rule := range tokenRules {
-		if rule.gate != "" && !strings.Contains(string(out), rule.gate) {
+		if rule.gate != "" && !bytes.Contains(out, []byte(rule.gate)) {
 			continue
 		}
-		out = rule.regex.ReplaceAll(out, []byte(typedPlaceholder(rule.id)))
+		if rule.repl != "" {
+			out = rule.regex.ReplaceAll(out, []byte(rule.repl))
+			continue
+		}
+		out = rule.regex.ReplaceAllLiteral(out, []byte(typedPlaceholder(rule.id)))
 	}
 	return out
+}
+
+// truncateJSONFields replaces every JSON string value longer than maxFieldBytes
+// with a Truncation Marker, keeping the payload valid JSON. It returns ok=false
+// when payload is not parseable JSON or nothing was oversized.
+func truncateJSONFields(payload []byte) ([]byte, bool) {
+	var root any
+	if err := json.Unmarshal(payload, &root); err != nil {
+		return nil, false
+	}
+	truncated := false
+	root = truncateJSONValue(root, &truncated)
+	if !truncated {
+		return nil, false
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// truncateJSONValue recursively caps oversized string values in a decoded JSON
+// tree, recording whether any value was replaced.
+func truncateJSONValue(v any, truncated *bool) any {
+	switch node := v.(type) {
+	case string:
+		if len(node) > maxFieldBytes {
+			*truncated = true
+			return fmt.Sprintf("[REDACTED-TRUNCATED:original-len=%d]", len(node))
+		}
+		return node
+	case map[string]any:
+		for k, child := range node {
+			node[k] = truncateJSONValue(child, truncated)
+		}
+		return node
+	case []any:
+		for i, child := range node {
+			node[i] = truncateJSONValue(child, truncated)
+		}
+		return node
+	default:
+		return v
+	}
 }
 
 // redactionDigest formats a Redaction Digest (sha256 + length) stored in place

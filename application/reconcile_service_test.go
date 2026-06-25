@@ -94,6 +94,11 @@ func TestReconcileService_AppendsUnknownOutOfBandEvent(t *testing.T) {
 		t.Fatalf("OutOfBandAppended = %d, want 1", res.OutOfBandAppended)
 	}
 
+	// event_files are derived on Replay; fold the appended out-of-band Event.
+	if err := pr.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild after reconcile: %v", err)
+	}
+
 	oob := outOfBandEvents(t, repo)
 	if len(oob) != 1 {
 		t.Fatalf("out-of-band events = %d, want 1", len(oob))
@@ -156,6 +161,10 @@ func TestReconcileService_OnlyUnexplainedResidual(t *testing.T) {
 	}
 	if res.OutOfBandAppended != 1 {
 		t.Fatalf("OutOfBandAppended = %d, want 1 (only b.go)", res.OutOfBandAppended)
+	}
+
+	if err := pr.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild after reconcile: %v", err)
 	}
 
 	oob := outOfBandEvents(t, repo)

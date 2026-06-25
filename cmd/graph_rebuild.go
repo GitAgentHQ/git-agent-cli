@@ -13,10 +13,9 @@ import (
 var graphRebuildCmd = &cobra.Command{
 	Use:   "rebuild",
 	Short: "Rebuild the derived projections from the Event Log",
-	Long: `Verify the hash-chained Event Log, then regenerate the derived
-projections (sessions, actions, action_modifies, event_files) by replaying the
-log. Refuses to rebuild on a chain integrity break. Also runs the out-of-band
-reconciliation pass so working-tree changes with no capture Event are recorded.`,
+	Long: `Verify the hash-chained Event Log, rebuild derived projections by
+replaying the log, reconcile unexplained working-tree changes into out-of-band
+Events, then rebuild again when any were appended.`,
 	RunE: runGraphRebuild,
 }
 
@@ -38,11 +37,8 @@ func runGraphRebuild(cmd *cobra.Command, _ []string) error {
 	repo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
 
-	if _, err := application.NewReconcileService(repo, graphGit).Reconcile(ctx); err != nil {
-		return fmt.Errorf("reconcile: %w", err)
-	}
-	if err := application.NewProjectionRebuilder(repo, graphGit).Rebuild(ctx); err != nil {
-		return fmt.Errorf("rebuild projections: %w", err)
+	if _, err := application.SyncEventLog(ctx, repo, graphGit); err != nil {
+		return err
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Event Log replayed: projections rebuilt")

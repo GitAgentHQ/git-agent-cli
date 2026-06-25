@@ -1082,7 +1082,9 @@ func (r *SQLiteRepository) FileChanges(ctx context.Context, filePaths []string) 
 	query := `SELECT ef.event_seq, e.event_id, e.recorded_at, e.source, e.tool_name,
 			ef.file_path, ef.before_blob, ef.after_blob, ef.change_kind,
 			(SELECT ap.commit_hash FROM action_produces ap
-			 WHERE ap.file_path = ef.file_path LIMIT 1) AS linked_commit
+			 JOIN actions a2 ON a2.id = ap.action_id
+			 WHERE ap.file_path = ef.file_path
+			 ORDER BY a2.timestamp DESC, ap.commit_hash DESC LIMIT 1) AS linked_commit
 		 FROM event_files ef
 		 JOIN events e ON e.seq = ef.event_seq
 		 WHERE ef.file_path IN (` + strings.Join(placeholders, ",") + `)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
@@ -244,6 +245,11 @@ func (s *DiagnoseService) scoreCandidates(ctx context.Context, windowEvents []gr
 	}
 	inferredRed := redEvent.ExitCodeSource == "inferred"
 
+	// Prefetch every window file's blob refs in one query, indexed by (seq, file),
+	// so per-Event scoring never re-queries FileChanges (avoiding an O(events x
+	// files) scan of the same rows).
+	blobIdx := s.buildBlobIndex(ctx, windowEvents)
+
 	var candidates []Candidate
 	for _, e := range windowEvents {
 		files := s.eventFiles(ctx, e)
@@ -262,7 +268,7 @@ func (s *DiagnoseService) scoreCandidates(ctx context.Context, windowEvents []gr
 			directSeed = 1.0
 		}
 		churn := churnScore(e)
-		reverted := s.laterReverted(ctx, e, files, windowEvents)
+		reverted := laterReverted(blobIdx, e, files, windowEvents)
 
 		score := diagnoseScoring.recency*recency +
 			diagnoseScoring.impactOverlap*impactOverlap +
@@ -273,7 +279,7 @@ func (s *DiagnoseService) scoreCandidates(ctx context.Context, windowEvents []gr
 			score *= inferredRedPenalty
 		}
 
-		before, after := s.candidateBlobs(ctx, e, files, seeds)
+		before, after := candidateBlobs(blobIdx, e, files, seeds)
 		candidates = append(candidates, Candidate{
 			Seq:        e.Seq,
 			EventID:    e.EventID,
@@ -351,11 +357,55 @@ func churnScore(e graph.EventRecord) float64 {
 	return float64(total) / float64(total+10)
 }
 
+// blobRef is the before/after File Blob Refs for one (seq, file) event_files row.
+type blobRef struct{ before, after string }
+
+// buildBlobIndex fetches every window file's event_files rows in a single
+// FileChanges query and indexes them by (seq, file), so scoring reads blobs from
+// memory instead of re-querying per Event.
+func (s *DiagnoseService) buildBlobIndex(ctx context.Context, windowEvents []graph.EventRecord) map[string]blobRef {
+	idx := make(map[string]blobRef)
+
+	seen := make(map[string]bool)
+	var files []string
+	for _, e := range windowEvents {
+		for _, f := range s.eventFiles(ctx, e) {
+			if !seen[f] {
+				seen[f] = true
+				files = append(files, f)
+			}
+		}
+	}
+	if len(files) == 0 {
+		return idx
+	}
+
+	rows, err := s.repo.FileChanges(ctx, files)
+	if err != nil {
+		return idx
+	}
+	for _, r := range rows {
+		idx[blobKey(r.Seq, r.FilePath)] = blobRef{before: r.BeforeBlob, after: r.AfterBlob}
+	}
+	return idx
+}
+
+func blobKey(seq int64, file string) string {
+	return file + "\x00" + strconv.FormatInt(seq, 10)
+}
+
+// fileBlobsFor returns the before/after blobs recorded for (seq, file), empty
+// when the index has no such row.
+func fileBlobsFor(idx map[string]blobRef, seq int64, file string) (before, after string) {
+	r := idx[blobKey(seq, file)]
+	return r.before, r.after
+}
+
 // laterReverted is 1 when a later window Event on the same file undoes this
 // Event (its after_blob returns to this Event's before_blob), else 0.
-func (s *DiagnoseService) laterReverted(ctx context.Context, e graph.EventRecord, files []string, windowEvents []graph.EventRecord) float64 {
+func laterReverted(idx map[string]blobRef, e graph.EventRecord, files []string, windowEvents []graph.EventRecord) float64 {
 	for _, f := range files {
-		before, _ := s.fileBlobsFor(ctx, e.Seq, f)
+		before, _ := fileBlobsFor(idx, e.Seq, f)
 		if before == "" {
 			continue
 		}
@@ -363,7 +413,7 @@ func (s *DiagnoseService) laterReverted(ctx context.Context, e graph.EventRecord
 			if later.Seq <= e.Seq {
 				continue
 			}
-			_, after := s.fileBlobsFor(ctx, later.Seq, f)
+			_, after := fileBlobsFor(idx, later.Seq, f)
 			if after != "" && after == before {
 				return 1
 			}
@@ -374,33 +424,18 @@ func (s *DiagnoseService) laterReverted(ctx context.Context, e graph.EventRecord
 
 // candidateBlobs returns the before/after File Blob Refs for the Event,
 // preferring a seed file's row when one is present.
-func (s *DiagnoseService) candidateBlobs(ctx context.Context, e graph.EventRecord, files []string, seeds map[string]bool) (before, after string) {
+func candidateBlobs(idx map[string]blobRef, e graph.EventRecord, files []string, seeds map[string]bool) (before, after string) {
 	// Prefer a directly-seeded file's blobs for the candidate diff.
 	for _, f := range files {
 		if seeds[f] {
-			if b, a := s.fileBlobsFor(ctx, e.Seq, f); a != "" || b != "" {
+			if b, a := fileBlobsFor(idx, e.Seq, f); a != "" || b != "" {
 				return b, a
 			}
 		}
 	}
 	for _, f := range files {
-		if b, a := s.fileBlobsFor(ctx, e.Seq, f); a != "" || b != "" {
+		if b, a := fileBlobsFor(idx, e.Seq, f); a != "" || b != "" {
 			return b, a
-		}
-	}
-	return "", ""
-}
-
-// fileBlobsFor returns the before/after blobs recorded for (seq, file) in
-// event_files, empty when none.
-func (s *DiagnoseService) fileBlobsFor(ctx context.Context, seq int64, file string) (before, after string) {
-	rows, err := s.repo.FileChanges(ctx, []string{file})
-	if err != nil {
-		return "", ""
-	}
-	for _, r := range rows {
-		if r.Seq == seq {
-			return r.BeforeBlob, r.AfterBlob
 		}
 	}
 	return "", ""

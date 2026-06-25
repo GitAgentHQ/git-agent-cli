@@ -57,6 +57,15 @@ func (r *ProjectionRebuilder) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("reset projections: %w", err)
 	}
 
+	// lastTouch records the highest seq touching each path. The working tree only
+	// reflects a path's final state, so only that last Event may derive an
+	// after_blob from git; deriving one for an earlier edit would fabricate the
+	// current content as if it were historical.
+	lastTouch, err := r.lastTouchSeqByPath(ctx)
+	if err != nil {
+		return err
+	}
+
 	cur, err := r.repo.StreamEvents(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("stream events: %w", err)
@@ -67,6 +76,9 @@ func (r *ProjectionRebuilder) Rebuild(ctx context.Context) error {
 	// session opens for that key when the inter-Event gap exceeds the timeout.
 	open := make(map[string]*projectionSession)
 	timeoutSecs := int64(sessionTimeoutMins * 60)
+	// lastBlob tracks the most recent after_blob per file_path as Events fold in
+	// seq order, supplying before_blob for the next change on that path.
+	lastBlob := make(map[string]string)
 
 	for cur.Next() {
 		e := cur.Event()
@@ -94,7 +106,7 @@ func (r *ProjectionRebuilder) Rebuild(ctx context.Context) error {
 		}
 		sess.lastAt = e.RecordedAt
 
-		if err := r.foldEvent(ctx, e, sess); err != nil {
+		if err := r.foldEvent(ctx, e, sess, lastBlob, lastTouch); err != nil {
 			return err
 		}
 	}
@@ -104,10 +116,35 @@ func (r *ProjectionRebuilder) Rebuild(ctx context.Context) error {
 	return nil
 }
 
+// lastTouchSeqByPath streams the Event Log once and records, per file_path, the
+// highest seq that touches it. Only that Event reflects the current working tree,
+// so it is the only one allowed to derive an after_blob via git.HashObject.
+func (r *ProjectionRebuilder) lastTouchSeqByPath(ctx context.Context) (map[string]int64, error) {
+	cur, err := r.repo.StreamEvents(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("stream events (pre-scan): %w", err)
+	}
+	defer cur.Close()
+
+	last := make(map[string]int64)
+	for cur.Next() {
+		e := cur.Event()
+		for _, f := range extractEventFileProjections(e) {
+			if e.Seq > last[f.path] {
+				last[f.path] = e.Seq
+			}
+		}
+	}
+	if err := cur.Err(); err != nil {
+		return nil, fmt.Errorf("pre-scan events: %w", err)
+	}
+	return last, nil
+}
+
 // foldEvent projects a single Event into its action row and its touched-file
 // rows (action_modifies + event_files with cold-path File Blob Refs).
-func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord, sess *projectionSession) error {
-	files := extractFileChanges(e)
+func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord, sess *projectionSession, lastBlob map[string]string, lastTouch map[string]int64) error {
+	files := extractEventFileProjections(e)
 	paths := make([]string, 0, len(files))
 	for _, f := range files {
 		paths = append(paths, f.path)
@@ -132,20 +169,34 @@ func (r *ProjectionRebuilder) foldEvent(ctx context.Context, e graph.EventRecord
 		if err := r.repo.CreateActionModifies(ctx, action.ID, f.path, f.additions, f.deletions); err != nil {
 			return fmt.Errorf("create action_modifies: %w", err)
 		}
-		afterBlob, err := r.git.HashObject(ctx, f.path)
-		if err != nil {
-			return fmt.Errorf("hash object %s: %w", f.path, err)
+
+		before := f.beforeBlob
+		if before == "" {
+			before = lastBlob[f.path]
 		}
+		after := f.afterBlob
+		if after == "" && e.Seq == lastTouch[f.path] {
+			// Only the final touch of this path matches the working tree; earlier
+			// edits leave after_blob unknown rather than fabricating current content.
+			blob, herr := r.git.HashObject(ctx, f.path)
+			if herr != nil {
+				return fmt.Errorf("hash object %s: %w", f.path, herr)
+			}
+			after = blob
+		}
+
 		if err := r.repo.CreateEventFile(ctx, graph.EventFile{
 			EventSeq:   e.Seq,
 			FilePath:   f.path,
-			AfterBlob:  afterBlob,
+			BeforeBlob: before,
+			AfterBlob:  after,
 			ChangeKind: f.changeKind,
 			Additions:  f.additions,
 			Deletions:  f.deletions,
 		}); err != nil {
 			return fmt.Errorf("create event_file: %w", err)
 		}
+		lastBlob[f.path] = after
 	}
 	return nil
 }
@@ -156,10 +207,11 @@ func sessionID(source, instanceID string, firstSeq int64) string {
 	return fmt.Sprintf("%s:%s:%d", source, instanceID, firstSeq)
 }
 
-// fileChange is a file touched by an Event, with line counts derived from the
-// payload content.
-type fileChange struct {
+// eventFileProjection is one touched-file row derived from an Event during Replay.
+type eventFileProjection struct {
 	path       string
+	beforeBlob string // literal OID; empty means use lastBlob[path]
+	afterBlob  string // literal OID; empty means git.HashObject
 	additions  int
 	deletions  int
 	changeKind string
@@ -181,13 +233,51 @@ type payloadToolInput struct {
 	} `json:"tool_input"`
 }
 
-// extractFileChanges derives the touched files and line counts from an Event's
-// payload. Edit/Write set file_path; MultiEdit folds each edit's line delta onto
-// the one file_path. Non-file tools (Bash, outcomes) touch no files.
-func extractFileChanges(e graph.EventRecord) []fileChange {
-	if e.Kind != graph.EventKindTool {
+// extractEventFileProjections derives touched files from an Event. Tool Events
+// carry line counts from payload content; out-of-band Events carry literal OIDs.
+// Agent tooling metadata (.git-agent/, .claude/) is excluded on every path so it
+// never enters co-change, impact, or provenance — matching reconcile's filter.
+func extractEventFileProjections(e graph.EventRecord) []eventFileProjection {
+	var projs []eventFileProjection
+	switch e.Kind {
+	case graph.EventKindOutOfBand:
+		projs = extractOutOfBandFileProjections(e)
+	case graph.EventKindTool:
+		projs = extractToolFileProjections(e)
+	default:
 		return nil
 	}
+
+	out := projs[:0]
+	for _, p := range projs {
+		if graph.IsToolingPath(p.path) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func extractOutOfBandFileProjections(e graph.EventRecord) []eventFileProjection {
+	var p outOfBandPayload
+	if err := json.Unmarshal(e.PayloadRaw, &p); err != nil {
+		return nil
+	}
+	if p.OutOfBand.FilePath == "" {
+		return nil
+	}
+	return []eventFileProjection{{
+		path:       p.OutOfBand.FilePath,
+		beforeBlob: p.OutOfBand.BeforeBlob,
+		afterBlob:  p.OutOfBand.AfterBlob,
+		changeKind: "M",
+	}}
+}
+
+// extractToolFileProjections derives the touched files and line counts from a
+// tool Event payload. Edit/Write set file_path; MultiEdit folds each edit's line
+// delta onto the one file_path. Non-file tools (Bash, outcomes) touch no files.
+func extractToolFileProjections(e graph.EventRecord) []eventFileProjection {
 	var p payloadToolInput
 	if err := json.Unmarshal(e.PayloadRaw, &p); err != nil {
 		return nil
@@ -196,7 +286,7 @@ func extractFileChanges(e graph.EventRecord) []fileChange {
 		return nil
 	}
 
-	fc := fileChange{path: p.ToolInput.FilePath, changeKind: "M"}
+	fc := eventFileProjection{path: p.ToolInput.FilePath, changeKind: "M"}
 	switch e.ToolName {
 	case "Write":
 		fc.additions = countLines(p.ToolInput.Content)
@@ -210,7 +300,31 @@ func extractFileChanges(e graph.EventRecord) []fileChange {
 		fc.additions = countLines(p.ToolInput.NewString)
 		fc.deletions = countLines(p.ToolInput.OldString)
 	}
-	return []fileChange{fc}
+	return []eventFileProjection{fc}
+}
+
+// fileChange is a file touched by an Event, with line counts for diagnose scoring.
+type fileChange struct {
+	path       string
+	additions  int
+	deletions  int
+	changeKind string
+}
+
+// extractFileChanges returns touched files for callers that only need paths and
+// line counts (e.g. diagnose scoring).
+func extractFileChanges(e graph.EventRecord) []fileChange {
+	projs := extractEventFileProjections(e)
+	out := make([]fileChange, len(projs))
+	for i, p := range projs {
+		out[i] = fileChange{
+			path:       p.path,
+			additions:  p.additions,
+			deletions:  p.deletions,
+			changeKind: p.changeKind,
+		}
+	}
+	return out
 }
 
 // countLines counts the lines of content for an addition/deletion total. Empty

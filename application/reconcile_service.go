@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -78,21 +79,10 @@ func (s *ReconcileService) Reconcile(ctx context.Context) (ReconcileResult, erro
 			InstanceID: "",
 			Kind:       graph.EventKindOutOfBand,
 			ToolName:   "external-edit",
-			PayloadRaw: outOfBandPayload(file, lastKnown, current),
+			PayloadRaw: marshalOutOfBandPayload(file, lastKnown, current),
 		}
-		persisted, err := s.repo.AppendEvent(ctx, e)
-		if err != nil {
+		if _, err := s.repo.AppendEvent(ctx, e); err != nil {
 			return res, fmt.Errorf("append out-of-band event for %s: %w", file, err)
-		}
-
-		if err := s.repo.CreateEventFile(ctx, graph.EventFile{
-			EventSeq:   persisted.Seq,
-			FilePath:   file,
-			BeforeBlob: lastKnown,
-			AfterBlob:  current,
-			ChangeKind: "M",
-		}); err != nil {
-			return res, fmt.Errorf("record event_file for %s: %w", file, err)
 		}
 
 		res.OutOfBandAppended++
@@ -102,14 +92,32 @@ func (s *ReconcileService) Reconcile(ctx context.Context) (ReconcileResult, erro
 	return res, nil
 }
 
-// outOfBandPayload is the verbatim hashed unit for a synthetic out-of-band Event:
-// a compact JSON statement of the file and the before/after File Blob Refs. It
-// carries no user content (only OIDs), so there is nothing to redact.
-func outOfBandPayload(file, beforeBlob, afterBlob string) []byte {
-	return []byte(fmt.Sprintf(
-		`{"out_of_band":{"file_path":%q,"before_blob":%q,"after_blob":%q}}`,
-		file, beforeBlob, afterBlob,
-	))
+// outOfBandPayload is the JSON unit stored on a synthetic out-of-band Event: a
+// compact statement of the file and its before/after File Blob Refs. It is the
+// single shared contract between reconcile (the producer, marshalOutOfBandPayload)
+// and projection Replay (the consumer, extractOutOfBandFileProjections), so the
+// wire shape lives in one place rather than a Sprintf template and a struct that
+// must be kept in lockstep. It carries no user content (only OIDs).
+type outOfBandPayload struct {
+	OutOfBand outOfBandFile `json:"out_of_band"`
+}
+
+type outOfBandFile struct {
+	FilePath   string `json:"file_path"`
+	BeforeBlob string `json:"before_blob"`
+	AfterBlob  string `json:"after_blob"`
+}
+
+// marshalOutOfBandPayload renders the hashed unit via encoding/json so any path
+// (backslashes, control bytes, non-UTF-8) is encoded as valid JSON the consumer
+// can parse, rather than a hand-rolled %q template.
+func marshalOutOfBandPayload(file, beforeBlob, afterBlob string) []byte {
+	b, _ := json.Marshal(outOfBandPayload{OutOfBand: outOfBandFile{
+		FilePath:   file,
+		BeforeBlob: beforeBlob,
+		AfterBlob:  afterBlob,
+	}})
+	return b
 }
 
 // outOfBandEventID derives a stable id from the residual so re-running the pass

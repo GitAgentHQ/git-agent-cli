@@ -257,3 +257,97 @@ func TestProjectionRebuilder_RefusesOnBrokenChain(t *testing.T) {
 		t.Errorf("refused rebuild mutated projections:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
+
+func TestProjectionRebuilder_OnlyLastEditPerPathGetsWorkingTreeBlob(t *testing.T) {
+	ctx := context.Background()
+	repo := newProjectionTestRepo(t)
+
+	seededEvent(t, repo, graph.EventSourceClaudeCode, "agent-A", 1000, "a.go", "old", "new")
+	seededEvent(t, repo, graph.EventSourceClaudeCode, "agent-A", 1010, "a.go", "new", "newer")
+
+	// HashObject only reflects the current working tree, so the rebuild must call
+	// it exactly once — for the last edit of a.go — and leave the earlier edit's
+	// after_blob unknown rather than fabricating the current blob as historical.
+	gitFake := &seqBlobGit{blobs: []string{"blob-current"}}
+	rb := application.NewProjectionRebuilder(repo, gitFake)
+	if err := rb.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	if _, after := eventFileBlobsAtSeq(t, repo, 1, "a.go"); after != "" {
+		t.Errorf("first edit after_blob = %q, want empty (intermediate state is unknown)", after)
+	}
+	before, after := eventFileBlobsAtSeq(t, repo, 2, "a.go")
+	if after != "blob-current" {
+		t.Errorf("last edit after_blob = %q, want blob-current (working tree)", after)
+	}
+	if before != "" {
+		t.Errorf("last edit before_blob = %q, want empty (prior intermediate unknown)", before)
+	}
+	if gitFake.call != 1 {
+		t.Errorf("HashObject called %d times, want 1 (only the last edit)", gitFake.call)
+	}
+}
+
+// seqBlobGit returns HashObject results in call order so a single Rebuild can
+// assign distinct after_blobs to successive edits on the same path.
+type seqBlobGit struct {
+	graph.GraphGitClient
+	blobs []string
+	call  int
+}
+
+func (g *seqBlobGit) HashObject(_ context.Context, _ string) (string, error) {
+	if g.call >= len(g.blobs) {
+		return fmt.Sprintf("blob-fallback-%d", g.call), nil
+	}
+	h := g.blobs[g.call]
+	g.call++
+	return h, nil
+}
+
+func TestProjectionRebuilder_OutOfBandEventFiles(t *testing.T) {
+	ctx := context.Background()
+	repo := newProjectionTestRepo(t)
+
+	const beforeBlob = "blob-before"
+	const afterBlob = "blob-after"
+	rec := graph.EventRecord{
+		EventID:    "oob-test",
+		RecordedAt: 5000,
+		Source:     graph.EventSourceUnknown,
+		Kind:       graph.EventKindOutOfBand,
+		ToolName:   "external-edit",
+		PayloadRaw: []byte(`{"out_of_band":{"file_path":"x.go","before_blob":"blob-before","after_blob":"blob-after"}}`),
+	}
+	got, err := repo.AppendEvent(ctx, rec)
+	if err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	rb := application.NewProjectionRebuilder(repo, &hashObjectFakeGit{})
+	if err := rb.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	before, after := eventFileBlobsAtSeq(t, repo, got.Seq, "x.go")
+	if before != beforeBlob {
+		t.Errorf("before_blob = %q, want %q", before, beforeBlob)
+	}
+	if after != afterBlob {
+		t.Errorf("after_blob = %q, want %q", after, afterBlob)
+	}
+}
+
+func eventFileBlobsAtSeq(t *testing.T, repo *infragraph.SQLiteRepository, seq int64, path string) (string, string) {
+	t.Helper()
+	var before, after string
+	err := repo.Client().DB().QueryRowContext(context.Background(),
+		`SELECT COALESCE(before_blob,''), COALESCE(after_blob,'') FROM event_files WHERE event_seq = ? AND file_path = ?`,
+		seq, path,
+	).Scan(&before, &after)
+	if err != nil {
+		t.Fatalf("event_files for seq=%d path=%s: %v", seq, path, err)
+	}
+	return before, after
+}

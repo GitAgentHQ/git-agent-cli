@@ -44,14 +44,23 @@ func TestSHA256Hasher_FieldChangeChangesHash(t *testing.T) {
 
 	otherExit := 1
 	mutations := map[string]func(e *domaingraph.EventRecord){
-		"seq":         func(e *domaingraph.EventRecord) { e.Seq = 2 },
-		"recorded_at": func(e *domaingraph.EventRecord) { e.RecordedAt = 1_700_000_001 },
-		"source":      func(e *domaingraph.EventRecord) { e.Source = domaingraph.EventSourceCursor },
-		"instance_id": func(e *domaingraph.EventRecord) { e.InstanceID = "agent-2" },
-		"kind":        func(e *domaingraph.EventRecord) { e.Kind = domaingraph.EventKindOutcome },
-		"tool_name":   func(e *domaingraph.EventRecord) { e.ToolName = "Write" },
-		"exit_code":   func(e *domaingraph.EventRecord) { e.ExitCode = &otherExit },
-		"payload_raw": func(e *domaingraph.EventRecord) { e.PayloadRaw = []byte("different") },
+		"seq":              func(e *domaingraph.EventRecord) { e.Seq = 2 },
+		"recorded_at":      func(e *domaingraph.EventRecord) { e.RecordedAt = 1_700_000_001 },
+		"source":           func(e *domaingraph.EventRecord) { e.Source = domaingraph.EventSourceCursor },
+		"instance_id":      func(e *domaingraph.EventRecord) { e.InstanceID = "agent-2" },
+		"kind":             func(e *domaingraph.EventRecord) { e.Kind = domaingraph.EventKindOutcome },
+		"tool_name":        func(e *domaingraph.EventRecord) { e.ToolName = "Write" },
+		"exit_code":        func(e *domaingraph.EventRecord) { e.ExitCode = &otherExit },
+		"payload_raw":      func(e *domaingraph.EventRecord) { e.PayloadRaw = []byte("different") },
+		"command":          func(e *domaingraph.EventRecord) { e.Command = "go test ./..." },
+		"exit_code_source": func(e *domaingraph.EventRecord) { e.ExitCodeSource = "reported" },
+		"is_test":          func(e *domaingraph.EventRecord) { e.IsTest = true },
+		"is_build":         func(e *domaingraph.EventRecord) { e.IsBuild = true },
+		"test_name":        func(e *domaingraph.EventRecord) { e.TestName = "TestFoo" },
+		"cwd":              func(e *domaingraph.EventRecord) { e.Cwd = "/repo" },
+		"hook_event_name":  func(e *domaingraph.EventRecord) { e.HookEventName = "PostToolUse" },
+		"permission_mode":  func(e *domaingraph.EventRecord) { e.PermissionMode = "acceptEdits" },
+		"transcript_path":  func(e *domaingraph.EventRecord) { e.TranscriptPath = "/t.jsonl" },
 	}
 
 	for name, mutate := range mutations {
