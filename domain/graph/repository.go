@@ -58,6 +58,12 @@ type GraphRepository interface {
 	// it assigns seq and this_hash inside a single BEGIN IMMEDIATE transaction.
 	AppendEvent(ctx context.Context, e EventRecord) (EventRecord, error)
 	HeadHash(ctx context.Context) (string, error)
+	// MaxEventSeq returns the highest seq in the Event Log (0 when empty).
+	MaxEventSeq(ctx context.Context) (int64, error)
+	// MaxProjectedEventSeq returns the highest event_seq reflected in the
+	// event_files projection (0 when empty). Equal to MaxEventSeq, the cold
+	// path is current — the basis of sync's staleness check.
+	MaxProjectedEventSeq(ctx context.Context) (int64, error)
 	StreamEvents(ctx context.Context, sinceSeq int64) (EventCursor, error)
 	// VerifyChain walks the Event Log, recomputes each this_hash, follows the
 	// genesis prev_hash linkage, and checks seq continuity to classify the first

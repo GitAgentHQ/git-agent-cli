@@ -12,3 +12,9 @@ func IsToolingPath(p string) bool {
 	}
 	return false
 }
+
+// IsTestFile reports whether a repo-relative path is a Go test file. Extended
+// to other languages' test-file conventions as AST coverage grows.
+func IsTestFile(filePath string) bool {
+	return strings.HasSuffix(filePath, "_test.go")
+}
