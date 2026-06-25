@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
@@ -57,7 +56,7 @@ func (s *AffectedService) Affected(ctx context.Context, changedFiles []string, m
 				return nil, fmt.Errorf("callers of %s: %w", n.ID, err)
 			}
 			for _, c := range callers {
-				if !isTestFile(c.Node.FilePath) {
+				if !graph.IsTestFile(c.Node.FilePath) {
 					continue
 				}
 				key := fmt.Sprintf("%s:%s:%d", c.Node.FilePath, c.Node.ID, c.Depth)
@@ -84,10 +83,4 @@ func (s *AffectedService) Affected(ctx context.Context, changedFiles []string, m
 	})
 	res.Total = len(res.Tests)
 	return res, nil
-}
-
-// isTestFile reports whether filePath is a Go test file. Extended to other
-// languages' conventions as the AST index grows language coverage.
-func isTestFile(filePath string) bool {
-	return strings.HasSuffix(filePath, "_test.go")
 }
