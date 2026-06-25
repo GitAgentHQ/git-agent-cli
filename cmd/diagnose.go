@@ -91,6 +91,9 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	if result.LowConfidence != "" {
 		fmt.Fprintf(out, "  low confidence: %s\n", result.LowConfidence)
 	}
+	for _, w := range result.Warnings {
+		fmt.Fprintf(out, "  warning: %s\n", w)
+	}
 	for i, c := range result.Candidates {
 		fmt.Fprintf(out, "  %d. seq %d  %s  score=%.3f  %s->%s  %v\n",
 			i+1, c.Seq, c.Tool, c.Score, c.BeforeBlob, c.AfterBlob, c.Files)

@@ -95,7 +95,6 @@ func captureOnce(cmd *cobra.Command, req graph.CaptureRequest) (*graph.CaptureRe
 	captureSvc := application.NewCaptureService(
 		repo, graphGit,
 		infraGraph.NewUUIDSessionIDGenerator(),
-		infraGraph.NewSHA256Hasher(),
 	)
 
 	return captureSvc.Capture(ctx, req)
