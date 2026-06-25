@@ -40,6 +40,64 @@ func NewASTEnsureIndexService(astRepo graph.ASTRepository, stateRepo ASTIndexSta
 	}
 }
 
+// EnsureAll brings the AST index up to date for queries that are not scoped to
+// a single symbol (search, node-by-name). It mirrors EnsureForSymbol's freshness
+// check but always resolves to a full or incremental index without a symbol
+// lookup, so an empty index or a stale head triggers IndexAll / IndexFiles.
+func (s *ASTEnsureIndexService) EnsureAll(ctx context.Context, root string, force bool, progress io.Writer) error {
+	head, err := s.git.CurrentHead(ctx)
+	if err != nil {
+		return fmt.Errorf("current head for AST index: %w", err)
+	}
+	indexedHead, err := s.stateRepo.GetIndexState(ctx, astIndexHeadKey)
+	if err != nil {
+		return err
+	}
+	hasGoChanges, err := s.hasGoWorkingTreeChanges(ctx)
+	if err != nil {
+		return err
+	}
+	if !force && indexedHead == head && !hasGoChanges {
+		return nil
+	}
+
+	idxSvc := NewASTIndexService(s.astRepo, s.git, s.extractor)
+	var idxResult *ASTIndexResult
+	switch {
+	case force || indexedHead == "":
+		idxResult, err = idxSvc.IndexAll(ctx, root)
+	default:
+		reachable, reachErr := s.git.MergeBaseIsAncestor(ctx, indexedHead, head)
+		if reachErr != nil {
+			return fmt.Errorf("check AST index reachability: %w", reachErr)
+		}
+		if !reachable {
+			idxResult, err = idxSvc.IndexAll(ctx, root)
+			break
+		}
+		files, collectErr := s.collectIncrementalGoFiles(ctx, indexedHead, hasGoChanges)
+		if collectErr != nil {
+			return collectErr
+		}
+		pruneStale := indexedHead != head
+		if len(files) == 0 {
+			if pruneStale {
+				idxResult, err = idxSvc.IndexFiles(ctx, root, nil, true)
+			}
+			break
+		}
+		idxResult, err = idxSvc.IndexFiles(ctx, root, files, pruneStale)
+	}
+	if err != nil {
+		return fmt.Errorf("index AST symbols: %w", err)
+	}
+	if progress != nil && idxResult != nil && idxResult.FilesProcessed > 0 {
+		fmt.Fprintf(progress, "AST indexed %d files, %d symbols [%dms]\n",
+			idxResult.FilesProcessed, idxResult.SymbolsStored, idxResult.DurationMs)
+	}
+	return s.stateRepo.SetIndexState(ctx, astIndexHeadKey, head)
+}
+
 func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbol string, force bool, progress io.Writer) error {
 	head, err := s.git.CurrentHead(ctx)
 	if err != nil {
