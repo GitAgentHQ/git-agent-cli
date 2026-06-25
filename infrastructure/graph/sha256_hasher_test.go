@@ -45,6 +45,7 @@ func TestSHA256Hasher_FieldChangeChangesHash(t *testing.T) {
 	otherExit := 1
 	mutations := map[string]func(e *domaingraph.EventRecord){
 		"seq":              func(e *domaingraph.EventRecord) { e.Seq = 2 },
+		"event_id":         func(e *domaingraph.EventRecord) { e.EventID = "evt-2" },
 		"recorded_at":      func(e *domaingraph.EventRecord) { e.RecordedAt = 1_700_000_001 },
 		"source":           func(e *domaingraph.EventRecord) { e.Source = domaingraph.EventSourceCursor },
 		"instance_id":      func(e *domaingraph.EventRecord) { e.InstanceID = "agent-2" },
@@ -52,6 +53,8 @@ func TestSHA256Hasher_FieldChangeChangesHash(t *testing.T) {
 		"tool_name":        func(e *domaingraph.EventRecord) { e.ToolName = "Write" },
 		"exit_code":        func(e *domaingraph.EventRecord) { e.ExitCode = &otherExit },
 		"payload_raw":      func(e *domaingraph.EventRecord) { e.PayloadRaw = []byte("different") },
+		"payload_size":     func(e *domaingraph.EventRecord) { e.PayloadSize = 999 },
+		"truncated":        func(e *domaingraph.EventRecord) { e.Truncated = true },
 		"command":          func(e *domaingraph.EventRecord) { e.Command = "go test ./..." },
 		"exit_code_source": func(e *domaingraph.EventRecord) { e.ExitCodeSource = "reported" },
 		"is_test":          func(e *domaingraph.EventRecord) { e.IsTest = true },

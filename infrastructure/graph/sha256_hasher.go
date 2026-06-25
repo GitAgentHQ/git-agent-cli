@@ -34,10 +34,11 @@ func NewSHA256Hasher() *SHA256Hasher {
 // 64-char hex string. The canonical form is fixed-order and length-prefixed so
 // there is no JSON ordering or whitespace ambiguity, and the variable payload is
 // covered by hashing its exact stored bytes (never re-serialized). It folds in
-// every persisted column diagnose and provenance trust — the outcome
-// classification (command, exit-code source, test/build flags) and the capture
-// context (cwd, hook, permission mode, transcript) — so editing any stored
-// column is tamper-evident, not just the payload.
+// every persisted column diagnose and provenance trust — the event id, the
+// outcome classification (command, exit-code source, test/build flags) and the
+// capture context (cwd, hook, permission mode, transcript), plus the payload
+// size/truncation flags — so editing any stored column is tamper-evident, not
+// just the payload.
 func (h *SHA256Hasher) Hash(prevHash string, e graph.EventRecord) string {
 	var buf bytes.Buffer
 	buf.WriteString(prevHash)
@@ -46,6 +47,7 @@ func (h *SHA256Hasher) Hash(prevHash string, e graph.EventRecord) string {
 	buf.WriteByte(chainVersionV1)
 	writeUint64(&buf, uint64(e.Seq))
 	writeUint64(&buf, uint64(e.RecordedAt))
+	writeLenPrefixed(&buf, []byte(e.EventID))
 	writeLenPrefixed(&buf, []byte(e.Source))
 	writeLenPrefixed(&buf, []byte(e.InstanceID))
 	writeLenPrefixed(&buf, []byte(e.Kind))
@@ -63,6 +65,11 @@ func (h *SHA256Hasher) Hash(prevHash string, e graph.EventRecord) string {
 	writeLenPrefixed(&buf, []byte(e.HookEventName))
 	writeLenPrefixed(&buf, []byte(e.PermissionMode))
 	writeLenPrefixed(&buf, []byte(e.TranscriptPath))
+
+	// Payload size/truncation are persisted columns surfaced by diagnose, so
+	// they are folded into the chain hash alongside the payload digest.
+	writeInt64(&buf, e.PayloadSize)
+	writeBool(&buf, e.Truncated)
 
 	payloadDigest := sha256.Sum256(e.PayloadRaw)
 	buf.Write(payloadDigest[:])

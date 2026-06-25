@@ -145,6 +145,7 @@ func TestVerifyChain_ReorderedRows(t *testing.T) {
 	insert := func(seq int64, prev string, payload string) string {
 		rec := domaingraph.EventRecord{
 			Seq:        seq,
+			EventID:    fmt.Sprintf("evt-%d", seq),
 			RecordedAt: 1000 + seq,
 			Source:     domaingraph.EventSourceClaudeCode,
 			InstanceID: "agent-1",

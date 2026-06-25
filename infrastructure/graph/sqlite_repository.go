@@ -1123,11 +1123,14 @@ func (r *SQLiteRepository) FileChanges(ctx context.Context, filePaths []string) 
 }
 
 // AppendEvent is the only writer into the events table. Read-head, hash, and
-// insert run inside one BEGIN IMMEDIATE transaction so two concurrent writers
-// cannot read the same head and fork the chain. seq is assigned explicitly from
-// MAX(seq)+1 inside the txn (rather than left to AUTOINCREMENT) because seq is
-// folded into the canonical form, so it must be known before the this_hash is
-// computed and stored.
+// insert run inside one transaction so two concurrent writers cannot fork the
+// chain. The transaction uses a deferred BEGIN (database/sql default); in WAL
+// mode a writer whose snapshot is stale by commit time fails the
+// write-transaction upgrade with SQLITE_BUSY_SNAPSHOT, which isBusyErr maps to
+// ErrChainBusy so the contender skips without forking. seq is assigned
+// explicitly from MAX(seq)+1 inside the txn (rather than left to
+// AUTOINCREMENT) because seq is folded into the canonical form, so it must be
+// known before the this_hash is computed and stored.
 func (r *SQLiteRepository) AppendEvent(ctx context.Context, e graph.EventRecord) (graph.EventRecord, error) {
 	tx, err := r.db().BeginTx(ctx, nil)
 	if err != nil {
