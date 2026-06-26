@@ -38,6 +38,10 @@ const (
 	generateMaxTokensCeiling = 16384
 	scopesMaxTokensCeiling   = 16384
 	detectMaxTokensCeiling   = 4096
+	// rerankMaxTokensCeiling bounds the graph diagnose --llm re-rank response.
+	// The LLM returns a short JSON ordering of seq numbers, so the budget is
+	// modest; callLLM doubles on finish_reason=length up to this ceiling.
+	rerankMaxTokensCeiling = 8192
 )
 
 type Client struct {
@@ -46,6 +50,10 @@ type Client struct {
 	requestTimeout    time.Duration
 	heartbeatInterval time.Duration
 	out               io.Writer
+
+	// call is the test seam for the re-rank path: it defaults to callLLM but can
+	// be swapped per-client so unit tests run offline. Set in NewClient.
+	call func(ctx context.Context, system, user string, maxTokens, ceiling int) (string, error)
 }
 
 func NewClient(
@@ -64,13 +72,15 @@ func NewClient(
 		heartbeatInterval = defaultHeartbeatInterval
 	}
 	cfg.HTTPClient = &http.Client{Timeout: requestTimeout}
-	return &Client{
+	c := &Client{
 		inner:             goopenai.NewClientWithConfig(cfg),
 		model:             model,
 		requestTimeout:    requestTimeout,
 		heartbeatInterval: heartbeatInterval,
 		out:               out,
 	}
+	c.call = c.callLLM
+	return c
 }
 
 // RequestTimeout reports the per-attempt HTTP timeout this client applies to
@@ -501,6 +511,19 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	return nil, lastErr
 }
 
+// RerankDiagnose sends a chat completion to the configured model and returns the
+// raw text response. It is the LLM bridge for the graph diagnose --llm re-ranker:
+// the caller (a DiagnoseReranker adapter) builds the prompt and parses the
+// returned JSON ordering. maxTokens is the initial completion budget; ceiling is
+// the upper bound callLLM will grow to on a length-truncated retry.
+//
+// Routed through the package-internal `call` seam so unit tests can run offline
+// by swapping it; production callers reuse the existing retry/heartbeat/timeout
+// and per-endpoint budget machinery.
+func (c *Client) RerankDiagnose(ctx context.Context, system, user string, maxTokens, ceiling int) (string, error) {
+	return c.call(ctx, system, user, maxTokens, ceiling)
+}
+
 func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {
 	hasScopes := req.Config != nil && len(req.Config.Scopes) > 0
 
@@ -570,6 +593,13 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 		planParts = append(planParts, fmt.Sprintf("Unstaged files:\n%s",
 			strings.Join(req.UnstagedDiff.Files, "\n"),
 		))
+	}
+	if len(req.CoChangeHints) > 0 {
+		var lines []string
+		for _, h := range req.CoChangeHints {
+			lines = append(lines, fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100))
+		}
+		planParts = append(planParts, "Historical co-change — these file pairs are usually committed together. Keep each pair in the SAME commit group unless their diffs are clearly unrelated:\n"+strings.Join(lines, "\n"))
 	}
 	userPrompt := strings.Join(planParts, "\n\n")
 

@@ -2,6 +2,7 @@
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
+[![Latest Release](https://img.shields.io/github/v/release/GitAgentHQ/git-agent-cli)](https://github.com/GitAgentHQ/git-agent-cli/releases)
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -53,10 +54,11 @@ git-agent init --scope                  # generate scopes only
 git-agent init --gitignore              # generate .gitignore only
 git-agent init --hook conventional      # install conventional commit validator
 git-agent init --hook empty             # install empty placeholder hook
-git-agent init --hook /path/to/script  # install a custom hook script
+git-agent init --hook /path/to/script   # install a custom hook script
+git-agent init --agent-hook             # install capture hook for Claude Code PostToolUse
 git-agent init --force                  # overwrite existing config/hook/.gitignore
-git-agent init --max-commits 50        # limit commits analyzed for scope generation
-git-agent init --local --scope         # write scopes to .git-agent/config.local.yml
+git-agent init --max-commits 50         # limit commits analyzed for scope generation
+git-agent init --local --scope          # write scopes to .git-agent/config.local.yml
 ```
 
 | Flag | Description |
@@ -64,6 +66,7 @@ git-agent init --local --scope         # write scopes to .git-agent/config.local
 | `--scope` | Generate scopes via AI |
 | `--gitignore` | Generate `.gitignore` via AI |
 | `--hook` | Hook to configure: `conventional`, `empty`, or a file path (repeatable) |
+| `--agent-hook` | Install a `PostToolUse` capture hook for Claude Code |
 | `--force` | Overwrite existing config/.gitignore |
 | `--max-commits` | Max commits to analyze for scope generation (default: 200) |
 | `--local` | Write config to `.git-agent/config.local.yml` (requires an action flag) |
@@ -135,6 +138,56 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 ### `git-agent version`
 
 Print the build version.
+
+### `git-agent impact`
+
+Find files or symbols likely to change alongside the given seeds. Three modes:
+
+| Mode | Trigger | What it returns |
+|------|---------|-----------------|
+| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
+| `structural` | `--symbol <name>` | AST symbols that call, are called by, or reference the seed symbol |
+| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
+
+With no arguments, seeds default to your current working-tree changes. The first run auto-indexes git history; queries are offline (no LLM, no API key).
+
+```bash
+git-agent impact                                     # "what else changes with my edits?"
+git-agent impact application/commit_service.go       # co-change from a specific file
+git-agent impact src/                                # co-change from a directory
+git-agent impact --symbol CommitService --json       # structural impact
+git-agent impact --symbol CommitService --mode combined  # both signals
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--symbol` | | Query structural impact by symbol name |
+| `--mode` | `cochange` | Impact mode: `cochange`, `structural`, or `combined` |
+| `--depth` | 1 | Transitive co-change depth |
+| `--top` | 20 | Max results |
+| `--min-count` | 3 | Minimum co-change count to include |
+| `--reindex` | false | Force a full re-index before querying |
+| `--json` / `--text` | auto | Force output format (JSON when piped, text on a TTY) |
+
+### `git-agent timeline`
+
+Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
+
+```bash
+git-agent timeline                        # all recorded actions
+git-agent timeline --since 2h             # last 2 hours
+git-agent timeline --file src/auth.go     # actions touching a file
+git-agent timeline --source claude-code   # filter by source
+git-agent timeline --json                 # JSON output
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--since` | | Time window: `2h`, `7d`, or RFC 3339 timestamp |
+| `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
+| `--file` | | Filter by file path |
+| `--top` | 50 | Max sessions to display |
+| `--json` / `--text` | auto | Force output format |
 
 ## Configuration
 
@@ -222,6 +275,10 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | 0 | Success |
 | 1 | General error — no changes, API failure, missing config |
 | 2 | Hook blocked — pre-commit hook returned non-zero after retries |
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 

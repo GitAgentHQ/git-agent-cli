@@ -54,6 +54,38 @@ cmd → application → domain ← infrastructure
 
 **Trailer handling**: trailers are assembled in `cmd/commit.go` and appended via `git interpret-trailers` before each `git.Commit()`. On hook retry, `previousMessage = preTrailer` (title + body without trailers) so trailers never enter LLM context.
 
+## Command Surface Conventions
+
+The CLI is a Cobra tree. Every command lives in exactly one of three namespaces; do not add top-level commands outside these.
+
+### Namespaces
+
+- **Action** (top-level): `init`, `commit`, `capture` (hidden). These mutate the repo or the graph. `capture` is a hook target — invoked by `git-agent capture --source claude-code` from the Claude Code PostToolUse hook, never by a human — and stays `Hidden: true`.
+- **Meta** (top-level): `config`, `version`, `completion`. Configuration and tooling, not repo mutation.
+- **`graph`** (parent): every command that reads or audits the agent Event Log or its derived indexes (co-change, AST). Children: `status`, `verify`, `index`, `sync`, `impact`, `timeline`, `diagnose`, `provenance`, `callers`, `callees`, `node`, `query`, `affected`. **No graph read/audit command lives at the top level.** A new forensic/query command over the graph goes under `graph`.
+
+### Registration
+
+Each command registers itself exactly once in its own `init()` via `<parent>Cmd.AddCommand(xCmd)`. `graphCmd` is a package var (`cmd/graph.go`); package vars are initialized before any `init()`, so child files may reference `graphCmd` without ordering concerns. Never register a command twice, and never prefix a child's `Use` with the parent name — Cobra composes the path from `Use` verbatim.
+
+### Output format
+
+Every `graph` query command (`impact`, `timeline`, `diagnose`, `verify`, `provenance`) exposes both `--json` and `--text`, declared `MarkFlagsMutuallyExclusive("json", "text")`. When neither is set, the command auto-detects: **JSON when stdout is piped, text when stdout is a TTY.** Format selection goes through `pkg/output.Decide`; JSON encoding through `pkg/output.EncodeJSON`. Do not hand-roll `if jsonFlag { json.NewEncoder... }` in a new command — route through `pkg/output`. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating and stays out of `pkg/output`.)
+
+### Flag policy
+
+Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--llm`, `--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--symbol`, `--depth`, `--top`, `--mode`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are config keys (`git-agent config set <key> <value>`), never flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver. Example: `diagnose`'s re-rank model/base-url/api-key/timeout are `git-agent.diagnose-*` keys; only `--llm` (the toggle) remains on the command.
+
+### Short descriptions
+
+- A parent `Short` describes the group, not a single action. A parent without `RunE` must not claim to "Show" anything — it prints help. Use a group verb: `Manage …`, `Query and audit …`.
+- A child `Short` is verb-leading and ≤ ~60 characters.
+- `Short` must match what the command does; update it when the command moves namespace.
+
+### Hidden commands
+
+Hook-target commands stay `Hidden: true` and are excluded from the skill command table. The only current example is `capture`.
+
 ## Commit Conventions
 
 Enforced via pre-tool hook. Commit messages must:

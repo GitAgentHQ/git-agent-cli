@@ -110,6 +110,10 @@ func (m *mockCommitGitClient) Commit(_ context.Context, message string) (string,
 	return "", m.commitErr
 }
 
+func (m *mockCommitGitClient) CommitHash(context.Context) (string, error) {
+	return "", nil
+}
+
 func (m *mockCommitGitClient) UnstageAll(_ context.Context) error {
 	m.unstageAllCalls++
 	return nil

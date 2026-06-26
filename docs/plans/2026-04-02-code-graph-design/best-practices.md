@@ -1,14 +1,17 @@
 # Best Practices: git-agent graph
 
-## KuzuDB
+## SQLite (modernc.org/sqlite)
 
 ### Schema Design
 
-- **Natural keys over SERIAL**: Use commit hash, file path, composite symbol ID
-  as primary keys. Enables idempotent MERGE operations -- re-indexing the same
-  commit is a no-op.
-- **Pre-declare all property types**: KuzuDB requires explicit DDL. All node
-  and relationship tables must be created before data insertion.
+- **Relational tables model the property graph**: Node tables (`commits`,
+  `files`, `authors`) and join tables for edges (`authored`, `modifies`,
+  `co_changed`). 13 tables total.
+- **Natural keys over surrogates**: Use commit hash, file path as primary
+  keys. Enables `INSERT OR IGNORE` / `INSERT OR REPLACE` for idempotent
+  operations -- re-indexing the same commit is a no-op.
+- **Foreign keys for referential integrity**: Enable with
+  `PRAGMA foreign_keys = ON` at connection open.
 - **`IF NOT EXISTS`**: All `CREATE TABLE` statements use `IF NOT EXISTS` for
   safe schema initialization on every startup.
 
@@ -16,40 +19,41 @@
 
 | Setting | Value | Rationale |
 |---------|-------|-----------|
-| BufferPoolSize | 256 MB | CLI tool, not a server. Default 80% RAM is wasteful. |
-| MaxNumThreads | 4 | Don't saturate user's machine. |
-| EnableCompression | true | Reduces disk I/O, smaller DB files. |
-| ReadOnly | true (for query commands) | Allows concurrent reads without lock contention. |
+| `PRAGMA journal_mode=WAL` | WAL | Concurrent reads during writes |
+| `PRAGMA synchronous=NORMAL` | NORMAL | Faster writes, acceptable for local cache DB |
+| `PRAGMA cache_size=-64000` | 64 MB page cache | Keeps hot pages in memory |
+| `PRAGMA mmap_size=268435456` | 256 MB memory-mapped I/O | Reduces syscall overhead for large scans |
+| `PRAGMA temp_store=MEMORY` | MEMORY | Temp tables and indexes stay in RAM |
+| `PRAGMA busy_timeout=5000` | 5 seconds | Retry on lock contention before failing |
+| `PRAGMA query_only=ON` | (read-only commands) | Prevents accidental writes in query paths |
 
-### Bulk Loading
+All PRAGMAs are set once at connection open, before any queries.
 
-- **Initial full index**: Write nodes/edges to temporary CSV files, then
-  `COPY FROM` into KuzuDB. This is 53x faster than row-by-row INSERT
-  (benchmarked: 100K nodes + 2.4M edges in 0.58s via COPY vs 30.64s via INSERT).
-- **Incremental updates**: Use `MERGE` with `ON CREATE`/`ON MATCH` for
-  subsequent commits after the initial bulk load.
+### Batch Loading
+
+- **Use explicit transactions**: `BEGIN` / many `INSERT` / `COMMIT`. Auto-commit
+  per INSERT is 10-50x slower due to journal sync overhead.
+- **Prepared statements with parameter binding**: Prepare once, execute many
+  times with different parameter values. Avoids repeated query parsing.
+- **For initial full index**: A single large transaction with prepared statements
+  is fast enough. No need for bulk `COPY FROM` or external tooling.
+- **Benchmark expectation**: ~50-100K inserts/second with prepared statements
+  inside a transaction on typical developer hardware.
 
 ### Incremental Strategy
 
 | Data type | Strategy | Reason |
 |-----------|----------|--------|
-| Commits, Authors | MERGE | Append-only; MERGE is idempotent |
-| MODIFIES, AUTHORED | MERGE | Edge follows commit lifecycle |
-| Symbols | DELETE+CREATE per file | AST must be fully reparsed; diffing individual symbols is fragile |
-| CONTAINS, CALLS | DELETE+CREATE per file | Follow symbol lifecycle |
-| IMPORTS | DELETE+CREATE per file | Follow file parse lifecycle |
-| CO_CHANGED | MERGE with ON MATCH | Recompute coupling counts after all new commits indexed |
+| Commits, Authors | `INSERT OR IGNORE` | Append-only; duplicate insert is a no-op |
+| MODIFIES, AUTHORED | `INSERT OR IGNORE` | Edge follows commit lifecycle |
+| CO_CHANGED | Incremental: delete pairs involving touched files + recompute those pairs; full recompute on force re-index or >500 new commits | Avoids O(n^2) self-join on entire modifies table for small incremental updates |
 
-### Query Optimization
+### Query Patterns
 
-- Bound variable-length paths: always `*1..N` with explicit max depth (e.g., 3).
-  Unbounded traversals explode on dense graphs.
-- Use `shortestPath()` when only minimum distance matters.
-- Use `EXPLAIN` / `PROFILE` during development to inspect execution plans.
-- KuzuDB zone maps on numeric columns enable skip-scan for `timestamp`,
-  `start_line`, `coupling_count` filters.
-- Parameterized queries: always use `$param` syntax, never string concatenation
-  (prevents injection, enables plan caching).
+- **Co-change pairs**: Simple `JOIN` on the `modifies` table, grouping by
+  commit to find files that changed together.
+- **Impact query (co-change)**: Direct `SELECT` on `co_changed` filtered by
+  `coupling_strength` threshold.
 
 ### CO_CHANGED Computation
 
@@ -63,62 +67,36 @@ Thresholds:
 - Maximum files per commit: 50 (skip merge commits and bulk operations)
 - Both thresholds are configurable via `--min-count` and `--max-files-per-commit`
 
-## Tree-sitter (gotreesitter)
-
-### Language Support Priority
-
-| Tier | Languages | Reason |
-|------|-----------|--------|
-| 1 (v1) | Go, TypeScript, Python | Most common in coding agent ecosystem |
-| 2 (v1.1) | Rust, Java | High demand, well-supported grammars |
-| 3 (future) | C/C++, Ruby, PHP, C#, Swift, Kotlin | On-demand |
-
-### Symbol Extraction
-
-- **Composite ID**: `"{file_path}:{kind}:{name}:{start_line}"` handles overloaded
-  names and ensures uniqueness.
-- **Method receivers**: For Go methods, include receiver type in the symbol ID:
-  `"pkg/foo.go:method:Bar.Baz:42"`.
-- **Confidence scoring for CALLS edges**:
-  - 1.0: Exact static call, unambiguous name resolution
-  - 0.8: Receiver/method dispatch (type could be interface)
-  - 0.5: Same-name match across packages (fuzzy)
-
-### Import Resolution
-
-| Language | Import syntax | Resolution strategy |
-|----------|--------------|---------------------|
-| Go | `"github.com/pkg/..."` | Module path -> local directory |
-| TypeScript | `'./utils'`, `'../lib/format'` | Relative path + extension resolution |
-| Python | `from pkg import module` | Dotted path -> directory/file |
-| Rust | `use crate::module` | Crate-relative path |
-| Java | `import com.pkg.Class` | Package path -> directory structure |
-
-### Query Files
-
-Store tree-sitter S-expression queries as embedded `.scm` files:
-```
-infrastructure/treesitter/queries/
-  go.scm
-  typescript.scm
-  python.scm
-  rust.scm
-  java.scm
+Computed as a single SQL statement:
+```sql
+INSERT INTO co_changed (file_a, file_b, coupling_count, coupling_strength)
+WITH file_commit_counts AS (
+    SELECT file_path, COUNT(DISTINCT commit_hash) AS total
+    FROM modifies GROUP BY file_path
+)
+SELECT
+    m1.file_path AS file_a,
+    m2.file_path AS file_b,
+    COUNT(DISTINCT m1.commit_hash) AS coupling_count,
+    CAST(COUNT(DISTINCT m1.commit_hash) AS REAL)
+      / MAX(fc1.total, fc2.total) AS coupling_strength
+FROM modifies m1
+JOIN modifies m2
+  ON m1.commit_hash = m2.commit_hash
+  AND m1.file_path < m2.file_path
+JOIN file_commit_counts fc1 ON fc1.file_path = m1.file_path
+JOIN file_commit_counts fc2 ON fc2.file_path = m2.file_path
+WHERE m1.commit_hash NOT IN (
+    SELECT commit_hash FROM modifies
+    GROUP BY commit_hash HAVING COUNT(*) > ?1
+)
+GROUP BY m1.file_path, m2.file_path
+HAVING COUNT(DISTINCT m1.commit_hash) >= ?2;
 ```
 
-Embed via `//go:embed queries/*.scm` for zero-overhead at runtime.
+## Excluded Paths
 
-### Language Detection
-
-File extension mapping with fallback:
-```
-.go -> Go           .ts/.tsx -> TypeScript    .js/.jsx -> JavaScript (use TS parser)
-.py -> Python        .rs -> Rust               .java -> Java
-```
-
-Skip files with no recognized extension or in excluded directories.
-
-### Excluded Paths
+During indexing, skip files that add noise without value:
 
 Reuse the existing `skipDirs` pattern from `infrastructure/git/client.go`:
 ```
@@ -132,66 +110,65 @@ Also skip:
 
 ## Build and CI
 
-### Build Tag Strategy
+### Simplified Build (No CGo)
+
+Since `modernc.org/sqlite` is pure Go, no CGo toolchain is required:
 
 ```makefile
-# Default build: pure Go, no CGo, no graph
 build:
 	go build -o git-agent .
 
-# Graph-enabled build: CGo required
-build-graph:
-	CGO_ENABLED=1 go build -tags graph -o git-agent .
-
-# Tests: default excludes graph
 test:
-	go test -count=1 ./application/... ./domain/... ./infrastructure/... ./cmd/... ./e2e/...
-
-# Graph tests: requires CGo + KuzuDB
-test-graph:
-	CGO_ENABLED=1 go test -tags graph -count=1 ./...
+	go test -count=1 ./...
 ```
 
-### CI Matrix
-
-| Job | Build tags | CGO | Platforms |
-|-----|-----------|-----|-----------|
-| Default | (none) | 0 | linux-amd64, darwin-arm64, darwin-amd64 |
-| Graph | `graph` | 1 | linux-amd64, darwin-arm64 |
+- No separate `build-graph` or `test-graph` targets needed
+- Single CI job per platform (no graph/non-graph matrix)
+- Cross-compilation works out of the box (`GOOS=linux GOARCH=amd64 go build`)
+- No shared library bundling or `CGO_ENABLED=1` requirement
 
 ### Binary Size Budget
 
 | Component | Estimated size |
 |-----------|---------------|
 | Current binary | ~7.2 MB |
-| go-kuzu (KuzuDB shared lib) | +20-30 MB |
-| gotreesitter (5 grammars) | +5-10 MB |
-| Total graph-enabled | ~35-45 MB |
-| Target ceiling | 50 MB |
+| modernc.org/sqlite | +8-12 MB |
+| Total | ~15-20 MB |
 
-## Action Capture and Timeline
+## Action Capture and Timeline (P1b)
 
 ### Capture Performance
 
 The `capture` command is called by agent hooks after every tool call. It must
 complete in under 200ms to avoid degrading agent UX.
 
-- **Minimal work**: read `git diff`, write 2-3 nodes + edges, exit
+- **Delta-based tracking**: use `capture_baseline` table to track file content
+  hashes (`git hash-object`). Only attribute files whose hash changed since the
+  last capture. This prevents diff accumulation where later captures would
+  incorrectly include changes from prior tool calls.
+- **Minimal work**: compute hashes, diff delta files, write 2-3 rows + edges, update baseline, exit
 - **No schema recomputation**: do not recompute CO_CHANGED during capture
 - **No LLM calls**: action summaries are filled later by `timeline --compress`
 - **Lock timeout**: if the write lock cannot be acquired in 100ms, skip silently
-- **Batch optimization**: if multiple files changed, create all ACTION_MODIFIES
-  edges in a single transaction
+- **Batch optimization**: if multiple files changed, create all action_modifies
+  rows and capture_baseline updates in a single transaction
+- **Hash cost**: `git hash-object` adds ~1ms per file; negligible for typical
+  agent edits (1-5 files per tool call)
+- **Deleted files**: if a file appears in `git diff` but not on disk, use
+  sentinel hash `"deleted"` instead of `git hash-object` (which would fail)
+- **Baseline cleanup**: purge entries older than 24h that are not in the current
+  `git diff` to prevent unbounded growth
 
 ### Session Lifecycle
 
 | Event | Behavior |
 |-------|----------|
-| First capture for a source | Create new Session node |
-| Subsequent capture within 30 min | Append to existing session |
+| First capture for a source + instance_id | Create new session row |
+| Subsequent capture within 30 min (same source + instance) | Append to existing session |
 | No capture for 30 min | Next capture starts new session, auto-closes old one |
 | `--end-session` flag | Explicitly close the session |
-| `graph reset` | Deletes all sessions and actions |
+| Manual DB delete (`rm .git-agent/graph.db*`) | Deletes all sessions and actions |
+| Two concurrent agents of same source | Separate sessions via different `instance_id` (defaults to `$PPID`) |
 
 The 30-minute timeout is configurable in `.git-agent/config.yml`:
 ```yaml
@@ -201,13 +178,12 @@ graph:
 
 ### Diff Storage
 
-- Store diffs as STRING in KuzuDB (not external files)
+- Store diffs in a SQLite `TEXT` column (not external files)
 - Truncate at 100KB with `[truncated]` marker
 - Expected median: 1-5KB per action (typical agent edits are small)
 - For a 200-action session, expect ~200KB-1MB of diff data
-- Purge old action data: `graph reset --actions-before 2026-03-01`
 
-### Timeline Compression
+### Timeline Compression (P2)
 
 When `--compress` is used, the LLM receives grouped diffs per session:
 
@@ -223,7 +199,7 @@ Summarize this session in one sentence.
 Guidelines:
 - Group actions by session before sending to LLM
 - Truncate total context to fit model limits (keep most recent actions if overflow)
-- Cache summaries: once computed, write to Session.summary / Action.summary
+- Cache summaries: once computed, write to session summary / action summary columns
 - Subsequent `timeline --compress` calls return cached summaries without re-calling LLM
 
 ### Hook Configuration
@@ -234,39 +210,34 @@ Guidelines:
 - Should not produce stdout output (agents may parse it)
 - Can write warnings to stderr (agent ignores stderr)
 
-Recommended setup command (future):
-```bash
-git-agent graph setup-hooks --agent claude-code
-# Writes PostToolUse hook to ~/.claude/settings.json
-```
-
 **Universal fallback** for agents without hooks:
-- Git `post-commit` hook: `git-agent graph capture --source git-hook`
+- Git `post-commit` hook: `git-agent capture --source git-hook`
 - Captures at commit granularity instead of action granularity
 - Better than nothing; loses per-tool-call attribution
 
 ## Security
 
-- **Parameterized Cypher**: All queries use `$param` placeholders. Never
-  concatenate user input into Cypher strings.
-- **File permissions**: `.git-agent/graph.db/` uses 0755 (directory) and
-  0644 (files). Query commands open read-only.
+- **Parameterized queries**: All queries use `?` placeholders with parameter
+  binding. Never concatenate user input into SQL strings.
+- **File permissions**: `.git-agent/graph.db` uses 0644. Query commands open
+  read-only (`PRAGMA query_only=ON`).
 - **No secrets in graph**: Graph contains only structural data (paths, hashes,
   author names/emails from git log). Action diffs may contain code snippets but
   never credentials (diffs come from `git diff`, which respects `.gitignore`).
-- **Gitignore**: `graph.db/` is auto-added to `.gitignore` during `graph index`.
+- **Gitignore**: `graph.db`, `graph.db-wal`, and `graph.db-shm` are
+  auto-added to `.gitignore` during EnsureIndex.
 
 ## Error Handling Patterns
 
 | Scenario | Behavior |
 |----------|----------|
 | No git repository | Exit 1, `{"error": "not a git repository"}` |
-| No graph DB exists | Exit 3, `{"error": "graph not indexed", "hint": "run 'git-agent graph index'"}` |
-| DB corruption | Exit 1, suggest `git-agent graph reset` |
-| Lock contention | Exit 1, `{"error": "graph is being indexed by another process"}` |
-| Unsupported language | Skip file, warn in verbose mode |
-| Tree-sitter parse error | Skip file, warn in verbose mode |
-| KuzuDB query timeout | Exit 1, `{"error": "query timed out"}` |
-| Capture lock contention | Skip silently, exit 0, warn on stderr |
-| LLM not configured (`--compress`/`diagnose`) | Exit 1, `{"error": "LLM endpoint not configured"}` |
+| EnsureIndex fails | Exit 3, `{"error": "auto-index failed", "detail": "..."}` |
+| SQLite busy/locked | Retry via busy_timeout (5s); if exhausted, exit 1 |
+| Database disk image is malformed | Exit 1, suggest `rm .git-agent/graph.db*` |
+| Lock contention (capture) | Skip silently, exit 0, warn on stderr |
+| Force-push / history rewrite | Auto-detect via `merge-base --is-ancestor`, fall back to full re-index |
+| Schema version mismatch (minor) | Auto-migrate forward (ALTER TABLE, CREATE TABLE IF NOT EXISTS) |
+| Schema version mismatch (major) | Exit 1, suggest deleting graph.db (warns about action data loss) |
+| LLM not configured (`--compress`) | Exit 1, `{"error": "LLM endpoint not configured"}` |
 | LLM call fails | Exit 1, `{"error": "LLM request failed", "detail": "..."}` |

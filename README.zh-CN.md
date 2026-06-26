@@ -2,6 +2,7 @@
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADFF?logo=go)](https://go.dev)
+[![Latest Release](https://img.shields.io/github/v/release/GitAgentHQ/git-agent-cli)](https://github.com/GitAgentHQ/git-agent-cli/releases)
 
 [English](README.md) | **简体中文**
 
@@ -53,10 +54,11 @@ git-agent init --scope                  # 仅生成作用域
 git-agent init --gitignore              # 仅生成 .gitignore
 git-agent init --hook conventional      # 安装 Conventional Commits 验证器
 git-agent init --hook empty             # 安装空占位钩子
-git-agent init --hook /path/to/script  # 安装自定义钩子脚本
+git-agent init --hook /path/to/script   # 安装自定义钩子脚本
+git-agent init --agent-hook             # 安装 Claude Code PostToolUse 捕获钩子
 git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
-git-agent init --max-commits 50        # 限制用于作用域生成的提交分析数量
-git-agent init --local --scope         # 将作用域写入 .git-agent/config.local.yml
+git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
+git-agent init --local --scope          # 将作用域写入 .git-agent/config.local.yml
 ```
 
 | 参数 | 描述 |
@@ -64,6 +66,7 @@ git-agent init --local --scope         # 将作用域写入 .git-agent/config.lo
 | `--scope` | 通过 AI 生成作用域 |
 | `--gitignore` | 通过 AI 生成 `.gitignore` |
 | `--hook` | 配置钩子：`conventional`、`empty` 或文件路径（可重复） |
+| `--agent-hook` | 安装 Claude Code PostToolUse 捕获钩子 |
 | `--force` | 覆盖已有配置/.gitignore |
 | `--max-commits` | 用于作用域生成的最大提交分析数量（默认：200） |
 | `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
@@ -135,6 +138,56 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 ### `git-agent version`
 
 打印构建版本。
+
+### `git-agent impact`
+
+查找与给定种子相关的文件或符号。三种模式：
+
+| 模式 | 触发条件 | 返回内容 |
+|------|----------|----------|
+| `cochange`（默认） | 种子为文件路径（或无参数 = 工作区变更） | 历史上与种子一起变更的文件 |
+| `structural` | `--symbol <name>` | 调用、被调用或引用种子符号的 AST 符号 |
+| `combined` | `--symbol <name> --mode combined` | co-change 和 structural 结果的并集 |
+
+不带参数时，种子默认为当前工作区变更。首次运行自动索引 git 历史；查询为离线操作（无需 LLM，无需 API key）。
+
+```bash
+git-agent impact                                     # "我的改动通常还会涉及哪些文件？"
+git-agent impact application/commit_service.go       # 从特定文件查 co-change
+git-agent impact src/                                # 从目录查 co-change
+git-agent impact --symbol CommitService --json       # structural 影响分析
+git-agent impact --symbol CommitService --mode combined  # 两种信号合并
+```
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `--symbol` | | 按符号名查询 structural 影响 |
+| `--mode` | `cochange` | 影响模式：`cochange`、`structural` 或 `combined` |
+| `--depth` | 1 | 传递性 co-change 深度 |
+| `--top` | 20 | 最大结果数 |
+| `--min-count` | 3 | 最小 co-change 次数阈值 |
+| `--reindex` | false | 查询前强制重新索引 |
+| `--json` / `--text` | 自动 | 强制输出格式（管道时为 JSON，TTY 时为文本） |
+
+### `git-agent timeline`
+
+显示最近的 agent 和人类操作历史，按会话分组，包含每次操作的工具和文件信息。由 `git-agent capture` 写入数据。离线操作。
+
+```bash
+git-agent timeline                        # 所有已记录的操作
+git-agent timeline --since 2h             # 最近 2 小时
+git-agent timeline --file src/auth.go     # 按文件过滤
+git-agent timeline --source claude-code   # 按来源过滤
+git-agent timeline --json                 # JSON 输出
+```
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `--since` | | 时间窗口：`2h`、`7d` 或 RFC 3339 时间戳 |
+| `--source` | | 按操作来源过滤（如 `claude-code`、`human`） |
+| `--file` | | 按文件路径过滤 |
+| `--top` | 50 | 最大显示会话数 |
+| `--json` / `--text` | 自动 | 强制输出格式 |
 
 ## 配置
 
@@ -222,6 +275,10 @@ hook:
 | 0 | 成功 |
 | 1 | 一般错误 — 无变更、API 失败、配置缺失 |
 | 2 | 钩子阻止 — pre-commit 钩子在重试后仍返回非零 |
+
+## 更新日志
+
+详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 

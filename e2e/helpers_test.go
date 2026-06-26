@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,6 +46,48 @@ func gitAgent(t *testing.T, dir string, args ...string) (string, int) {
 	return gitAgentEnv(t, dir, nil, args...)
 }
 
+// gitAgentSeparated runs git-agent with stdout and stderr captured separately.
+// Used where a command's contract distinguishes the two streams (e.g. diagnose
+// writes its diagnosis report to stdout while errors go to stderr).
+func gitAgentSeparated(t *testing.T, dir string, args ...string) (string, string, int) {
+	t.Helper()
+	c := exec.Command(agentBin, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	code := 0
+	if err := c.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("unexpected error running git-agent: %v", err)
+		}
+	}
+	return stdout.String(), stderr.String(), code
+}
+
+// gitAgentStdin runs git-agent with the given bytes piped to stdin, simulating
+// a PostToolUse hook payload. Returns combined output and exit code.
+func gitAgentStdin(t *testing.T, dir string, stdin []byte, args ...string) (string, int) {
+	t.Helper()
+	c := exec.Command(agentBin, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	c.Stdin = bytes.NewReader(stdin)
+	out, err := c.CombinedOutput()
+	code := 0
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("unexpected error running git-agent: %v", err)
+		}
+	}
+	return string(out), code
+}
+
 // gitAgentEnv runs the git-agent binary with additional environment variables.
 func gitAgentEnv(t *testing.T, dir string, env []string, args ...string) (string, int) {
 	t.Helper()
@@ -69,18 +112,19 @@ func gitAgentEnv(t *testing.T, dir string, env []string, args ...string) (string
 func newGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init")
-	run("config", "user.email", "test@example.com")
-	run("config", "user.name", "Test")
+	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
 	return dir
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
 }
 
 // newStallServer returns an httptest server that hijacks every connection and

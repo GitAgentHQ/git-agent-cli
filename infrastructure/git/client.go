@@ -96,6 +96,14 @@ func runCommit(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+func (c *Client) CommitHash(ctx context.Context) (string, error) {
+	out, err := gitCmd(ctx, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func (c *Client) AddAll(ctx context.Context) error {
 	if out, err := gitCmd(ctx, "add", "-A").CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
@@ -256,7 +264,11 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		untracked.out, untracked.err = gitCmd(ctx, "ls-files", "--others", "--exclude-standard").Output()
+		// --full-name forces paths relative to the repo root. Without it,
+		// ls-files reports paths relative to the cwd while git diff reports
+		// them relative to the root, so a commit run from a subdirectory would
+		// later fail to stage untracked files (StageFiles adds from the root).
+		untracked.out, untracked.err = gitCmd(ctx, "ls-files", "--others", "--exclude-standard", "--full-name").Output()
 	}()
 	wg.Wait()
 
@@ -334,17 +346,31 @@ func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 }
 
 func (c *Client) StageFiles(ctx context.Context, files []string) error {
+	// Run `git add` from the repository root so that paths — which git always
+	// reports relative to the repo root — resolve correctly even when the CLI
+	// was invoked from a subdirectory. Without this, a path like
+	// "skills/apple-events/SKILL.md" is interpreted relative to the cwd
+	// (e.g. .../event/skills/apple-events) and fails to match.
+	root, rootErr := c.RepoRoot(ctx)
+	addCmd := func(args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		if rootErr == nil {
+			cmd.Dir = root
+		}
+		return cmd
+	}
+
 	// Use -f to re-stage files that were already in the index but match .gitignore
 	// (they were explicitly tracked before UnstageAll removed them).
 	args := append([]string{"add", "-f", "--"}, files...)
-	if _, err := gitCmd(ctx, args...).CombinedOutput(); err == nil {
+	if _, err := addCmd(args...).CombinedOutput(); err == nil {
 		return nil
 	}
 	// Batch failed; retry file-by-file to isolate bad entries.
 	var staged int
 	var lastErr error
 	for _, f := range files {
-		if out, err := gitCmd(ctx, "add", "-f", "--", f).CombinedOutput(); err != nil {
+		if out, err := addCmd("add", "-f", "--", f).CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 		} else {
 			staged++
