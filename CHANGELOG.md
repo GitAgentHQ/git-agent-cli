@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-26
+
+### Added
+- Code knowledge graph backed by a SQLite repository, capturing actions, AST nodes, edges, and session state
+- AST-based impact analysis with multi-seed queries, deterministic traversal ordering, and resolution metadata on edges
+- Incremental AST indexing and sync (`graph index`, `graph sync`) with per-file produce tracking and schema versioning
+- Graph query and audit subcommands under `graph`: `status`, `verify`, `index`, `sync`, `impact`, `timeline`, `diagnose`, `provenance`, `callers`, `callees`, `node`, `query`, `affected`
+- `--json` / `--text` output flags with TTY auto-detection, routed through the new `pkg/output` helper
+- LLM re-ranker wired into `graph diagnose` for forensic ranking of impact results
+- Capture event log redesign for audit and forensics, including redaction and an event sequence/repo abstraction
+- Automatic agent capture via the Claude Code PostToolUse hook (`capture --source claude-code`)
+- Co-change index with exponential decay coupling and a lowered co-change floor
+- Embedding and FTS5 search support in the graph repository
+- `ErrNothingToCommit` sentinel error and graceful empty-commit handling
+- Empty-scope handling for fresh repositories with retry for unscoped planning
+
+### Changed
+- Migrated the code graph engine from KuzuDB to SQLite
+- Centralized database connection logic and unified AST index `Ensure` methods
+- Simplified symbol impact, indexing, linking, and language extraction logic
+- Decoupled capture handling and made action batch creation atomic with baseline updates
+- Normalized impact command path inputs and limited impact output size
+- Disabled `core.quotepath` and resolved git paths from the repository root
+
+### Fixed
+- Prevented self-pollution in code-graph capture
+- Validated database schema version early to avoid corrupt-state reads
+- Handled nil seeds and edge duplicates in AST resolution
+- Prevented path corruption and added UUID identifiers
+- Normalized commit-empty index errors and repository execution errors
+- Resolved warnings display in diagnosis output
+
+### Docs
+- Added graph subcommand documentation and git-agent graph skill docs
+- Added capture event log redesign design and plan
+- Updated CLI features, release history, and impact documentation
+
+### Chore
+- Removed stale learning state and the obsolete graph rebuild command
+- Untracked SQLite database files and updated gitignore
+
 ## [0.4.0] - 2026-05-29
 
 ### Added
@@ -121,7 +162,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.1.0...v0.2.0
