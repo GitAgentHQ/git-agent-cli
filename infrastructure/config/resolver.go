@@ -21,6 +21,12 @@ const DefaultRequestTimeout = 90 * time.Second
 // waiting" progress lines while an LLM call is in flight.
 const DefaultHeartbeatInterval = 15 * time.Second
 
+// DefaultDiagnoseTimeout bounds the per-HTTP-request deadline for the graph
+// diagnose LLM re-rank. The re-rank is a cold forensics path that may target a
+// more capable (and slower) model than commit generation, so it gets a longer
+// budget than DefaultRequestTimeout.
+const DefaultDiagnoseTimeout = 120 * time.Second
+
 // Build-time defaults injected via -ldflags "-X github.com/gitagenthq/git-agent/infrastructure/config.BuildAPIKey=..."
 var (
 	BuildAPIKey  = ""
@@ -39,6 +45,14 @@ type ProviderConfig struct {
 	NoModelCoAuthor      bool          // When true, ignore all --co-author trailers
 	RequireModelCoAuthor bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
 	ModelCoAuthorDomains []string      // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
+
+	// Diagnose-* fields configure the optional `graph diagnose --llm` re-ranker.
+	// Each falls back to the matching main field when unset, so a user who wants
+	// a single smarter model sets only git-agent.diagnose-model.
+	DiagnoseModel   string        // model for the re-rank LLM (default: Model)
+	DiagnoseBaseURL string        // base URL for the re-rank LLM (default: BaseURL)
+	DiagnoseAPIKey  string        // API key for the re-rank LLM (default: APIKey)
+	DiagnoseTimeout time.Duration // per-attempt HTTP timeout (0 = DefaultDiagnoseTimeout)
 }
 
 type fileConfig struct {
@@ -51,6 +65,11 @@ type fileConfig struct {
 	NoModelCoAuthor      bool     `yaml:"no_model_co_author"`
 	RequireModelCoAuthor bool     `yaml:"require_model_co_author"`
 	ModelCoAuthorDomains []string `yaml:"model_co_author_domains"`
+
+	DiagnoseModel   string `yaml:"diagnose_model"`
+	DiagnoseBaseURL string `yaml:"diagnose_base_url"`
+	DiagnoseAPIKey  string `yaml:"diagnose_api_key"`
+	DiagnoseTimeout string `yaml:"diagnose_timeout"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -77,6 +96,11 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		if result.HeartbeatInterval <= 0 {
 			result.HeartbeatInterval = DefaultHeartbeatInterval
 		}
+		// In free mode the diagnose re-ranker shares the build-time provider.
+		result.DiagnoseModel = result.Model
+		result.DiagnoseBaseURL = result.BaseURL
+		result.DiagnoseAPIKey = result.APIKey
+		result.DiagnoseTimeout = resolveDuration(flags.DiagnoseTimeout, "", DefaultDiagnoseTimeout)
 		return result, nil
 	}
 
@@ -98,6 +122,10 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	gitModel, _ := ReadGitConfig(ctx, "model")
 	gitBaseURL, _ := ReadGitConfig(ctx, "base-url")
+	gitDiagnoseModel, _ := ReadGitConfig(ctx, "diagnose-model")
+	gitDiagnoseBaseURL, _ := ReadGitConfig(ctx, "diagnose-base-url")
+	gitDiagnoseAPIKey, _ := ReadGitConfig(ctx, "diagnose-api-key")
+	gitDiagnoseTimeout, _ := ReadGitConfig(ctx, "diagnose-timeout")
 
 	result := &ProviderConfig{}
 
@@ -147,7 +175,25 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
 
+	// Diagnose re-ranker fields: flag > git config > YAML file > fall back to the
+	// matching main field (so a user who wants one smarter model sets only
+	// git-agent.diagnose-model). Timeout defaults to DefaultDiagnoseTimeout.
+	result.DiagnoseModel = firstNonEmpty(flags.DiagnoseModel, gitDiagnoseModel, file.DiagnoseModel, result.Model)
+	result.DiagnoseBaseURL = firstNonEmpty(flags.DiagnoseBaseURL, gitDiagnoseBaseURL, file.DiagnoseBaseURL, result.BaseURL)
+	result.DiagnoseAPIKey = firstNonEmpty(flags.DiagnoseAPIKey, gitDiagnoseAPIKey, file.DiagnoseAPIKey, result.APIKey)
+	result.DiagnoseTimeout = resolveDiagnoseTimeout(flags.DiagnoseTimeout, gitDiagnoseTimeout, file.DiagnoseTimeout, DefaultDiagnoseTimeout)
+
 	return result, nil
+}
+
+// firstNonEmpty returns the first non-empty argument, or "" if all are empty.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // resolveDuration applies the precedence chain flag > file YAML > default,
@@ -162,6 +208,34 @@ func resolveDuration(flag time.Duration, fileValue string, def time.Duration) ti
 		}
 	}
 	return def
+}
+
+// resolveDiagnoseTimeout applies flag > git-config > YAML file > default for the
+// diagnose re-rank timeout. git-config and YAML are strings (e.g. "120s").
+func resolveDiagnoseTimeout(flag time.Duration, gitValue, fileValue string, def time.Duration) time.Duration {
+	if flag > 0 {
+		return flag
+	}
+	if d, ok := parseDurationNonEmpty(gitValue); ok {
+		return d
+	}
+	if d, ok := parseDurationNonEmpty(fileValue); ok {
+		return d
+	}
+	return def
+}
+
+// parseDurationNonEmpty parses a duration string, returning (zero, false) on
+// empty or unparseable input.
+func parseDurationNonEmpty(s string) (time.Duration, bool) {
+	if s == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
 }
 
 // ResolveField resolves a single config key across all scopes and reports which

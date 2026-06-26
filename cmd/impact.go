@@ -2,14 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/gitagenthq/git-agent/application"
@@ -17,6 +15,7 @@ import (
 	infraExtraction "github.com/gitagenthq/git-agent/infrastructure/extraction"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var impactCmd = &cobra.Command{
@@ -132,7 +131,7 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 	stateRepo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
 
-	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
 
@@ -152,14 +151,14 @@ func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, 
 		if err != nil {
 			return outputError(jsonFlag, textFlag, err)
 		}
-		if useJSON(jsonFlag, textFlag) {
+		if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
 			return outputCombinedJSON(cmd.OutOrStdout(), astResult, coChangeResult)
 		}
 		outputCombinedText(cmd.OutOrStdout(), astResult, coChangeResult)
 		return nil
 	}
 
-	if useJSON(jsonFlag, textFlag) {
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
 		return outputASTImpactJSON(cmd.OutOrStdout(), astResult)
 	}
 	outputASTImpactText(cmd.OutOrStdout(), astResult)
@@ -176,7 +175,7 @@ func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symb
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
 	stateRepo := infraGraph.NewSQLiteRepository(client)
 	graphGit := infraGit.NewGraphClient(root)
-	if err := ensureASTIndexForSymbol(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
+	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
 		return outputError(jsonFlag, textFlag, err)
 	}
 
@@ -246,10 +245,13 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 	return dbPath, client, nil
 }
 
-func ensureASTIndexForSymbol(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
+// ensureASTIndex brings the AST index up to date. When symbol is non-empty the
+// index is ensured for that symbol; otherwise the whole index is ensured for
+// unscoped queries (graph query, graph node by name).
+func ensureASTIndex(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
 	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
 	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
-		EnsureForSymbol(ctx, root, symbol, force, progress)
+		Ensure(ctx, root, symbol, force, progress)
 }
 
 // resolveSeeds turns CLI arguments into repo-relative seed files. With no args,
@@ -294,18 +296,15 @@ func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit
 }
 
 func outputError(jsonFlag, textFlag bool, err error) error {
-	if useJSON(jsonFlag, textFlag) {
-		enc := json.NewEncoder(os.Stdout)
-		_ = enc.Encode(map[string]string{"error": err.Error()})
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		_ = output.EncodeJSON(os.Stdout, map[string]string{"error": err.Error()})
 	}
 	return err
 }
 
 func outputResult(cmd *cobra.Command, result *graph.ImpactResult, jsonFlag, textFlag bool) error {
-	if useJSON(jsonFlag, textFlag) {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 	return outputText(cmd, result)
 }
@@ -416,21 +415,9 @@ func realPath(p string) string {
 	return filepath.Join(parent, base)
 }
 
-func useJSON(jsonFlag, textFlag bool) bool {
-	if jsonFlag {
-		return true
-	}
-	if textFlag {
-		return false
-	}
-	return !isatty.IsTerminal(os.Stdout.Fd())
-}
-
 // outputASTImpactJSON renders the structural impact result as JSON.
 func outputASTImpactJSON(w io.Writer, result *graph.ASTImpactResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	return output.EncodeJSON(w, result)
 }
 
 // outputASTImpactText renders the structural impact result as human-readable text.
@@ -448,7 +435,7 @@ func outputASTImpactText(w io.Writer, result *graph.ASTImpactResult) {
 	// each group.
 	var prod, tests []graph.ASTImpactEntry
 	for _, e := range result.Impacted {
-		if isTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
+		if graph.IsTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
 			tests = append(tests, e)
 		} else {
 			prod = append(prod, e)
@@ -484,11 +471,6 @@ func renderImpactEntries(w io.Writer, entries []graph.ASTImpactEntry) {
 	}
 }
 
-// isTestFile reports whether a Go file path is a test file.
-func isTestFile(filePath string) bool {
-	return strings.HasSuffix(filePath, "_test.go")
-}
-
 // isTestSymbol reports whether a symbol name looks like a Go test function/benchmark.
 func isTestSymbol(name string) bool {
 	return strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Example")
@@ -505,14 +487,12 @@ func init() {
 	impactCmd.Flags().String("mode", "", "impact mode: structural, combined, or cochange (default: cochange, or structural if --symbol given)")
 	impactCmd.MarkFlagsMutuallyExclusive("json", "text")
 
-	rootCmd.AddCommand(impactCmd)
+	graphCmd.AddCommand(impactCmd)
 }
 
 // outputCombinedJSON renders both co-change and structural results as JSON.
 func outputCombinedJSON(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(map[string]any{
+	return output.EncodeJSON(w, map[string]any{
 		"mode":           "combined",
 		"structural":     astResult,
 		"co_change":      ccResult,

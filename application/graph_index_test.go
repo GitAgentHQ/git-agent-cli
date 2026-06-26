@@ -449,7 +449,7 @@ func (r *coChangeFailRepo) GetActiveSession(context.Context, string, string, int
 func (r *coChangeFailRepo) UpsertSession(context.Context, graph.SessionNode) error { return nil }
 func (r *coChangeFailRepo) EndSession(context.Context, string) error               { return nil }
 func (r *coChangeFailRepo) CreateAction(context.Context, graph.ActionNode) error   { return nil }
-func (r *coChangeFailRepo) CreateActionBatch(_ context.Context, a graph.ActionNode, _ []graph.FileChange, _ map[string]string) (graph.ActionNode, error) {
+func (r *coChangeFailRepo) CreateActionBatch(_ context.Context, a graph.ActionNode, _ []graph.FileChange) (graph.ActionNode, error) {
 	return a, nil
 }
 func (r *coChangeFailRepo) GetActionCountForSession(context.Context, string) (int, error) {
@@ -461,13 +461,26 @@ func (r *coChangeFailRepo) CreateActionModifies(context.Context, string, string,
 func (r *coChangeFailRepo) CreateActionProduces(context.Context, string, string, string) error {
 	return nil
 }
-func (r *coChangeFailRepo) GetCaptureBaseline(context.Context, []string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (r *coChangeFailRepo) AppendEvent(context.Context, graph.EventRecord) (graph.EventRecord, error) {
+	return graph.EventRecord{}, nil
 }
-func (r *coChangeFailRepo) UpdateCaptureBaseline(context.Context, map[string]string) error {
+func (r *coChangeFailRepo) HeadHash(context.Context) (string, error) { return graph.GenesisHash, nil }
+func (r *coChangeFailRepo) StreamEvents(context.Context, int64) (graph.EventCursor, error) {
+	return nil, nil
+}
+func (r *coChangeFailRepo) VerifyChain(context.Context) (graph.VerifyResult, error) {
+	return graph.VerifyResult{}, nil
+}
+func (r *coChangeFailRepo) ResetProjections(context.Context) error { return nil }
+func (r *coChangeFailRepo) CreateEventFile(context.Context, graph.EventFile) error {
 	return nil
 }
-func (r *coChangeFailRepo) CleanupCaptureBaseline(context.Context, []string, int64) error { return nil }
+func (r *coChangeFailRepo) LatestAfterBlob(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (r *coChangeFailRepo) FileChanges(context.Context, []string) ([]graph.FileChangeRow, error) {
+	return nil, nil
+}
 func (r *coChangeFailRepo) GetStats(context.Context) (*graph.GraphStats, error) {
 	return &graph.GraphStats{}, nil
 }
@@ -486,6 +499,17 @@ func (r *coChangeFailRepo) RecomputeCoChanged(context.Context, int, int) error {
 }
 func (r *coChangeFailRepo) IncrementalCoChanged(context.Context, []string, int, int) error {
 	return fmt.Errorf("forced incremental co-change failure")
+}
+func (r *coChangeFailRepo) MaxEventSeq(context.Context) (int64, error)          { return 0, nil }
+func (r *coChangeFailRepo) MaxProjectedEventSeq(context.Context) (int64, error) { return 0, nil }
+func (r *coChangeFailRepo) LastEventFileSeqForPath(context.Context, string) (int64, error) {
+	return 0, nil
+}
+func (r *coChangeFailRepo) ClearEventFileAfterBlob(context.Context, string, int64) error {
+	return nil
+}
+func (r *coChangeFailRepo) LoadOpenSession(_ context.Context, _, _ string) (string, int64, int, error) {
+	return "", 0, 0, nil
 }
 
 type staticGraphGitClient struct {

@@ -27,6 +27,7 @@ var (
 	ErrNotGitRepo      = NewExitCodeError(1, "error: not a git repository")
 	ErrGitNotFound     = NewExitCodeError(1, "error: git not found in PATH")
 	ErrGraphNotIndexed = NewExitCodeError(3, "error: graph not indexed")
+	ErrChainIntegrity  = NewExitCodeError(4, "error: event chain integrity check failed")
 )
 
 // APIError represents an error returned by the LLM API (rate limit, auth failure, etc.).

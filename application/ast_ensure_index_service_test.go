@@ -80,7 +80,7 @@ func Beta() {}
 		ancestorOK:       true,
 	}
 	svc := NewASTEnsureIndexService(repo, state, git, extractor)
-	if err := svc.EnsureForSymbol(ctx, root, "Beta", false, nil); err != nil {
+	if err := svc.Ensure(ctx, root, "Beta", false, nil); err != nil {
 		t.Fatalf("ensure for symbol: %v", err)
 	}
 	if state.values[astIndexHeadKey] != "new-head" {
@@ -114,7 +114,7 @@ func Target() {}
 		ancestorOK:       true,
 	}
 	svc := NewASTEnsureIndexService(repo, state, git, extractor)
-	if err := svc.EnsureForSymbol(ctx, root, "Target", false, nil); err != nil {
+	if err := svc.Ensure(ctx, root, "Target", false, nil); err != nil {
 		t.Fatalf("ensure for symbol: %v", err)
 	}
 

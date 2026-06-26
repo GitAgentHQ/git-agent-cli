@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,12 +13,18 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var timelineCmd = &cobra.Command{
 	Use:   "timeline",
 	Short: "Show agent and human action history",
-	RunE:  runTimeline,
+	Long: `Show recent agent and human action history as sessions of actions, each
+with the files it touched. The broad entry point over the Event Log: start here
+to see what happened, then drill into ` + "`provenance`" + ` for one file's full
+history or ` + "`diagnose`" + ` to trace a regression. Filter with --file, --source,
+or --since. Read-only.`,
+	RunE: runTimeline,
 }
 
 func runTimeline(cmd *cobra.Command, args []string) error {
@@ -103,10 +108,8 @@ func parseSince(s string) (int64, error) {
 }
 
 func outputTimeline(cmd *cobra.Command, result *graph.TimelineResult, jsonFlag, textFlag bool) error {
-	if useJSON(jsonFlag, textFlag) {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 	return outputTimelineText(cmd, result)
 }
@@ -184,5 +187,5 @@ func init() {
 	timelineCmd.Flags().Bool("text", false, "force text output")
 	timelineCmd.MarkFlagsMutuallyExclusive("json", "text")
 
-	rootCmd.AddCommand(timelineCmd)
+	graphCmd.AddCommand(timelineCmd)
 }

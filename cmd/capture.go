@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,8 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	"github.com/gitagenthq/git-agent/infrastructure/redact"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var captureCmd = &cobra.Command{
@@ -28,27 +29,37 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	message, _ := cmd.Flags().GetString("message")
 	endSession, _ := cmd.Flags().GetBool("end-session")
 
-	// When invoked as a Claude Code PostToolUse hook, the tool name and session
-	// id arrive as a JSON payload on stdin; fold them in unless overridden.
-	tool, instanceID = mergeHookPayload(tool, instanceID, readPipedStdin())
+	// When invoked as a Claude Code PostToolUse hook, the full payload arrives as
+	// JSON on stdin. Build the redacted EventRecord to append; fold the tool name
+	// and session id into the flags too, for callers that only want those.
+	stdin := readPipedStdin()
+	tool, instanceID = mergeHookPayload(tool, instanceID, stdin)
 
 	if source == "" {
 		return fmt.Errorf("capture: --source is required")
 	}
 
-	result, err := captureOnce(cmd, graph.CaptureRequest{
+	req := graph.CaptureRequest{
 		Source:     source,
 		Tool:       tool,
 		InstanceID: instanceID,
 		Message:    message,
 		EndSession: endSession,
-	})
+	}
+	// On interactive/malformed stdin buildEventRecord returns ok=false; capture
+	// then has no payload to append and degrades to a no-op (never errors).
+	if event, toolResponse, ok := buildEventRecord(source, tool, instanceID, stdin, redact.NewRedactor()); ok {
+		req.Event = &event
+		req.ToolResponse = toolResponse
+	}
+
+	result, err := captureOnce(cmd, req)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "capture: warning: %v\n", err)
 		return nil
 	}
 	if result != nil {
-		json.NewEncoder(os.Stdout).Encode(result)
+		_ = output.EncodeJSON(os.Stdout, result)
 	}
 	return nil
 }
@@ -81,7 +92,10 @@ func captureOnce(cmd *cobra.Command, req graph.CaptureRequest) (*graph.CaptureRe
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
-	captureSvc := application.NewCaptureService(repo, graphGit, infraGraph.NewUUIDSessionIDGenerator())
+	captureSvc := application.NewCaptureService(
+		repo, graphGit,
+		infraGraph.NewUUIDSessionIDGenerator(),
+	)
 
 	return captureSvc.Capture(ctx, req)
 }

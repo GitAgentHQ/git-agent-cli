@@ -4,14 +4,29 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	sqlitedriver "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
+
 	"github.com/gitagenthq/git-agent/domain/graph"
 )
+
+// isBusyErr reports whether err is a SQLITE_BUSY result from the driver. The
+// primary result code lives in the low 8 bits, so extended busy codes
+// (BUSY_SNAPSHOT, BUSY_TIMEOUT) match too.
+func isBusyErr(err error) bool {
+	var se *sqlitedriver.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	return se.Code()&0xff == sqlite3.SQLITE_BUSY
+}
 
 // Compile-time check that SQLiteRepository satisfies GraphRepository.
 var _ graph.GraphRepository = (*SQLiteRepository)(nil)
@@ -25,11 +40,12 @@ type SQLiteRepository struct {
 	client    *SQLiteClient
 	tx        *sql.Tx              // non-nil while a RunInTx batch is open
 	stmtCache map[string]*sql.Stmt // prepared statements reused within the batch
+	hasher    graph.EventHasher    // computes the Event chain this_hash
 }
 
 // NewSQLiteRepository returns a new SQLiteRepository wrapping the given client.
 func NewSQLiteRepository(client *SQLiteClient) *SQLiteRepository {
-	return &SQLiteRepository{client: client}
+	return &SQLiteRepository{client: client, hasher: NewSHA256Hasher()}
 }
 
 // Client returns the underlying SQLiteClient (used by tests to run raw queries).
@@ -276,7 +292,32 @@ func (r *SQLiteRepository) GetStats(ctx context.Context) (*graph.GraphStats, err
 		}
 	}
 
+	// DB file size via page_count * page_size (WAL-aware: main file pages).
+	var pageCount, pageSize int64
+	if err := r.db().QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err == nil {
+		if err := r.db().QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err == nil {
+			stats.DBSizeBytes = pageCount * pageSize
+		}
+	}
+
 	return stats, nil
+}
+
+// MaxEventSeq returns the highest seq in the Event Log, or 0 when empty. It is
+// the source-of-truth high-water mark for sync staleness.
+func (r *SQLiteRepository) MaxEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM events`).Scan(&seq)
+	return seq, err
+}
+
+// MaxProjectedEventSeq returns the highest event_seq reflected in the event_files
+// projection, or 0 when empty. Since one Rebuild pass derives all projections
+// together, this equal to MaxEventSeq means the cold path is current.
+func (r *SQLiteRepository) MaxProjectedEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_files`).Scan(&seq)
+	return seq, err
 }
 
 // recencyCoChangeQuery builds the INSERT that (re)computes co_changed with
@@ -707,7 +748,7 @@ func (r *SQLiteRepository) CreateAction(ctx context.Context, a graph.ActionNode)
 	return err
 }
 
-func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange, baselineUpdates map[string]string) (graph.ActionNode, error) {
+func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.ActionNode, modifiedFiles []graph.FileChange) (graph.ActionNode, error) {
 	filesJSON, err := json.Marshal(a.FilesChanged)
 	if err != nil {
 		return graph.ActionNode{}, fmt.Errorf("marshal files_changed: %w", err)
@@ -744,22 +785,6 @@ func (r *SQLiteRepository) CreateActionBatch(ctx context.Context, a graph.Action
 		); err != nil {
 			return graph.ActionNode{}, fmt.Errorf("insert action_modifies: %w", err)
 		}
-	}
-
-	if len(baselineUpdates) > 0 {
-		stmt, err := tx.PrepareContext(ctx,
-			`INSERT OR REPLACE INTO capture_baseline (file_path, content_hash, captured_at) VALUES (?, ?, ?)`)
-		if err != nil {
-			return graph.ActionNode{}, fmt.Errorf("prepare capture baseline: %w", err)
-		}
-		now := time.Now().Unix()
-		for path, hash := range baselineUpdates {
-			if _, err := stmt.ExecContext(ctx, path, hash, now); err != nil {
-				stmt.Close()
-				return graph.ActionNode{}, fmt.Errorf("update capture baseline: %w", err)
-			}
-		}
-		stmt.Close()
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -993,9 +1018,138 @@ func (r *SQLiteRepository) UnlinkedActionsForFiles(ctx context.Context, filePath
 	return actions, rows.Err()
 }
 
-func (r *SQLiteRepository) GetCaptureBaseline(ctx context.Context, filePaths []string) (map[string]string, error) {
+// ResetProjections truncates the derived Projection tables so a rebuild can
+// regenerate them from the Event Log. The append-only events table is never
+// touched. Run inside one transaction so a failed rebuild can't leave half the
+// Projections cleared.
+func (r *SQLiteRepository) ResetProjections(ctx context.Context) error {
+	tx, err := r.db().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reset projections tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, stmt := range []string{
+		`DELETE FROM event_files`,
+		`DELETE FROM action_produces`,
+		`DELETE FROM action_modifies`,
+		`DELETE FROM actions`,
+		`DELETE FROM sessions`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("reset projections: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// CreateEventFile records one touched-file Projection row for an Event. The
+// File Blob Refs are derived on the cold path; (event_seq, file_path) is the key.
+func (r *SQLiteRepository) CreateEventFile(ctx context.Context, ef graph.EventFile) error {
+	_, err := r.execStmt(ctx,
+		`INSERT OR REPLACE INTO event_files
+			(event_seq, file_path, before_blob, after_blob, change_kind, additions, deletions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ef.EventSeq, ef.FilePath, nullableString(ef.BeforeBlob), nullableString(ef.AfterBlob),
+		ef.ChangeKind, ef.Additions, ef.Deletions,
+	)
+	return err
+}
+
+// LastEventFileSeqForPath returns the highest event_seq projected for filePath.
+func (r *SQLiteRepository) LastEventFileSeqForPath(ctx context.Context, filePath string) (int64, error) {
+	var seq int64
+	err := r.db().QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(event_seq), 0) FROM event_files WHERE file_path = ?`, filePath,
+	).Scan(&seq)
+	return seq, err
+}
+
+// ClearEventFileAfterBlob empties the after_blob of one (filePath, eventSeq) row
+// so a superseded final touch no longer claims to be the path's current state.
+func (r *SQLiteRepository) ClearEventFileAfterBlob(ctx context.Context, filePath string, eventSeq int64) error {
+	_, err := r.db().ExecContext(ctx,
+		`UPDATE event_files SET after_blob = NULL WHERE file_path = ? AND event_seq = ?`,
+		filePath, eventSeq,
+	)
+	return err
+}
+
+// LoadOpenSession returns the latest session for (source, instanceID) with its
+// last action's timestamp and next sequence number. Returns ("",0,0) when none.
+func (r *SQLiteRepository) LoadOpenSession(ctx context.Context, source, instanceID string) (string, int64, int, error) {
+	var (
+		id        string
+		startedAt int64
+		lastAt    sql.NullInt64
+		maxSeq    sql.NullInt64
+	)
+	err := r.db().QueryRowContext(ctx,
+		`SELECT s.id, s.started_at,
+		        (SELECT MAX(a.timestamp) FROM actions a WHERE a.session_id = s.id),
+		        (SELECT MAX(a.sequence)  FROM actions a WHERE a.session_id = s.id)
+		 FROM sessions s
+		 WHERE s.source = ? AND (s.instance_id = ? OR s.instance_id IS NULL)
+		 ORDER BY s.started_at DESC LIMIT 1`,
+		source, instanceID,
+	).Scan(&id, &startedAt, &lastAt, &maxSeq)
+	if err == sql.ErrNoRows {
+		return "", 0, 0, nil
+	}
+	if err != nil {
+		return "", 0, 0, err
+	}
+	la := startedAt
+	if lastAt.Valid {
+		la = lastAt.Int64
+	}
+	next := 1
+	if maxSeq.Valid {
+		next = int(maxSeq.Int64) + 1
+	}
+	return id, la, next, nil
+}
+
+// nullableString stores "" as SQL NULL so absent File Blob Refs read back as
+// NULL rather than the empty string.
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// LatestAfterBlob returns the most recent non-null after_blob recorded for
+// filePath, i.e. the last content state the Event Log accounts for. ok is false
+// when the log has never touched the path (or only recorded null blobs).
+func (r *SQLiteRepository) LatestAfterBlob(ctx context.Context, filePath string) (string, bool, error) {
+	var blob sql.NullString
+	err := r.db().QueryRowContext(ctx,
+		`SELECT after_blob FROM event_files
+		 WHERE file_path = ? AND after_blob IS NOT NULL
+		 ORDER BY event_seq DESC LIMIT 1`,
+		filePath,
+	).Scan(&blob)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("latest after_blob for %s: %w", filePath, err)
+	}
+	if !blob.Valid {
+		return "", false, nil
+	}
+	return blob.String, true, nil
+}
+
+// FileChanges returns every event_files row whose file_path is in filePaths,
+// joined to its events row, in ascending seq order. action_produces is joined by
+// file_path to surface any linked commit. The read covers observed and
+// out-of-band Events alike (they share the events table), so it backs both the
+// Provenance View and the diagnose Candidate blob refs.
+func (r *SQLiteRepository) FileChanges(ctx context.Context, filePaths []string) ([]graph.FileChangeRow, error) {
 	if len(filePaths) == 0 {
-		return map[string]string{}, nil
+		return nil, nil
 	}
 	placeholders := make([]string, len(filePaths))
 	args := make([]any, len(filePaths))
@@ -1003,68 +1157,344 @@ func (r *SQLiteRepository) GetCaptureBaseline(ctx context.Context, filePaths []s
 		placeholders[i] = "?"
 		args[i] = p
 	}
-	query := fmt.Sprintf(
-		`SELECT file_path, content_hash FROM capture_baseline WHERE file_path IN (%s)`,
-		strings.Join(placeholders, ","),
-	)
+
+	query := `SELECT ef.event_seq, e.event_id, e.recorded_at, e.source, e.tool_name,
+			ef.file_path, ef.before_blob, ef.after_blob, ef.change_kind,
+			(SELECT ap.commit_hash FROM action_produces ap
+			 JOIN actions a2 ON a2.id = ap.action_id
+			 WHERE ap.file_path = ef.file_path
+			 ORDER BY a2.timestamp DESC, ap.commit_hash DESC LIMIT 1) AS linked_commit
+		 FROM event_files ef
+		 JOIN events e ON e.seq = ef.event_seq
+		 WHERE ef.file_path IN (` + strings.Join(placeholders, ",") + `)
+		 ORDER BY ef.event_seq ASC`
+
 	rows, err := r.db().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query file changes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []graph.FileChangeRow
+	for rows.Next() {
+		var (
+			fc                              graph.FileChangeRow
+			toolName, beforeBlob, afterBlob sql.NullString
+			changeKind, linkedCommit        sql.NullString
+		)
+		if err := rows.Scan(
+			&fc.Seq, &fc.EventID, &fc.RecordedAt, &fc.Source, &toolName,
+			&fc.FilePath, &beforeBlob, &afterBlob, &changeKind, &linkedCommit,
+		); err != nil {
+			return nil, fmt.Errorf("scan file change: %w", err)
+		}
+		fc.ToolName = toolName.String
+		fc.BeforeBlob = beforeBlob.String
+		fc.AfterBlob = afterBlob.String
+		fc.ChangeKind = changeKind.String
+		fc.LinkedCommit = linkedCommit.String
+		out = append(out, fc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate file changes: %w", err)
+	}
+	return out, nil
+}
+
+// AppendEvent is the only writer into the events table. Read-head, hash, and
+// insert run inside one transaction so two concurrent writers cannot fork the
+// chain. The transaction uses a deferred BEGIN (database/sql default); in WAL
+// mode a writer whose snapshot is stale by commit time fails the
+// write-transaction upgrade with SQLITE_BUSY_SNAPSHOT, which isBusyErr maps to
+// ErrChainBusy so the contender skips without forking. seq is assigned
+// explicitly from MAX(seq)+1 inside the txn (rather than left to
+// AUTOINCREMENT) because seq is folded into the canonical form, so it must be
+// known before the this_hash is computed and stored.
+func (r *SQLiteRepository) AppendEvent(ctx context.Context, e graph.EventRecord) (graph.EventRecord, error) {
+	tx, err := r.db().BeginTx(ctx, nil)
+	if err != nil {
+		if isBusyErr(err) {
+			return graph.EventRecord{}, graph.ErrChainBusy
+		}
+		return graph.EventRecord{}, fmt.Errorf("begin append: %w", err)
+	}
+	defer tx.Rollback()
+
+	var maxSeq sql.NullInt64
+	var headHash sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MAX(seq), (SELECT this_hash FROM events ORDER BY seq DESC LIMIT 1) FROM events`,
+	).Scan(&maxSeq, &headHash); err != nil {
+		if isBusyErr(err) {
+			return graph.EventRecord{}, graph.ErrChainBusy
+		}
+		return graph.EventRecord{}, fmt.Errorf("read chain head: %w", err)
+	}
+
+	e.Seq = maxSeq.Int64 + 1
+	if headHash.Valid {
+		e.PrevHash = headHash.String
+	} else {
+		e.PrevHash = graph.GenesisHash
+	}
+	e.ThisHash = r.hasher.Hash(e.PrevHash, e)
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO events (
+			seq, event_id, recorded_at, source, instance_id, kind,
+			hook_event_name, tool_name, cwd, transcript_path, permission_mode,
+			payload_raw, payload_size, truncated,
+			command, exit_code, exit_code_source, is_test, is_build, test_name,
+			prev_hash, this_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Seq, e.EventID, e.RecordedAt, string(e.Source), e.InstanceID, string(e.Kind),
+		e.HookEventName, e.ToolName, e.Cwd, e.TranscriptPath, e.PermissionMode,
+		string(e.PayloadRaw), e.PayloadSize, boolToInt(e.Truncated),
+		e.Command, exitCodeArg(e.ExitCode), e.ExitCodeSource, boolToInt(e.IsTest), boolToInt(e.IsBuild), e.TestName,
+		e.PrevHash, e.ThisHash,
+	); err != nil {
+		if isBusyErr(err) {
+			return graph.EventRecord{}, graph.ErrChainBusy
+		}
+		return graph.EventRecord{}, fmt.Errorf("insert event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		if isBusyErr(err) {
+			return graph.EventRecord{}, graph.ErrChainBusy
+		}
+		return graph.EventRecord{}, fmt.Errorf("commit append: %w", err)
+	}
+	return e, nil
+}
+
+// HeadHash returns the current chain head (this_hash of the highest seq), or the
+// Genesis value when the log is empty.
+func (r *SQLiteRepository) HeadHash(ctx context.Context) (string, error) {
+	var headHash sql.NullString
+	if err := r.db().QueryRowContext(ctx,
+		`SELECT this_hash FROM events ORDER BY seq DESC LIMIT 1`,
+	).Scan(&headHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return graph.GenesisHash, nil
+		}
+		return "", fmt.Errorf("read head hash: %w", err)
+	}
+	if !headHash.Valid {
+		return graph.GenesisHash, nil
+	}
+	return headHash.String, nil
+}
+
+// StreamEvents returns a cursor over events with seq > sinceSeq, in seq order.
+// The query is read-only and safe under WAL alongside an active writer.
+func (r *SQLiteRepository) StreamEvents(ctx context.Context, sinceSeq int64) (graph.EventCursor, error) {
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT seq, event_id, recorded_at, source, instance_id, kind,
+			hook_event_name, tool_name, cwd, transcript_path, permission_mode,
+			payload_raw, payload_size, truncated,
+			command, exit_code, exit_code_source, is_test, is_build, test_name,
+			prev_hash, this_hash
+		 FROM events WHERE seq > ? ORDER BY seq ASC`,
+		sinceSeq,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("stream events: %w", err)
+	}
+	return &sqliteEventCursor{rows: rows}, nil
+}
+
+// sqliteEventCursor iterates a result set of events as graph.EventRecord values.
+type sqliteEventCursor struct {
+	rows *sql.Rows
+	cur  graph.EventRecord
+	err  error
+}
+
+func (c *sqliteEventCursor) Next() bool {
+	if c.err != nil || !c.rows.Next() {
+		return false
+	}
+	var (
+		source, kind                        string
+		instanceID, hookEventName, toolName sql.NullString
+		cwd, transcriptPath, permissionMode sql.NullString
+		command, exitCodeSource, testName   sql.NullString
+		exitCode                            sql.NullInt64
+		truncated, isTest, isBuild          int
+		payloadRaw                          []byte
+	)
+	rec := graph.EventRecord{}
+	if err := c.rows.Scan(
+		&rec.Seq, &rec.EventID, &rec.RecordedAt, &source, &instanceID, &kind,
+		&hookEventName, &toolName, &cwd, &transcriptPath, &permissionMode,
+		&payloadRaw, &rec.PayloadSize, &truncated,
+		&command, &exitCode, &exitCodeSource, &isTest, &isBuild, &testName,
+		&rec.PrevHash, &rec.ThisHash,
+	); err != nil {
+		c.err = err
+		return false
+	}
+	rec.Source = graph.EventSource(source)
+	rec.Kind = graph.EventKind(kind)
+	rec.InstanceID = instanceID.String
+	rec.HookEventName = hookEventName.String
+	rec.ToolName = toolName.String
+	rec.Cwd = cwd.String
+	rec.TranscriptPath = transcriptPath.String
+	rec.PermissionMode = permissionMode.String
+	rec.PayloadRaw = payloadRaw
+	rec.Truncated = truncated != 0
+	rec.Command = command.String
+	if exitCode.Valid {
+		code := int(exitCode.Int64)
+		rec.ExitCode = &code
+	}
+	rec.ExitCodeSource = exitCodeSource.String
+	rec.IsTest = isTest != 0
+	rec.IsBuild = isBuild != 0
+	rec.TestName = testName.String
+	c.cur = rec
+	return true
+}
+
+func (c *sqliteEventCursor) Event() graph.EventRecord { return c.cur }
+
+func (c *sqliteEventCursor) Err() error {
+	if c.err != nil {
+		return c.err
+	}
+	return c.rows.Err()
+}
+
+func (c *sqliteEventCursor) Close() error { return c.rows.Close() }
+
+func exitCodeArg(code *int) any {
+	if code == nil {
+		return nil
+	}
+	return *code
+}
+
+// VerifyChain walks events ORDER BY seq, recomputes each this_hash, follows the
+// prev_hash linkage from Genesis, and checks seq continuity, then classifies the
+// first integrity break. The classification precedence — inserted, deleted,
+// edited, reordered — reflects which invariant fails first per the design's
+// audit-surface table.
+func (r *SQLiteRepository) VerifyChain(ctx context.Context) (graph.VerifyResult, error) {
+	rows, err := r.loadChainRows(ctx)
+	if err != nil {
+		return graph.VerifyResult{}, err
+	}
+	total := int64(len(rows))
+	if total == 0 {
+		return graph.VerifyResult{Status: "ok"}, nil
+	}
+
+	// Self-hash recompute over each row's own (stored prev_hash, canonical fields).
+	selfHashOK := make([]bool, len(rows))
+	for i, e := range rows {
+		selfHashOK[i] = r.hasher.Hash(e.PrevHash, e) == e.ThisHash
+	}
+
+	// Linkage walk from the Genesis row (prev_hash == Genesis), following each
+	// row's this_hash to the next row whose prev_hash matches it.
+	byPrev := make(map[string]int, len(rows))
+	for i, e := range rows {
+		byPrev[e.PrevHash] = i
+	}
+	reachable := make([]bool, len(rows))
+	var linkageOrder []int
+	for prev := graph.GenesisHash; ; {
+		i, ok := byPrev[prev]
+		if !ok || reachable[i] {
+			break
+		}
+		reachable[i] = true
+		linkageOrder = append(linkageOrder, i)
+		prev = rows[i].ThisHash
+	}
+
+	// seq continuity: rows must run contiguously from the first row's seq.
+	seqContiguous := true
+	for i := 1; i < len(rows); i++ {
+		if rows[i].Seq != rows[i-1].Seq+1 {
+			seqContiguous = false
+			break
+		}
+	}
+
+	broken := func(idx int, kind graph.ChainBreakKind) graph.VerifyResult {
+		e := rows[idx]
+		return graph.VerifyResult{
+			Status:         "broken",
+			EventsTotal:    total,
+			EventsVerified: int64(idx),
+			FirstBreak: &graph.ChainBreak{
+				Seq:              e.Seq,
+				EventID:          e.EventID,
+				Kind:             kind,
+				ExpectedThisHash: r.hasher.Hash(e.PrevHash, e),
+				StoredThisHash:   e.ThisHash,
+			},
+		}
+	}
+
+	// ROW_INSERTED: a row not reachable from the genesis walk while seq stays
+	// contiguous (an extra row spliced in without breaking the seq run).
+	if seqContiguous {
+		for i := range rows {
+			if !reachable[i] {
+				return broken(i, graph.ChainBreakRowInserted), nil
+			}
+		}
+	}
+
+	// ROW_DELETED: a seq gap means a row was removed; the linkage walk terminates
+	// early at the row preceding the gap.
+	if !seqContiguous {
+		for i := 1; i < len(rows); i++ {
+			if rows[i].Seq != rows[i-1].Seq+1 {
+				return broken(i-1, graph.ChainBreakRowDeleted), nil
+			}
+		}
+	}
+
+	// ROW_EDITED: a self-hash mismatch with linkage intact and seq contiguous.
+	for i := range rows {
+		if !selfHashOK[i] {
+			return broken(i, graph.ChainBreakRowEdited), nil
+		}
+	}
+
+	// ROW_REORDERED: every self-hash recomputes and every row is reachable, but
+	// the linkage traversal visits rows in a different order than ascending seq.
+	for pos, idx := range linkageOrder {
+		if idx != pos {
+			return broken(idx, graph.ChainBreakRowReordered), nil
+		}
+	}
+
+	return graph.VerifyResult{
+		Status:         "ok",
+		EventsTotal:    total,
+		EventsVerified: total,
+	}, nil
+}
+
+// loadChainRows reads every Event in seq order for verification.
+func (r *SQLiteRepository) loadChainRows(ctx context.Context) ([]graph.EventRecord, error) {
+	cur, err := r.StreamEvents(ctx, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make(map[string]string)
-	for rows.Next() {
-		var path, hash string
-		if err := rows.Scan(&path, &hash); err != nil {
-			return nil, err
-		}
-		result[path] = hash
+	defer cur.Close()
+	var rows []graph.EventRecord
+	for cur.Next() {
+		rows = append(rows, cur.Event())
 	}
-	return result, rows.Err()
-}
-
-func (r *SQLiteRepository) UpdateCaptureBaseline(ctx context.Context, updates map[string]string) error {
-	if len(updates) == 0 {
-		return nil
+	if err := cur.Err(); err != nil {
+		return nil, fmt.Errorf("verify chain read: %w", err)
 	}
-	tx, err := r.db().BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT OR REPLACE INTO capture_baseline (file_path, content_hash, captured_at) VALUES (?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	now := time.Now().Unix()
-	for path, hash := range updates {
-		if _, err := stmt.ExecContext(ctx, path, hash, now); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (r *SQLiteRepository) CleanupCaptureBaseline(ctx context.Context, currentFiles []string, olderThan int64) error {
-	if len(currentFiles) == 0 {
-		_, err := r.db().ExecContext(ctx,
-			`DELETE FROM capture_baseline WHERE captured_at < ?`, olderThan,
-		)
-		return err
-	}
-	placeholders := make([]string, len(currentFiles))
-	args := make([]any, len(currentFiles))
-	for i, f := range currentFiles {
-		placeholders[i] = "?"
-		args[i] = f
-	}
-	args = append(args, olderThan)
-	query := fmt.Sprintf(
-		`DELETE FROM capture_baseline WHERE file_path NOT IN (%s) AND captured_at < ?`,
-		strings.Join(placeholders, ","),
-	)
-	_, err := r.db().ExecContext(ctx, query, args...)
-	return err
+	return rows, nil
 }

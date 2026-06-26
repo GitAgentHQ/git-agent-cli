@@ -40,7 +40,11 @@ func NewASTEnsureIndexService(astRepo graph.ASTRepository, stateRepo ASTIndexSta
 	}
 }
 
-func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbol string, force bool, progress io.Writer) error {
+// Ensure brings the AST index up to date. When symbol is non-empty, the index
+// is ensured for that symbol (a missing symbol triggers a full re-index in
+// case it is a freshness gap); when symbol is empty, the whole index is ensured
+// for unscoped queries (search, node-by-name).
+func (s *ASTEnsureIndexService) Ensure(ctx context.Context, root, symbol string, force bool, progress io.Writer) error {
 	head, err := s.git.CurrentHead(ctx)
 	if err != nil {
 		return fmt.Errorf("current head for AST index: %w", err)
@@ -49,16 +53,24 @@ func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbo
 	if err != nil {
 		return err
 	}
-	nodes, err := s.astRepo.GetASTNodeByName(ctx, symbol)
-	if err != nil {
-		return fmt.Errorf("lookup AST symbol %q: %w", symbol, err)
+	var nodes []graph.ASTNode
+	if symbol != "" {
+		nodes, err = s.astRepo.GetASTNodeByName(ctx, symbol)
+		if err != nil {
+			return fmt.Errorf("lookup AST symbol %q: %w", symbol, err)
+		}
 	}
 	hasGoChanges, err := s.hasGoWorkingTreeChanges(ctx)
 	if err != nil {
 		return err
 	}
-	if !force && indexedHead == head && !hasGoChanges && len(nodes) > 0 {
-		return nil
+	// Up to date when the head matches and there are no Go working-tree changes.
+	// For a symbol query the symbol must also already be present; a missing
+	// symbol falls through so a freshness gap can be recovered by re-indexing.
+	if !force && indexedHead == head && !hasGoChanges {
+		if symbol == "" || len(nodes) > 0 {
+			return nil
+		}
 	}
 
 	idxSvc := NewASTIndexService(s.astRepo, s.git, s.extractor)
@@ -83,7 +95,10 @@ func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbo
 		}
 		pruneStale := indexedHead != head
 		if len(files) == 0 {
-			if len(nodes) == 0 {
+			// A symbol query that still found nothing after a reachable head may
+			// mean the symbol lives in a file the incremental pass missed; force
+			// a full index to recover it. The unscoped path just prunes stales.
+			if symbol != "" && len(nodes) == 0 {
 				idxResult, err = idxSvc.IndexAll(ctx, root)
 				break
 			}
@@ -99,7 +114,9 @@ func (s *ASTEnsureIndexService) EnsureForSymbol(ctx context.Context, root, symbo
 		return fmt.Errorf("index AST symbols: %w", err)
 	}
 
-	if len(nodes) == 0 {
+	// A symbol query that indexed without finding the symbol may have hit a
+	// freshness gap; re-check and, if still missing, force one full re-index.
+	if symbol != "" && len(nodes) == 0 {
 		nodes, err = s.astRepo.GetASTNodeByName(ctx, symbol)
 		if err != nil {
 			return fmt.Errorf("re-check AST symbol %q: %w", symbol, err)
