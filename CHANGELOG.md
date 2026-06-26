@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-26
+
+### Fixed
+- Unblock cgo-free release builds after the v0.5.0 tag shipped zero binaries: the release workflow builds with `CGO_ENABLED=0`, but the tree-sitter-based extractor is cgo-only and failed to compile
+- Stub the tree-sitter extractor behind a `//go:build cgo` build tag so `CGO_ENABLED=0` release binaries build cleanly (infra)
+- Surface a clear "AST extraction unavailable" runtime error for AST-dependent graph commands (`impact`, `index`, `sync`, `callers`, `callees`, `node`, `query`, `affected`) in release binaries, with a pointer to rebuild with `CGO_ENABLED=1`
+- A follow-up v0.6.0 will port the extractor to the standard library `go/ast` package to remove the cgo dependency entirely
+
 ## [0.5.0] - 2026-06-26
 
 ### Added
