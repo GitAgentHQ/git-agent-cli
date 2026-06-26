@@ -1,0 +1,45 @@
+name: Build check
+
+# Guards against cgo-only dependencies slipping into the release build path.
+# The Release workflow cross-compiles all targets with CGO_ENABLED=0; this
+# check runs on every push/PR to catch a cgo-only dep before it reaches a tag.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  cgo-free-build:
+    name: CGO_ENABLED=0 build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build (cgo-free)
+        env:
+          CGO_ENABLED: 0
+        run: go build ./...
+
+      - name: Cross-compile release targets
+        run: |
+          for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${pair%/*}"
+            goarch="${pair#*/}"
+            echo "::group::$goos/$goarch"
+            GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build -o /dev/null .
+            echo "::endgroup::"
+          done
+
+      - name: Test (cgo-free)
+        env:
+          CGO_ENABLED: 0
+        run: go test -count=1 ./application/... ./domain/... ./infrastructure/... ./cmd/... ./e2e/...
