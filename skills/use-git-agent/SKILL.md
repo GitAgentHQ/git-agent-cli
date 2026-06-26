@@ -1,11 +1,37 @@
 ---
 name: use-git-agent
-description: Operates the git-agent CLI — commits, init, config, provider setup, and the code graph (`git-agent graph impact` for co-change and AST-structural analysis, `git-agent graph timeline` for action history). Use whenever the user mentions git-agent, wants to commit/init, configure a provider, or — when modifying a feature — needs to find the other files likely to need changes.
+description: Operates the git-agent CLI — atomic commits, init/config, and the code graph (event log + AST + co-change). Use it whenever the user wants to commit or set up git-agent; when you are about to modify a feature and need the files that move with it (graph impact); when you are changing a function and want its callers/callees (graph callers/callees); when you need a symbol's location or source (graph node/query); when deciding which tests to run after a change (graph affected); when a test broke and you want to trace the action that introduced it (graph diagnose); or when you need action history (graph timeline) or a file's rename-aware provenance (graph provenance). All graph queries are read-only and offline (no LLM, no API key); only commit and init --scope need a provider.
 ---
 
 # Git Agent CLI
 
-When this skill is loaded, determine the appropriate git-agent command from the conversation context. Do **not** default to `git-agent commit` — ask or infer what the user needs.
+When this skill is loaded, pick the right git-agent command for the situation —
+do **not** default to `git-agent commit`. Use the trigger table below to map
+what is happening to the command that serves it.
+
+## When to use git-agent
+
+Reach for git-agent at these moments. Each situation maps to one command:
+
+| Situation | Command |
+|---|---|
+| About to start multi-file work / modify a feature — find what else changes | `git-agent graph impact [files...]` |
+| Changing a specific function/type — want its callers (who depends on it) | `git-agent graph impact --symbol <name>` or `git-agent graph callers <symbol>` |
+| Changing a function — want what it calls | `git-agent graph callees <symbol>` |
+| Locate a symbol, see its source + one-hop neighbors | `git-agent graph node <name>` or `git-agent graph query <search>` |
+| Deciding which tests to run after a change | `git-agent graph affected [files...]` |
+| A test/regression broke — find the agent action that introduced it | `git-agent graph diagnose [symptom] --file <source>` |
+| "What did the agent (or a human) change recently" / audit a session | `git-agent graph timeline` (`--file`/`--source`/`--since`) |
+| Full history of one file, rename-aware, with out-of-band edits flagged | `git-agent graph provenance <file>` |
+| Graph queries return nothing or look stale | `git-agent graph status` → `git-agent graph sync` (or `git-agent graph index` for a full rebuild) |
+| Suspect the Event Log was tampered with | `git-agent graph verify` |
+| Ready to commit staged changes | `git-agent commit --intent "..."` |
+| New repo, or no scopes configured | `git-agent init` |
+| Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
+
+If the situation isn't listed, run `git-agent --help` or `git-agent graph --help`.
+Every `graph` query is read-only and offline (no LLM, no API key); only `commit`
+and `init --scope` need a provider.
 
 ## Find related files before changing a feature
 
@@ -61,7 +87,7 @@ directly depends on it.
 | Question | Mode |
 |---|---|
 | "I'm editing these files — what else usually moves?" | `cochange` (default) |
-| "I'm changing this function — what calls it or is called by it?" | `--symbol <name>` (structural) |
+| "I'm changing this function — what calls or references it?" | `--symbol <name>` (structural) |
 | "Give me everything — history and AST" | `--symbol <name> --mode combined` |
 
 Use impact proactively at the start of multi-file work and again before
