@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-06-27
+
+### Fixed
+- Resolve AST receivers, index fields, and external-package graph references so cross-package symbol edges link correctly
+- Surface external-package graph references instead of dropping them during indexing
+- Stop tracking the runtime `.git-agent/graph.db` artifact so it no longer pollutes commits
+
 ## [0.5.1] - 2026-06-26
 
 ### Fixed
