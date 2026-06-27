@@ -172,16 +172,26 @@ func (s *extractState) visitSymbols(f *ast.File) {
 // scoping each function's calls to its own subtree.
 func (s *extractState) visitCalls(f *ast.File) {
 	var funcDepth []string
+	// callFunSelectors holds SelectorExpr nodes that are the Fun operand of a
+	// call (e.g. the `c.Foo` in `c.Foo()`). ast.Inspect visits the CallExpr
+	// before descending into its Fun, so a selector recorded here is skipped by
+	// the field-read branch below — extractCall already consumed it. Without
+	// this guard every qualified call would also emit a spurious references edge
+	// (the prior tree-sitter extractor guarded this via isCallFunctionOperand).
+	callFunSelectors := map[*ast.SelectorExpr]bool{}
 	inspect := func(n ast.Node) {
 		ast.Inspect(n, func(node ast.Node) bool {
 			if ce, ok := node.(*ast.CallExpr); ok {
+				if sel, ok := ce.Fun.(*ast.SelectorExpr); ok {
+					callFunSelectors[sel] = true
+				}
 				s.extractCall(ce, funcDepth)
-				// The call's Fun (if a SelectorExpr) is consumed by extractCall;
-				// don't also record it as a field read.
 				return true
 			}
 			if se, ok := node.(*ast.SelectorExpr); ok {
-				s.extractFieldRead(se, funcDepth)
+				if !callFunSelectors[se] {
+					s.extractFieldRead(se, funcDepth)
+				}
 			}
 			s.recordVarType(node)
 			return true
@@ -220,15 +230,22 @@ func (s *extractState) visitCalls(f *ast.File) {
 					continue
 				}
 				s.recordVarType(vs)
-				sid := ""
-				if len(vs.Names) > 0 {
-					sid = s.symbolIDs[vs.Names[0].Name]
-				}
-				funcDepth = append(funcDepth, sid)
-				for _, val := range vs.Values {
+				// Attribute each initializer to its own variable node. Balanced
+				// lists (var x, y = f(), g()) pair positionally; an unbalanced
+				// single-call list (var a, b = f()) scopes that call to the
+				// first name.
+				balanced := len(vs.Names) == len(vs.Values)
+				for i, val := range vs.Values {
+					sid := ""
+					if balanced {
+						sid = s.symbolIDs[vs.Names[i].Name]
+					} else if len(vs.Names) > 0 {
+						sid = s.symbolIDs[vs.Names[0].Name]
+					}
+					funcDepth = append(funcDepth, sid)
 					inspect(val)
+					funcDepth = funcDepth[:len(funcDepth)-1]
 				}
-				funcDepth = funcDepth[:len(funcDepth)-1]
 			}
 		default:
 			inspect(decl)
@@ -733,23 +750,10 @@ func (s *extractState) receiverVarAndType(funcDepth []string) (string, string) {
 	return varName, typeName
 }
 
-// receiverVarName returns the receiver variable name for the method node ID,
-// parsed from the method's stored signature (which includes the receiver
-// clause, e.g. "func (d *decoder) alias(...)"). Returns "" when unnamed.
+// receiverVarName returns the receiver variable name for the method node ID
+// from the side map populated by extractMethod (e.g. "d" for
+// `func (d *decoder) m`). Returns "" when the receiver is unnamed or unknown.
 func (s *extractState) receiverVarName(methodID string) string {
-	for i := range s.nodes {
-		if s.nodes[i].ID != methodID {
-			continue
-		}
-		sig := s.nodes[i].Signature
-		// Signature is the parameter/result text without the receiver; recover
-		// the receiver from the node's source text instead.
-		_ = sig
-		break
-	}
-	// The signature field doesn't carry the receiver clause; re-parse from the
-	// source via the stored AST node position is not available here. Instead,
-	// store receiver var names in a side map populated by extractMethod.
 	return s.receiverVars[methodID]
 }
 
