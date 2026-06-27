@@ -11,6 +11,7 @@ type LanguageExtractor struct {
 	ImportTypes        []string
 	CallTypes          []string
 	VariableTypes      []string
+	FieldTypes         []string
 	NameField          string
 	BodyField          string
 	MethodsAreTopLevel bool

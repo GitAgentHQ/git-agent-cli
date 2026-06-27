@@ -55,12 +55,12 @@ func runASTNeighbors(cmd *cobra.Command, symbol, direction string) error {
 	}
 	defer client.Close()
 
-	nodes, err := astRepo.GetASTNodeByName(ctx, symbol)
+	nodes, err := astRepo.GetASTNodeBySymbol(ctx, symbol)
 	if err != nil {
 		return fmt.Errorf("lookup symbol %q: %w", symbol, err)
 	}
 	if len(nodes) == 0 {
-		return fmt.Errorf("symbol %q not found", symbol)
+		return symbolNotFoundHint(ctx, astRepo, symbol, cmd.ErrOrStderr())
 	}
 
 	entries := make([]graph.ASTImpactEntry, 0)

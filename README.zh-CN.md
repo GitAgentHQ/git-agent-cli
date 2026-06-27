@@ -189,6 +189,81 @@ git-agent timeline --json                 # JSON 输出
 | `--top` | 50 | 最大显示会话数 |
 | `--json` / `--text` | 自动 | 强制输出格式 |
 
+### `git-agent graph`
+
+查询并审计 agent Event Log 及其派生的 AST + 共变索引。AST 索引解析本仓库
+git 跟踪的 Go 文件，记录函数、方法、结构体/接口、**结构体字段**、类型别名、
+import、调用，以及字段读取的 `references` 边。离线运行（无需 LLM、无需 API key）。
+
+`callers` / `callees` / `node` 的**符号语法**：支持裸名、receiver 限定的
+`Type.Method`，或全限定 `file::Type.Method`：
+
+```bash
+git-agent graph callers Flag                  # 任意 Flag 方法的所有调用者
+git-agent graph callers decoder.alias         # 限定到某个 receiver 类型
+git-agent graph callers "decode.go::decoder.alias"  # 全限定
+git-agent graph callers HideHelpCommand       # 结构体字段的读取在此呈现
+git-agent graph node Command.Run              # 签名 + 一跳调用链
+git-agent graph affected command.go           # 覆盖该文件符号的测试
+git-agent graph query --kind method Connect   # FTS5 符号搜索
+```
+
+```bash
+git-agent graph status      # 索引健康度 + 行数
+git-agent graph index      # 构建/刷新所有派生索引
+git-agent graph verify     # Event Log 链完整性
+git-agent graph timeline   # 操作历史
+git-agent graph impact     # 共变 / structural 影响（见上）
+```
+
+**外部包不索引。** 索引只解析本仓库的文件，因此来自导入包的符号（如
+`github.com/spf13/pflag`）不会成为 AST 节点。`callers`/`node` 会明确提示这一
+点，而不是报一个干瘪的 "not found"；`graph external-refs` 列出所有指向外部
+包的调用/字段读取点：
+
+```bash
+git-agent graph callers pflag.Lookup
+# Error: symbol "pflag.Lookup" is exported by external package
+# "github.com/spf13/pflag", which is not indexed; run
+# `git-agent graph external-refs` to list call sites into it
+
+git-agent graph external-refs            # 所有外部包引用点
+git-agent graph external-refs --json
+```
+
+> **构建说明：** AST 命令（`callers`、`callees`、`node`、`query`、
+> `affected`、`impact --symbol`、`index`）需要 tree-sitter 构建
+> （`CGO_ENABLED=1 go build`）。发布二进制以 `CGO_ENABLED=0` 编译并禁用这些
+> 命令；`external-refs` 只读取未解析引用，两种构建下均可使用。在已有
+> `.git-agent/graph.db` 的仓库升级二进制后，运行一次
+> `git-agent graph index --reindex`，让旧 DB 补上结构体字段节点与
+> receiver 解析后的调用边。
+
+#### `graph` 能否帮助模型开发功能？
+
+一次 A/B 复测（2026-06-27）在三个真实 Go 仓库（`spf13/cobra`、
+`go-yaml/yaml`、`urfave/cli`）上用 capable agent 跑了对照：每个功能实现两遍，
+一遍**不用** `graph`（仅 grep/Read），一遍**用** `graph` 取证命令。六组全部
+build+test 通过；graph 没有把任何 fail 翻成 pass，但带来了无 graph 一侧所没有
+的、可测量的非平凡价值：
+
+- **字段消歧（cli）：** `graph query Hide` 返回空（无此字段），而
+  `graph query Hidden` 返回字段节点 + `graph callers Hidden` 的 19 个读取者。
+  裸 `grep Hide` 会命中三个独立字段（`Hidden`、`HideHelp`、`HideHelpCommand`）；
+  graph 避免了写错字段的 accessor。
+- **receiver 消歧（yaml）：** `graph node alias` 一次调用同时展示
+  `parser.alias` 与 `decoder.alias` 的源码+签名，揭示 `decoder.alias` 只解引用
+  已解析的 alias 节点——真正的 anchor 捕获点是 `parser.anchor`。两臂都落对了
+  位置，但 graph 把 30 行噪声 grep 变成一次结构化调用。
+- **测试对规格的忠实度（yaml）：** 用 graph 的一侧测试覆盖了跨多次 `Decode`
+  的持久化（4 个子用例），而另一侧的单用例测试没有——尽管两边的实现完全相同。
+- **跨文件消费者安全（cobra）：** `graph callers mergePersistentFlags` 暴露了
+  `flag_groups.go` 与 `completions.go` 中的跨文件消费者，确认新增的只读
+  accessor 不会扰动它们。
+
+graph 的价值在于调查深度、测试/不变量忠实度、跨文件安全性——不是把不可能
+变可能。在 grep 噪声大、receiver/字段消歧更关键的陌生代码库上，它的作用更明显。
+
 ## 配置
 
 ### 用户配置（`~/.config/git-agent/config.yml`）

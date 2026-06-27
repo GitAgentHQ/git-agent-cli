@@ -36,12 +36,12 @@ func runGraphNode(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	nodes, err := astRepo.GetASTNodeByName(ctx, name)
+	nodes, err := astRepo.GetASTNodeBySymbol(ctx, name)
 	if err != nil {
 		return fmt.Errorf("lookup symbol %q: %w", name, err)
 	}
 	if len(nodes) == 0 {
-		return fmt.Errorf("symbol %q not found", name)
+		return symbolNotFoundHint(ctx, astRepo, name, cmd.ErrOrStderr())
 	}
 
 	type nodeView struct {

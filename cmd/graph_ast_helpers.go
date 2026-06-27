@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
@@ -33,4 +34,89 @@ func openASTQuery(ctx context.Context, symbol string, force bool, progress io.Wr
 		return "", nil, nil, err
 	}
 	return root, astRepo, client, nil
+}
+
+// symbolNotFoundHint returns a "symbol not found" error. When the symbol looks
+// like an external-package reference (qualifier matches an import alias in the
+// indexed set), the error points the user at `graph external-refs` instead of
+// the generic message — external packages are not indexed by design.
+func symbolNotFoundHint(ctx context.Context, astRepo graph.ASTRepository, symbol string, _ io.Writer) error {
+	if pkg := externalPackageFor(ctx, astRepo, symbol); pkg != "" {
+		return fmt.Errorf("symbol %q is exported by external package %q, which is not indexed; "+
+			"run `git-agent graph external-refs` to list call sites into it", symbol, pkg)
+	}
+	return fmt.Errorf("symbol %q not found", symbol)
+}
+
+// externalPackageFor returns the import path of an external package whose
+// alias matches the qualifier of symbol (e.g. symbol "pflag.Lookup" →
+// "github.com/spf13/pflag"), or "" when the symbol is not an external-package
+// reference.
+//
+// Two cases:
+//   - symbol has a qualifier ("pflag.Lookup"): match the qualifier against the
+//     last segment of any indexed import path.
+//   - symbol is a bare name ("Lookup"): consult unresolved refs whose trailing
+//     name matches and whose qualifier is an import alias; return that alias's
+//     import path. This catches the common case where the user asks for a
+//     bare external symbol name.
+func externalPackageFor(ctx context.Context, astRepo graph.ASTRepository, symbol string) string {
+	lookupName, qualifier := splitRefName(symbol)
+
+	imports, err := astRepo.ListASTNodesByKind(ctx, graph.ASTNodeKindImport)
+	if err != nil {
+		return ""
+	}
+	// importAlias → import path, keyed by the default alias (last path segment).
+	aliasToPath := make(map[string]string, len(imports))
+	for _, imp := range imports {
+		path := strings.Trim(imp.Name, "\"")
+		if path == "" {
+			continue
+		}
+		aliasToPath[lastPathSegment(path)] = path
+	}
+
+	if qualifier != "" {
+		if path, ok := aliasToPath[qualifier]; ok {
+			return path
+		}
+		return ""
+	}
+
+	// Bare name: look for an unresolved ref whose trailing name matches and
+	// whose qualifier is a known import alias.
+	if lookupName == "" {
+		return ""
+	}
+	refs, err := astRepo.ListUnresolvedRefsMatching(ctx, nil, []string{lookupName})
+	if err != nil {
+		return ""
+	}
+	for _, ref := range refs {
+		_, q := splitRefName(ref.ReferenceName)
+		if q == "" {
+			continue
+		}
+		if path, ok := aliasToPath[q]; ok {
+			return path
+		}
+	}
+	return ""
+}
+
+func splitRefName(name string) (lookup, qualifier string) {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[dot+1:], name[:dot]
+	}
+	return name, ""
+}
+
+func lastPathSegment(path string) string {
+	// strip a trailing quote/alias if present
+	path = strings.Trim(path, "\"")
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }

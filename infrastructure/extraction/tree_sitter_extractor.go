@@ -157,6 +157,9 @@ func (s *extractState) visitSymbols(node *sitter.Node) {
 	} else if slices.Contains(s.extractor.VariableTypes, nodeType) && !s.isInsideFunctionNode() {
 		s.extractVariable(node)
 		skipChildren = true
+	} else if slices.Contains(s.extractor.FieldTypes, nodeType) {
+		s.extractField(node)
+		skipChildren = true
 	}
 
 	if !skipChildren {
@@ -176,6 +179,12 @@ func (s *extractState) visitCalls(node *sitter.Node) {
 
 	if slices.Contains(s.extractor.CallTypes, nodeType) {
 		s.extractCall(node)
+	} else if nodeType == "selector_expression" && !s.isCallFunctionOperand(node) {
+		// A field/property read that is NOT the function operand of a call
+		// (e.g. `c.HideHelpCommand` used as a value). Calls' selector operands
+		// are handled by extractCall; record the rest as references edges so
+		// `graph callers <field>` surfaces its readers.
+		s.extractFieldRead(node)
 	}
 	// Track variable → type from `name := NewX()` so subsequent `name.Method()`
 	// calls can be disambiguated to `Type.Method`.
@@ -690,16 +699,79 @@ func (s *extractState) extractSingleImportSpec(node *sitter.Node) {
 	})
 }
 
+// isCallFunctionOperand reports whether this selector_expression is the
+// `function` operand of an enclosing call_expression (e.g. the `c.Foo` in
+// `c.Foo()`). Such selectors are handled by extractCall; non-call selectors
+// (field reads) are handled by extractFieldRead.
+func (s *extractState) isCallFunctionOperand(node *sitter.Node) bool {
+	parent := node.Parent()
+	if parent == nil || parent.Kind() != "call_expression" {
+		return false
+	}
+	fn := parent.ChildByFieldName("function")
+	return fn != nil && fn == node
+}
+
+// extractFieldRead records a non-call selector_expression (e.g. `c.Field` or
+// `pkg.Var` used as a value) as a references edge to the target symbol, or an
+// unresolved ref with ReferenceKind "references" when the target isn't in the
+// same file's symbol table. The resolver promotes unresolved refs to edges
+// (application/reference_resolver.go), and GetCallers includes the references
+// edge kind, so `graph callers <field>` surfaces readers.
+func (s *extractState) extractFieldRead(node *sitter.Node) {
+	refName := s.resolveCallName(node)
+	if refName == "" {
+		return
+	}
+	refName = s.rewriteReceiverQualifier(refName, node)
+	fromID := s.findEnclosingSymbolID(node)
+	if fromID == "" {
+		return
+	}
+
+	// Same-file resolution: qualified key first (Struct.Field), then bare name.
+	targetID := s.symbolIDs[refName]
+	if targetID == "" {
+		if dot := strings.LastIndex(refName, "."); dot >= 0 {
+			bare := refName[dot+1:]
+			targetID = s.symbolIDs[bare]
+		}
+	}
+	line := int(node.StartPosition().Row) + 1
+	col := int(node.StartPosition().Column)
+	if targetID != "" {
+		s.edges = append(s.edges, graph.ASTEdge{
+			Source:     fromID,
+			Target:     targetID,
+			Kind:       graph.ASTEdgeKindReferences,
+			Line:       line,
+			Provenance: "tree-sitter",
+		})
+		return
+	}
+	s.unresolved = append(s.unresolved, graph.ASTUnresolvedRef{
+		FromNodeID:    fromID,
+		ReferenceName: refName,
+		ReferenceKind: string(graph.ASTEdgeKindReferences),
+		Line:          line,
+		Column:        col,
+		FilePath:      s.filePath,
+		Language:      s.lang,
+	})
+}
+
 func (s *extractState) extractCall(node *sitter.Node) {
 	funcNode := node.ChildByFieldName("function")
 	if funcNode == nil {
 		return
 	}
-
 	callName := s.resolveCallName(funcNode)
 	if callName == "" {
 		return
 	}
+	// Rewrite a receiver-variable qualifier (d.alias → decoder.alias) so the
+	// resolver can match the receiver type against same-named method candidates.
+	callName = s.rewriteReceiverQualifier(callName, node)
 
 	// Find the enclosing function/method node by walking up the AST
 	fromID := s.findEnclosingSymbolID(node)
@@ -781,6 +853,64 @@ func (s *extractState) extractVariable(node *sitter.Node) {
 			s.extractVarSpec(child)
 		}
 	}
+}
+
+// extractField indexes a Go struct field_declaration. Go represents struct
+// members as field_declaration nodes inside a field_declaration_list. Named
+// fields carry one or more field_identifier children; embedded fields have none
+// (those are already handled by extractEmbeddings, so we skip them here to avoid
+// double-counting). A field node is qualified by its enclosing struct
+// (Struct.Field, mirroring how extractMethod qualifies methods by receiver) so
+// same-named fields across structs don't collide, and field reads
+// (c.HideHelpCommand) can resolve to the right field.
+func (s *extractState) extractField(node *sitter.Node) {
+	structName := s.currentContainerName()
+	if structName == "" {
+		return
+	}
+
+	// Collect named field identifiers. A field_declaration like `a, b int` has
+	// multiple field_identifier children; an embedding (`Foo` or `*Foo`) has
+	// none and is left to extractEmbeddings.
+	var names []string
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() == "field_identifier" {
+			names = append(names, s.nodeText(child))
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+
+	for _, name := range names {
+		qualified := structName + "." + name
+		astNode := s.createSymbolNode(graph.ASTNodeKindField, qualified, node)
+		astNode.Name = name
+		astNode.IsExported = s.isGoExported(name)
+		// Register both the qualified key (Struct.Field, resolves same-file
+		// selector reads c.Field) and the bare name (fallback). Same collision
+		// semantics as methods: a bare name shared across structs is marked
+		// ambiguous and left for the resolver.
+		s.registerSymbol(qualified, astNode)
+		s.registerSymbol(name, astNode)
+		s.nodes = append(s.nodes, astNode)
+		s.emitContainsEdge(astNode.ID)
+	}
+}
+
+// currentContainerName returns the name of the enclosing struct/interface on
+// top of nodeStack (set by extractTypeAlias/extractStruct before recursing into
+// the type body), parsed from the container node ID "<kind>:<file>:<Name>".
+func (s *extractState) currentContainerName() string {
+	if len(s.nodeStack) == 0 {
+		return ""
+	}
+	id := s.nodeStack[len(s.nodeStack)-1]
+	if idx := strings.LastIndex(id, ":"); idx >= 0 {
+		return id[idx+1:]
+	}
+	return ""
 }
 
 func (s *extractState) extractVarSpec(node *sitter.Node) {
@@ -1057,6 +1187,96 @@ func (s *extractState) extractGoReceiver(node *sitter.Node) string {
 		return typeName
 	}
 	return strings.TrimPrefix(text, "*")
+}
+
+// rewriteReceiverQualifier rewrites a selector reference name whose qualifier
+// is the enclosing method's receiver variable (e.g. "d.alias" where the method
+// receiver is `(d *decoder)`) to use the receiver type ("decoder.alias"). This
+// lets the resolver's receiver-type matching resolve same-named methods across
+// types without storing the receiver variable name in the DB. The enclosing
+// method is found by walking the AST parents from node, so this works in the
+// Pass-2 call walk (which does not re-enter extractMethod). Returns the
+// original name when the qualifier is not the receiver variable.
+func (s *extractState) rewriteReceiverQualifier(refName string, node *sitter.Node) string {
+	if !strings.Contains(refName, ".") {
+		return refName
+	}
+	dot := strings.LastIndex(refName, ".")
+	qualifier := refName[:dot]
+	if qualifier == "" {
+		return refName
+	}
+	method := findEnclosingMethod(node)
+	if method == nil {
+		return refName
+	}
+	receiverVar, receiverType := s.receiverVarAndType(method)
+	if receiverVar == "" || receiverType == "" || qualifier != receiverVar {
+		return refName
+	}
+	return receiverType + refName[dot:]
+}
+
+// findEnclosingMethod walks parents from node to the nearest method_declaration
+// (or function_declaration) so Pass-2 call extraction can recover the enclosing
+// method without nodeStack state from Pass 1.
+func findEnclosingMethod(node *sitter.Node) *sitter.Node {
+	current := node.Parent()
+	for current != nil {
+		if k := current.Kind(); k == "method_declaration" || k == "function_declaration" {
+			return current
+		}
+		current = current.Parent()
+	}
+	return nil
+}
+
+// receiverVarAndType parses a method_declaration's receiver clause (e.g.
+// `(d *decoder)`) into (varName, typeName). Returns ("","") when unnamed or
+// receiver-less.
+func (s *extractState) receiverVarAndType(methodNode *sitter.Node) (string, string) {
+	receiver := methodNode.ChildByFieldName("receiver")
+	if receiver == nil {
+		return "", ""
+	}
+	text := strings.TrimSpace(strings.Trim(s.nodeText(receiver), "()"))
+	if text == "" {
+		return "", ""
+	}
+	// Forms: "d *decoder", "d decoder", "(unnamed) *decoder".
+	parts := strings.SplitN(text, " ", 2)
+	if len(parts) == 2 {
+		v := strings.TrimSpace(parts[0])
+		t := strings.TrimPrefix(strings.TrimSpace(parts[1]), "*")
+		if strings.HasPrefix(v, "*") || v == "" {
+			return "", t
+		}
+		return v, t
+	}
+	if strings.HasPrefix(text, "*") {
+		return "", strings.TrimPrefix(text, "*")
+	}
+	return "", ""
+}
+
+// currentReceiverType returns the receiver type of the method on top of
+// nodeStack (set by extractMethod during Pass 1), used by extractField when
+// qualifying a field node ID. Returns "" outside a method.
+func (s *extractState) currentReceiverType() string {
+	if len(s.nodeStack) == 0 {
+		return ""
+	}
+	id := s.nodeStack[len(s.nodeStack)-1]
+	if !strings.HasPrefix(id, "method:") {
+		return ""
+	}
+	if idx := strings.LastIndex(id, ":"); idx >= 0 {
+		rest := id[idx+1:]
+		if dot := strings.Index(rest, "."); dot >= 0 {
+			return rest[:dot]
+		}
+	}
+	return ""
 }
 
 func (s *extractState) resolveGoTypeAliasKind(node *sitter.Node) string {

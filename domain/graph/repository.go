@@ -111,8 +111,19 @@ type ASTRepository interface {
 	UpsertASTEdge(ctx context.Context, e ASTEdge) error
 	UpsertUnresolvedRef(ctx context.Context, ref ASTUnresolvedRef) error
 	GetASTNodeByName(ctx context.Context, name string) ([]ASTNode, error)
+	// GetASTNodeBySymbol resolves a user-supplied symbol specifier to AST nodes.
+	// It accepts a bare name ("alias"), a receiver-qualified form
+	// ("decoder.alias"), or a fully-qualified form ("decode.go::decoder.alias"
+	// or "method:decode.go:decoder.alias"). Bare names return all matching
+	// nodes; qualified forms narrow to the specific symbol so colliding
+	// same-named methods (e.g. parser.alias vs decoder.alias) are addressable.
+	GetASTNodeBySymbol(ctx context.Context, symbol string) ([]ASTNode, error)
 	GetASTNodeByQualifiedName(ctx context.Context, qname string) (*ASTNode, error)
 	ListASTNodesByFile(ctx context.Context, filePath string) ([]ASTNode, error)
+	// ListASTNodesByKind returns every indexed symbol of the given kind
+	// (e.g. all import nodes). Used by `graph external-refs` and the
+	// external-package hint in callers/node.
+	ListASTNodesByKind(ctx context.Context, kind ASTNodeKind) ([]ASTNode, error)
 	GetCallers(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
 	GetCallees(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
 	GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*ASTImpactResult, error)

@@ -189,6 +189,87 @@ git-agent timeline --json                 # JSON output
 | `--top` | 50 | Max sessions to display |
 | `--json` / `--text` | auto | Force output format |
 
+### `git-agent graph`
+
+Query and audit the agent Event Log and its derived AST + co-change indexes.
+The AST index parses git-tracked Go files in your repo and records functions,
+methods, structs/interfaces, **struct fields**, type aliases, imports, calls,
+and field-read `references` edges. Offline (no LLM, no API key).
+
+**Symbol syntax** for `callers` / `callees` / `node` — accepts a bare name, a
+receiver-qualified `Type.Method`, or a fully-qualified `file::Type.Method`:
+
+```bash
+git-agent graph callers Flag                  # all callers of any Flag method
+git-agent graph callers decoder.alias         # narrow to one receiver type
+git-agent graph callers "decode.go::decoder.alias"  # fully-qualified
+git-agent graph callers HideHelpCommand       # struct field reads surface here
+git-agent graph node Commit.Run               # signature + one-hop trails
+git-agent graph affected command.go           # tests exercising the file's symbols
+git-agent graph query --kind method Connect   # FTS5 symbol search
+```
+
+```bash
+git-agent graph status      # index health + row counts
+git-agent graph index      # build/refresh all derived indexes
+git-agent graph verify     # Event Log chain integrity
+git-agent graph timeline   # action history
+git-agent graph impact     # co-change / structural impact (see above)
+```
+
+**External packages are not indexed.** The index only parses files in your
+repo, so symbols from imported packages (e.g. `github.com/spf13/pflag`) are
+never AST nodes. `callers`/`node` report this explicitly instead of failing
+with a bare "not found"; `graph external-refs` lists every call/field-read
+site that reaches into an external package:
+
+```bash
+git-agent graph callers pflag.Lookup
+# Error: symbol "pflag.Lookup" is exported by external package
+# "github.com/spf13/pflag", which is not indexed; run
+# `git-agent graph external-refs` to list call sites into it
+
+git-agent graph external-refs            # all external-package reference sites
+git-agent graph external-refs --json
+```
+
+> **Build note:** AST commands (`callers`, `callees`, `node`, `query`,
+> `affected`, `impact --symbol`, `index`) require a tree-sitter build
+> (`CGO_ENABLED=1 go build`). Release binaries are compiled with
+> `CGO_ENABLED=0` and stub these out; `external-refs` reads only unresolved
+> refs and works in either build. After upgrading the binary on a repo with an
+> existing `.git-agent/graph.db`, run `git-agent graph index --reindex` once to
+> pick up struct-field nodes and receiver-resolved call edges on the old DB.
+
+#### Does `graph` help a model develop features?
+
+An A/B re-test (2026-06-27) ran a capable agent on three real Go repos
+(`spf13/cobra`, `go-yaml/yaml`, `urfave/cli`) — each feature implemented twice,
+once without `graph` (grep/Read only) and once with `graph` forensic commands.
+All six arms built and tested green; the graph did not flip any fail→pass. It
+**did** deliver measurable non-trivial value the no-graph arm lacked:
+
+- **Field disambiguation (cli):** `graph query Hide` returned empty (no such
+  field) while `graph query Hidden` returned the field node + its 19 readers
+  via `graph callers Hidden`. A bare `grep Hide` matches three separate fields
+  (`Hidden`, `HideHelp`, `HideHelpCommand`); the graph prevented a wrong-field
+  accessor.
+- **Receiver disambiguation (yaml):** `graph node alias` showed both
+  `parser.alias` and `decoder.alias` source + signatures in one call,
+  revealing that `decoder.alias` only dereferences already-parsed alias nodes
+  — the real anchor-capture site is `parser.anchor`. Both arms landed on the
+  right site, but the graph made it one structured call vs. a 30-line noise grep.
+- **Test fidelity to the spec (yaml):** the with-graph arm's test covered
+  cross-`Decode` persistence (4 sub-cases) the no-graph arm's single-case test
+  did not — even though both implementations were identical.
+- **Cross-file consumer safety (cobra):** `graph callers mergePersistentFlags`
+  surfaced cross-file consumers in `flag_groups.go` and `completions.go`,
+  confirming a new read-only accessor wouldn't disturb them.
+
+The graph's value is investigation depth, test/invariant fidelity, and
+cross-file safety — not enabling the impossible. It shines most on unfamiliar
+codebases where grep noise is high and receiver/field disambiguation matters.
+
 ## Configuration
 
 ### User config (`~/.config/git-agent/config.yml`)
