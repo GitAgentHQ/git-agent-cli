@@ -2,6 +2,9 @@ package e2e_test
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -304,6 +307,77 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	hashRe := regexp.MustCompile(`\[[^\]]*\b[0-9a-f]{7,}\b[^\]]*\]`)
 	if !hashRe.MatchString(stdoutStr) {
 		t.Errorf("stdout missing commit hash line:\n%s", stdoutStr)
+	}
+}
+
+// TestCommitCmd_NoReasoningEffortSent locks the contract that the CLI never
+// asks the model to think: even when pointed at an o-series model name
+// (formerly the only branch that set reasoning_effort=low), the outbound
+// chat-completion request body must carry no reasoning_effort field. All
+// models run with temperature=0 and no chain-of-thought.
+func TestCommitCmd_NoReasoningEffortSent(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "id": "chatcmpl-noreason",
+  "object": "chat.completion",
+  "created": 0,
+  "model": "o3",
+  "choices": [
+    {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "{\"title\":\"feat(cli): add a line\",\"bullets\":[\"Add a new line to readme\"],\"explanation\":\"No-reasoning fixture.\"}"}}
+  ]
+}`))
+	}))
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+
+	gitInRepo := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	gitInRepo("add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "o3", // formerly triggered reasoning_effort=low
+		"--no-stage",
+		"--no-attribution",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	if len(capturedBody) == 0 {
+		t.Fatalf("LLM server was never hit; no request body captured")
+	}
+	if bytes.Contains(bytes.ToLower(capturedBody), []byte("reasoning_effort")) {
+		t.Errorf("request body must not contain reasoning_effort, but it does:\n%s", capturedBody)
+	}
+	// temperature=0 is omitted by the encoder (omitempty); its absence is the
+	// contract. A present, non-zero temperature would violate "no think mode".
+	if bytes.Contains(capturedBody, []byte(`"temperature"`)) {
+		t.Errorf("request body must not pin a non-zero temperature:\n%s", capturedBody)
 	}
 }
 
