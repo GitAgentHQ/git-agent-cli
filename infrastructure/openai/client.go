@@ -116,17 +116,6 @@ func (c *Client) heartbeat(ctx context.Context, done <-chan struct{}) {
 	}
 }
 
-// isReasoningModel reports whether the model name indicates an OpenAI o-series
-// reasoning model that accepts reasoning_effort but rejects temperature.
-func isReasoningModel(model string) bool {
-	for _, prefix := range []string{"o1", "o3", "o4"} {
-		if model == prefix || strings.HasPrefix(model, prefix+"-") || strings.HasPrefix(model, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 func extractJSON(s string) string {
 	// Pick whichever of '{' or '[' appears first.
 	open, close := byte(0), byte(0)
@@ -290,12 +279,7 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 		Model:               c.model,
 		Messages:            msgs,
 		MaxCompletionTokens: maxTokens,
-	}
-
-	if isReasoningModel(c.model) {
-		req.ReasoningEffort = "low"
-	} else {
-		req.Temperature = 0
+		Temperature:         0,
 	}
 
 	var lastErr error
