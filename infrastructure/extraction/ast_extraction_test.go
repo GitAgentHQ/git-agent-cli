@@ -1,5 +1,3 @@
-//go:build cgo
-
 package extraction
 
 import (
@@ -290,6 +288,115 @@ func run() string {
 		}
 		if !foundHintedRef {
 			t.Fatalf("expected unresolved svc.Connect with NewClient hint, got refs: %v", refNames(result))
+		}
+	})
+
+	t.Run("record var hint for two-value constructor assignment", func(t *testing.T) {
+		source := []byte(`package main
+
+type Client struct{}
+type Server struct{}
+
+func NewClient() (*Client, error) { return &Client{}, nil }
+func (c *Client) Connect() string { return "client" }
+func (s *Server) Connect() string { return "server" }
+
+func run() string {
+	svc, err := NewClient()
+	_ = err
+	return svc.Connect()
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		foundHintedRef := false
+		for _, ref := range result.UnresolvedRefs {
+			if ref.ReferenceName == "svc.Connect" && ref.VarCallHint == "NewClient" {
+				foundHintedRef = true
+			}
+		}
+		if !foundHintedRef {
+			t.Fatalf("expected unresolved svc.Connect with NewClient hint, got refs: %v", refNames(result))
+		}
+	})
+
+	t.Run("record var hint for var-spec constructor assignment", func(t *testing.T) {
+		source := []byte(`package main
+
+type Client struct{}
+type Server struct{}
+
+func NewClient() *Client { return &Client{} }
+func (c *Client) Connect() string { return "client" }
+func (s *Server) Connect() string { return "server" }
+
+func run() string {
+	var svc = NewClient()
+	return svc.Connect()
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		foundHintedRef := false
+		for _, ref := range result.UnresolvedRefs {
+			if ref.ReferenceName == "svc.Connect" && ref.VarCallHint == "NewClient" {
+				foundHintedRef = true
+			}
+		}
+		if !foundHintedRef {
+			t.Fatalf("expected unresolved svc.Connect with NewClient hint, got refs: %v", refNames(result))
+		}
+	})
+
+	t.Run("attribute package-level initializer call to its variable node", func(t *testing.T) {
+		source := []byte(`package main
+
+func compute() int { return 1 }
+
+var total = compute()
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		varID := findNodeIDByName(result, "total")
+		computeID := findNodeIDByName(result, "compute")
+		found := false
+		for _, e := range result.Edges {
+			if e.Kind == graph.ASTEdgeKindCalls && e.Source == varID && e.Target == computeID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected call edge total->compute, got edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("retain generic receiver in method qualified name", func(t *testing.T) {
+		source := []byte(`package main
+
+type Stack[T any] struct{}
+
+func (s *Stack[T]) Push(v T) {}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		if id := findNodeIDByQualifiedName(result, "handler.go::Stack[T].Push"); id == "" {
+			t.Fatalf("expected method node Stack[T].Push, got: %v", nodeNames(result))
 		}
 	})
 
@@ -660,6 +767,102 @@ func (p *parser) alias()      {}
 		}
 		if !contains(parserCallsTo, "method:decode.go:parser.alias") {
 			t.Errorf("expected parser.parse to call parser.alias, got %v", parserCallsTo)
+		}
+	})
+
+	t.Run("selector method call emits a calls edge but not a references edge", func(t *testing.T) {
+		source := []byte(`package main
+type Server struct{}
+func (s *Server) Start() { s.run() }
+func (s *Server) run() {}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("h.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		startID := "method:h.go:Server.Start"
+		runID := "method:h.go:Server.run"
+		calls, refs := 0, 0
+		for _, e := range result.Edges {
+			if e.Source == startID && e.Target == runID {
+				switch e.Kind {
+				case graph.ASTEdgeKindCalls:
+					calls++
+				case graph.ASTEdgeKindReferences:
+					refs++
+				}
+			}
+		}
+		if calls != 1 {
+			t.Errorf("expected exactly 1 calls edge Start->run, got %d: %v", calls, edgeSummary(result))
+		}
+		if refs != 0 {
+			t.Errorf("a method call must not also record a references edge, got %d: %v", refs, edgeSummary(result))
+		}
+	})
+
+	t.Run("external selector call is not duplicated as a references ref", func(t *testing.T) {
+		source := []byte(`package main
+import "fmt"
+func run() { fmt.Println("x") }
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("h.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		callRefs, fieldRefs := 0, 0
+		for _, ref := range result.UnresolvedRefs {
+			if ref.ReferenceName != "fmt.Println" {
+				continue
+			}
+			switch ref.ReferenceKind {
+			case string(graph.ASTEdgeKindCalls):
+				callRefs++
+			case string(graph.ASTEdgeKindReferences):
+				fieldRefs++
+			}
+		}
+		if callRefs != 1 {
+			t.Errorf("expected 1 calls ref for fmt.Println, got %d: %v", callRefs, refNames(result))
+		}
+		if fieldRefs != 0 {
+			t.Errorf("a call operand must not also record a references ref, got %d: %v", fieldRefs, refNames(result))
+		}
+	})
+
+	t.Run("multi-name package var initializers attribute calls to their own variable", func(t *testing.T) {
+		source := []byte(`package main
+func compute() int { return 1 }
+func process() int { return 2 }
+var x, y = compute(), process()
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("h.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		xID := findNodeIDByName(result, "x")
+		yID := findNodeIDByName(result, "y")
+		computeID := findNodeIDByName(result, "compute")
+		processID := findNodeIDByName(result, "process")
+		has := func(src, dst string) bool {
+			for _, e := range result.Edges {
+				if e.Kind == graph.ASTEdgeKindCalls && e.Source == src && e.Target == dst {
+					return true
+				}
+			}
+			return false
+		}
+		if !has(xID, computeID) {
+			t.Errorf("expected call edge x->compute, got %v", edgeSummary(result))
+		}
+		if !has(yID, processID) {
+			t.Errorf("expected call edge y->process, got %v", edgeSummary(result))
+		}
+		if has(xID, processID) {
+			t.Errorf("x must not own the process() initializer call, got %v", edgeSummary(result))
 		}
 	})
 }
