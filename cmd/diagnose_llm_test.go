@@ -54,11 +54,19 @@ func withIsolatedConfig(t *testing.T, fn func()) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	prevHome := os.Getenv("HOME")
+	prevXDG := os.Getenv("XDG_CONFIG_HOME")
 	prevDir, _ := os.Getwd()
+	// userConfigPath() prefers XDG_CONFIG_HOME over HOME, so both must point
+	// at the isolated dir or CI runners (which set XDG_CONFIG_HOME) read a
+	// different config than the one writeUserConfig writes under HOME.
 	if err := os.Setenv("HOME", dir); err != nil {
 		t.Fatalf("set HOME: %v", err)
 	}
 	defer os.Setenv("HOME", prevHome)
+	if err := os.Setenv("XDG_CONFIG_HOME", ""); err != nil {
+		t.Fatalf("unset XDG_CONFIG_HOME: %v", err)
+	}
+	defer os.Setenv("XDG_CONFIG_HOME", prevXDG)
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
