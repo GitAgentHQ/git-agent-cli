@@ -559,11 +559,142 @@ type Service struct {
 			t.Errorf("expected exactly 1 extends edge (Base), got %d: %v", extendsCount, edgeSummary(result))
 		}
 	})
+
+	t.Run("struct fields are indexed as field nodes", func(t *testing.T) {
+		source := []byte(`package main
+type Command struct {
+	HideHelpCommand bool
+	Usage           string
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("command.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		field := findNodeByID(result, "field:command.go:Command.HideHelpCommand")
+		if field == nil {
+			t.Fatalf("expected field node Command.HideHelpCommand, got nodes: %v", nodeNames(result))
+		}
+		if field.Kind != graph.ASTNodeKindField {
+			t.Errorf("expected kind field, got %s", field.Kind)
+		}
+		if field.Name != "HideHelpCommand" {
+			t.Errorf("expected name HideHelpCommand, got %s", field.Name)
+		}
+		// contains edge from the struct to the field
+		structID := findNodeByID(result, "struct:command.go:Command")
+		if structID == nil {
+			t.Fatalf("expected struct node Command, got: %v", nodeNames(result))
+		}
+		foundContains := false
+		for _, e := range result.Edges {
+			if e.Source == structID.ID && e.Target == field.ID && e.Kind == graph.ASTEdgeKindContains {
+				foundContains = true
+			}
+		}
+		if !foundContains {
+			t.Errorf("expected struct contains field edge, edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("field reads inside a method become references edges", func(t *testing.T) {
+		source := []byte(`package main
+type Command struct {
+	HideHelpCommand bool
+}
+func (c *Command) setup() {
+	if c.HideHelpCommand {
+		return
+	}
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("command.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		fieldID := "field:command.go:Command.HideHelpCommand"
+		setupID := findNodeByID(result, "method:command.go:Command.setup")
+		if setupID == nil {
+			t.Fatalf("expected method Command.setup, got: %v", nodeNames(result))
+		}
+		foundRef := false
+		for _, e := range result.Edges {
+			if e.Source == setupID.ID && e.Target == fieldID && e.Kind == graph.ASTEdgeKindReferences {
+				foundRef = true
+			}
+		}
+		if !foundRef {
+			t.Errorf("expected references edge setup->HideHelpCommand, edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("receiver-var qualified call resolves to receiver type", func(t *testing.T) {
+		// Two types define a same-named method; the bare "alias" key is
+		// ambiguous. A receiver-var call d.alias() inside decoder.unmarshal
+		// must be rewritten to decoder.alias so it resolves to the right method
+		// (decoder.alias, not parser.alias). Same for p.alias() → parser.alias.
+		source := []byte(`package main
+type decoder struct{}
+type parser struct{}
+
+func (d *decoder) unmarshal() { d.alias() }
+func (p *parser) parse()      { p.alias() }
+func (d *decoder) alias()     {}
+func (p *parser) alias()      {}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("decode.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+		// Expect calls edges to the CORRECT receiver-qualified method.
+		decoderCallsTo := edgesFrom(result, "method:decode.go:decoder.unmarshal", graph.ASTEdgeKindCalls)
+		parserCallsTo := edgesFrom(result, "method:decode.go:parser.parse", graph.ASTEdgeKindCalls)
+		if !contains(decoderCallsTo, "method:decode.go:decoder.alias") {
+			t.Errorf("expected decoder.unmarshal to call decoder.alias, got %v", decoderCallsTo)
+		}
+		if contains(decoderCallsTo, "method:decode.go:parser.alias") {
+			t.Errorf("decoder.unmarshal must NOT call parser.alias, got %v", decoderCallsTo)
+		}
+		if !contains(parserCallsTo, "method:decode.go:parser.alias") {
+			t.Errorf("expected parser.parse to call parser.alias, got %v", parserCallsTo)
+		}
+	})
+}
+
+func edgesFrom(r *graph.ExtractionResult, source string, kind graph.ASTEdgeKind) []string {
+	var out []string
+	for _, e := range r.Edges {
+		if e.Source == source && e.Kind == kind {
+			out = append(out, e.Target)
+		}
+	}
+	return out
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 func findNodeByName(r *graph.ExtractionResult, name string) *graph.ASTNode {
 	for i := range r.Nodes {
 		if r.Nodes[i].Name == name {
+			return &r.Nodes[i]
+		}
+	}
+	return nil
+}
+
+func findNodeByID(r *graph.ExtractionResult, id string) *graph.ASTNode {
+	for i := range r.Nodes {
+		if r.Nodes[i].ID == id {
 			return &r.Nodes[i]
 		}
 	}

@@ -103,6 +103,79 @@ func (r *SQLiteASTRepository) GetASTNodeByName(ctx context.Context, name string)
 	return scanASTNodes(rows)
 }
 
+// GetASTNodeBySymbol resolves a user-supplied symbol specifier. It accepts:
+//   - a node ID verbatim ("method:decode.go:decoder.alias")
+//   - a qualified name ("decode.go::decoder.alias")
+//   - a receiver-qualified name without file ("decoder.alias") — matched
+//     against the qualified_name suffix "::decoder.alias"
+//   - a bare name ("alias") — returns every node with that name
+//
+// The receiver-qualified form lets users target a specific method when several
+// types define a same-named method (e.g. parser.alias vs decoder.alias).
+func (r *SQLiteASTRepository) GetASTNodeBySymbol(ctx context.Context, symbol string) ([]graph.ASTNode, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, nil
+	}
+	// 1. Exact node ID.
+	if strings.Contains(symbol, ":") && !strings.Contains(symbol, "::") && strings.Count(symbol, ":") >= 2 {
+		if n, err := r.getASTNodeByID(ctx, symbol); err == nil && n != nil {
+			return []graph.ASTNode{*n}, nil
+		}
+	}
+	// 2. Fully-qualified name ("file::Type.method" or "file::name").
+	if idx := strings.Index(symbol, "::"); idx >= 0 {
+		qname := symbol
+		if strings.HasPrefix(symbol, "file::") {
+			// "file::path" is ambiguous; fall through to bare-name search below.
+		} else if n, err := r.GetASTNodeByQualifiedName(ctx, qname); err == nil && n != nil {
+			return []graph.ASTNode{*n}, nil
+		}
+	}
+	// 3. Receiver-qualified without file ("Type.method"): match qualified_name
+	// suffix "::Type.method". Only when the symbol contains a dot but no "::".
+	if strings.Contains(symbol, ".") && !strings.Contains(symbol, "::") {
+		rows, err := r.db().QueryContext(ctx,
+			`SELECT id, kind, name, qualified_name, file_path, language,
+			 start_line, end_line, start_column, end_column, signature, visibility,
+			 is_exported, is_async, is_static, is_abstract, return_type, updated_at
+			 FROM ast_nodes WHERE qualified_name LIKE ?`, "%::"+symbol,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query ast_nodes by qualified suffix: %w", err)
+		}
+		defer rows.Close()
+		nodes, err := scanASTNodes(rows)
+		if err != nil {
+			return nil, err
+		}
+		if len(nodes) > 0 {
+			return nodes, nil
+		}
+	}
+	// 4. Bare name fallback.
+	return r.GetASTNodeByName(ctx, symbol)
+}
+
+func (r *SQLiteASTRepository) getASTNodeByID(ctx context.Context, id string) (*graph.ASTNode, error) {
+	var n graph.ASTNode
+	err := r.db().QueryRowContext(ctx,
+		`SELECT id, kind, name, qualified_name, file_path, language,
+		 start_line, end_line, start_column, end_column, signature, visibility,
+		 is_exported, is_async, is_static, is_abstract, return_type, updated_at
+		 FROM ast_nodes WHERE id = ?`, id,
+	).Scan(&n.ID, &n.Kind, &n.Name, &n.QualifiedName, &n.FilePath, &n.Language,
+		&n.StartLine, &n.EndLine, &n.StartColumn, &n.EndColumn, &n.Signature, &n.Visibility,
+		&n.IsExported, &n.IsAsync, &n.IsStatic, &n.IsAbstract, &n.ReturnType, &n.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query ast_nodes by id: %w", err)
+	}
+	return &n, nil
+}
+
 // ListASTNodesByFile returns every AST symbol declared in the given file path.
 func (r *SQLiteASTRepository) ListASTNodesByFile(ctx context.Context, filePath string) ([]graph.ASTNode, error) {
 	rows, err := r.db().QueryContext(ctx,
@@ -113,6 +186,21 @@ func (r *SQLiteASTRepository) ListASTNodesByFile(ctx context.Context, filePath s
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query ast_nodes by file: %w", err)
+	}
+	defer rows.Close()
+	return scanASTNodes(rows)
+}
+
+// ListASTNodesByKind returns every indexed symbol of the given kind.
+func (r *SQLiteASTRepository) ListASTNodesByKind(ctx context.Context, kind graph.ASTNodeKind) ([]graph.ASTNode, error) {
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT id, kind, name, qualified_name, file_path, language,
+		 start_line, end_line, start_column, end_column, signature, visibility,
+		 is_exported, is_async, is_static, is_abstract, return_type, updated_at
+		 FROM ast_nodes WHERE kind = ? ORDER BY file_path, start_line`, string(kind),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query ast_nodes by kind: %w", err)
 	}
 	defer rows.Close()
 	return scanASTNodes(rows)
