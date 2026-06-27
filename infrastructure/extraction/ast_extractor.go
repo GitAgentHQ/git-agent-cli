@@ -178,48 +178,86 @@ func (s *extractState) visitCalls(f *ast.File) {
 	}
 
 	for _, decl := range f.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			// Non-function top-level decls (imports/types/vars) may still hold
-			// call expressions in initializers; attribute them to the file.
-			inspect(decl)
-			continue
-		}
-		id := s.declarationKey(fd)
-		sid := ""
-		if id != "" {
-			if v, ok := s.symbolIDs[id]; ok {
-				sid = v
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			id := s.declarationKey(d)
+			sid := ""
+			if id != "" {
+				if v, ok := s.symbolIDs[id]; ok {
+					sid = v
+				}
 			}
+			funcDepth = append(funcDepth, sid)
+			if d.Body != nil {
+				inspect(d.Body)
+			}
+			funcDepth = funcDepth[:len(funcDepth)-1]
+		case *ast.GenDecl:
+			if d.Tok != token.VAR && d.Tok != token.CONST {
+				// imports/types may still hold call expressions in
+				// initializers; attribute them to the file.
+				inspect(d)
+				continue
+			}
+			// A package-level initializer call belongs to its variable node,
+			// not the file (matching the prior extractor). Scope each spec to
+			// its first declared name's symbol.
+			for _, spec := range d.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					inspect(spec)
+					continue
+				}
+				s.recordVarType(vs)
+				sid := ""
+				if len(vs.Names) > 0 {
+					sid = s.symbolIDs[vs.Names[0].Name]
+				}
+				funcDepth = append(funcDepth, sid)
+				for _, val := range vs.Values {
+					inspect(val)
+				}
+				funcDepth = funcDepth[:len(funcDepth)-1]
+			}
+		default:
+			inspect(decl)
 		}
-		funcDepth = append(funcDepth, sid)
-		if fd.Body != nil {
-			inspect(fd.Body)
-		}
-		funcDepth = funcDepth[:len(funcDepth)-1]
 	}
 }
 
-// recordVarType inspects an assignment (:= or =) whose RHS is a call and
-// records varName -> called symbol name (NOT the resolved return type). This
-// is a best-effort receiver-type inference for chained method calls.
+// recordVarType inspects an assignment (:= or =) or a value spec
+// (var x = NewX()) whose RHS is a call and records varName -> called symbol
+// name (NOT the resolved return type). This is a best-effort receiver-type
+// inference for chained method calls.
 func (s *extractState) recordVarType(n ast.Node) {
-	as, ok := n.(*ast.AssignStmt)
-	if !ok {
+	switch v := n.(type) {
+	case *ast.AssignStmt:
+		s.recordVarCalls(v.Lhs, v.Rhs)
+	case *ast.ValueSpec:
+		// `var x = NewX()` parses to a ValueSpec, not an AssignStmt.
+		lhs := make([]ast.Expr, len(v.Names))
+		for i, name := range v.Names {
+			lhs[i] = name
+		}
+		s.recordVarCalls(lhs, v.Values)
+	}
+}
+
+// recordVarCalls maps each LHS identifier to the called symbol name on the RHS.
+// Balanced lists (a, b := f(), g()) pair positionally; an unbalanced
+// single-call RHS (a, err := f()) maps every LHS name to that one call — the
+// idiomatic Go constructor-with-error pattern.
+func (s *extractState) recordVarCalls(lhs, rhs []ast.Expr) {
+	if len(lhs) == 0 || len(rhs) == 0 {
 		return
 	}
-	if len(as.Lhs) != len(as.Rhs) {
-		return
-	}
-	if len(as.Lhs) >= 2 {
-		// Multi-value: pair each LHS identifier with its positionally
-		// corresponding RHS call.
-		for i := range as.Lhs {
-			lc, ok := as.Lhs[i].(*ast.Ident)
+	if len(lhs) == len(rhs) {
+		for i := range lhs {
+			lc, ok := lhs[i].(*ast.Ident)
 			if !ok {
 				continue
 			}
-			calledName := s.calledSymbolName(as.Rhs[i])
+			calledName := s.calledSymbolName(rhs[i])
 			if calledName == "" {
 				continue
 			}
@@ -227,13 +265,15 @@ func (s *extractState) recordVarType(n ast.Node) {
 		}
 		return
 	}
-	// Single value: map every LHS identifier to the single RHS call.
-	calledName := s.calledSymbolName(as.Rhs[0])
+	if len(rhs) != 1 {
+		return
+	}
+	calledName := s.calledSymbolName(rhs[0])
 	if calledName == "" {
 		return
 	}
-	for _, lhs := range as.Lhs {
-		if lc, ok := lhs.(*ast.Ident); ok {
+	for _, l := range lhs {
+		if lc, ok := l.(*ast.Ident); ok {
 			s.varCalls[lc.Name] = calledName
 		}
 	}
@@ -857,7 +897,10 @@ func (s *extractState) extractGoReceiver(d *ast.FuncDecl) string {
 	if id, ok := t.(*ast.Ident); ok {
 		return id.Name
 	}
-	return ""
+	// Generic receiver (Stack[T]) or other composite: fall back to the raw
+	// source text so the method keeps a distinct receiver-qualified ID instead
+	// of collapsing onto the bare method name.
+	return strings.TrimPrefix(s.nodeText(t), "*")
 }
 
 func (s *extractState) resolveGoTypeAliasKind(ts *ast.TypeSpec) string {

@@ -291,6 +291,115 @@ func run() string {
 		}
 	})
 
+	t.Run("record var hint for two-value constructor assignment", func(t *testing.T) {
+		source := []byte(`package main
+
+type Client struct{}
+type Server struct{}
+
+func NewClient() (*Client, error) { return &Client{}, nil }
+func (c *Client) Connect() string { return "client" }
+func (s *Server) Connect() string { return "server" }
+
+func run() string {
+	svc, err := NewClient()
+	_ = err
+	return svc.Connect()
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		foundHintedRef := false
+		for _, ref := range result.UnresolvedRefs {
+			if ref.ReferenceName == "svc.Connect" && ref.VarCallHint == "NewClient" {
+				foundHintedRef = true
+			}
+		}
+		if !foundHintedRef {
+			t.Fatalf("expected unresolved svc.Connect with NewClient hint, got refs: %v", refNames(result))
+		}
+	})
+
+	t.Run("record var hint for var-spec constructor assignment", func(t *testing.T) {
+		source := []byte(`package main
+
+type Client struct{}
+type Server struct{}
+
+func NewClient() *Client { return &Client{} }
+func (c *Client) Connect() string { return "client" }
+func (s *Server) Connect() string { return "server" }
+
+func run() string {
+	var svc = NewClient()
+	return svc.Connect()
+}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		foundHintedRef := false
+		for _, ref := range result.UnresolvedRefs {
+			if ref.ReferenceName == "svc.Connect" && ref.VarCallHint == "NewClient" {
+				foundHintedRef = true
+			}
+		}
+		if !foundHintedRef {
+			t.Fatalf("expected unresolved svc.Connect with NewClient hint, got refs: %v", refNames(result))
+		}
+	})
+
+	t.Run("attribute package-level initializer call to its variable node", func(t *testing.T) {
+		source := []byte(`package main
+
+func compute() int { return 1 }
+
+var total = compute()
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		varID := findNodeIDByName(result, "total")
+		computeID := findNodeIDByName(result, "compute")
+		found := false
+		for _, e := range result.Edges {
+			if e.Kind == graph.ASTEdgeKindCalls && e.Source == varID && e.Target == computeID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected call edge total->compute, got edges: %v", edgeSummary(result))
+		}
+	})
+
+	t.Run("retain generic receiver in method qualified name", func(t *testing.T) {
+		source := []byte(`package main
+
+type Stack[T any] struct{}
+
+func (s *Stack[T]) Push(v T) {}
+`)
+		extractor := NewTreeSitterExtractor("go", GoExtractor())
+		result, err := extractor.Extract("handler.go", source)
+		if err != nil {
+			t.Fatalf("extract: %v", err)
+		}
+
+		if id := findNodeIDByQualifiedName(result, "handler.go::Stack[T].Push"); id == "" {
+			t.Fatalf("expected method node Stack[T].Push, got: %v", nodeNames(result))
+		}
+	})
+
 	t.Run("extract instantiates edge for direct struct construction", func(t *testing.T) {
 		source := []byte(`package main
 
