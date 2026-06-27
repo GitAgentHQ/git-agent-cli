@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Port struct-field indexing, field-read reference edges, and receiver-var call rewrite from the tree-sitter extractor to the `go/ast` extractor so cross-package symbol edges continue to link correctly
 - Add build-check CI workflow (`.github/workflows/build-check.yml`) to guard `CGO_ENABLED=0` builds
 
+### Fixed
+- Prevent duplicate edges on calls in graph processing to ensure accurate impact analysis
+
 ## [0.5.2] - 2026-06-27
 
 ### Fixed
