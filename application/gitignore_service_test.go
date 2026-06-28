@@ -194,6 +194,52 @@ func TestGitignoreService_Generate_IdempotentCustomSection(t *testing.T) {
 	}
 }
 
+// TestGitignoreService_Generate_IgnoresGraphDB locks the contract that the
+// generated .gitignore always ignores the agent's SQLite graph database and
+// its sidecar files. graph.db is generated at runtime by commit/capture/
+// timeline/impact; if it is not ignored, auto-staging picks it up and every
+// run produces a chore commit — the "infinite recreation" loop. This rule is
+// mandatory and must survive regeneration even when the upstream Toptal
+// content does not list it.
+func TestGitignoreService_Generate_IgnoresGraphDB(t *testing.T) {
+	svc, _, cleanup := setupGitignoreTest(t)
+	defer cleanup()
+
+	if _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatalf(".gitignore not created: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{".git-agent/graph.db", "*.db-shm", "*.db-wal"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("generated .gitignore must ignore %s (prevents tracking the runtime graph database):\n%s", want, content)
+		}
+	}
+}
+
+// TestGitignoreService_Generate_GraphDBRuleIdempotent ensures the graph.db
+// ignore rule is not duplicated across regenerations.
+func TestGitignoreService_Generate_GraphDBRuleIdempotent(t *testing.T) {
+	svc, _, cleanup := setupGitignoreTest(t)
+	defer cleanup()
+
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
+			t.Fatalf("run %d: unexpected error: %v", i+1, err)
+		}
+	}
+
+	data, _ := os.ReadFile(".gitignore")
+	content := string(data)
+	if got := strings.Count(content, ".git-agent/graph.db"); got != 1 {
+		t.Errorf(".git-agent/graph.db rule should appear exactly once after regen, got %d:\n%s", got, content)
+	}
+}
+
 func TestGitignoreService_Generate_WritesToCorrectPath(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()

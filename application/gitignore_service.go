@@ -82,6 +82,13 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 		final = mergeGitignore(string(existing), content)
 	}
 
+	// The SQLite graph database (.git-agent/graph.db) is generated at runtime
+	// by commit/capture/timeline/impact. It must never be tracked: if it is,
+	// auto-staging picks it up and every run produces a chore commit (the
+	// "infinite recreation" loop). Inject the rule mandatorily and idempotently
+	// so it survives every regeneration even when the Toptal content omits it.
+	final = ensureGraphDBIgnored(final)
+
 	if err := os.WriteFile(".gitignore", []byte(final), 0644); err != nil {
 		return nil, fmt.Errorf("writing .gitignore: %w", err)
 	}
@@ -193,4 +200,44 @@ func trimLeadingEmpty(lines []string) []string {
 		lines = lines[1:]
 	}
 	return lines
+}
+
+// graphDBIgnoreRules are the mandatory ignore entries for the runtime SQLite
+// graph database and its sidecar files. They are injected into every generated
+// .gitignore so the database is never tracked (see ensureGraphDBIgnored).
+var graphDBIgnoreRules = []string{
+	".git-agent/graph.db",
+	"*.db-shm",
+	"*.db-wal",
+	"*.db-journal",
+}
+
+// ensureGraphDBIgnored guarantees the graph database ignore rules are present
+// exactly once. If any rule is missing it appends a dedicated, idempotent block
+// after the existing content; rules already present (anywhere in the file) are
+// left untouched so the block is not duplicated across regenerations.
+func ensureGraphDBIgnored(content string) string {
+	var missing []string
+	for _, rule := range graphDBIgnoreRules {
+		if !gitignoreHasRule(content, rule) {
+			missing = append(missing, rule)
+		}
+	}
+	if len(missing) == 0 {
+		return content
+	}
+	block := "\n# git-agent graph database (generated, never track)\n" +
+		strings.Join(missing, "\n") + "\n"
+	return strings.TrimRight(content, "\n") + "\n" + block
+}
+
+// gitignoreHasRule reports whether a gitignore pattern line equal to rule is
+// present, ignoring blank and comment lines.
+func gitignoreHasRule(content, rule string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if p := strings.TrimSpace(line); p != "" && !strings.HasPrefix(p, "#") && p == rule {
+			return true
+		}
+	}
+	return false
 }
