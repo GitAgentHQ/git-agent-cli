@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	_ "modernc.org/sqlite"
@@ -14,6 +15,20 @@ import (
 // A database with a higher stored version was produced by a newer binary and
 // cannot be read safely.
 const CurrentSchemaVersion = 2
+
+// GraphDBRelPath is the repo-relative path to the SQLite graph database. It is
+// the single source of truth shared by every command that opens the DB and by
+// the .gitignore/untrack logic, so the ignore rule and the actual file path
+// can never drift apart.
+const GraphDBRelPath = ".git-agent/graph.db"
+
+// DBPath returns the absolute graph database path for a repo root.
+func DBPath(repoRoot string) string {
+	return filepath.Join(repoRoot, GraphDBRelPath)
+}
+
+// DirPath returns the repo-relative .git-agent directory that holds the DB.
+const DirPath = ".git-agent"
 
 // SQLiteClient wraps a database/sql connection to a SQLite database
 // using the modernc.org/sqlite pure-Go driver.

@@ -403,13 +403,16 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 // before an ignore rule existed and so defeat .gitignore.
 func (c *Client) IsTracked(ctx context.Context, path string) (bool, error) {
 	root, err := c.RepoRoot(ctx)
-	cmd := exec.CommandContext(ctx, "git", "ls-files", "--error-unmatch", "--", path)
-	if err == nil {
-		cmd.Dir = root
+	if err != nil {
+		return false, fmt.Errorf("repo root: %w", err)
 	}
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--error-unmatch", "--", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// ls-files --error-unmatch exits non-zero when the path is not tracked.
+		// ls-files --error-unmatch exits non-zero with "did not match any files"
+		// when the path is not tracked — that is the intended "not tracked" signal,
+		// not a real error. Any other failure (corrupt repo, git missing) is rare
+		// and not distinguishable here without parsing stderr; treat as not tracked.
 		return false, nil
 	}
 	return strings.TrimSpace(string(out)) != "", nil
@@ -420,10 +423,10 @@ func (c *Client) IsTracked(ctx context.Context, path string) (bool, error) {
 // databases that .gitignore cannot ignore because they are already tracked.
 func (c *Client) UntrackFile(ctx context.Context, path string) error {
 	root, err := c.RepoRoot(ctx)
-	cmd := exec.CommandContext(ctx, "git", "rm", "--cached", "--", path)
-	if err == nil {
-		cmd.Dir = root
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
 	}
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "rm", "--cached", "--", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
