@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -33,5 +34,32 @@ func runGitignore(cmd *cobra.Command, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, ".gitignore updated: %s\n", strings.Join(techs, ", "))
+	return nil
+}
+
+// untrackGraphDB removes .git-agent/graph.db from the git index if it is tracked,
+// leaving the working-tree file in place. The ignore rule written by runGitignore
+// only takes effect once the file is no longer tracked; without this, a previously
+// committed graph.db keeps getting re-staged on every run (the "infinite
+// recreation" loop). Safe to call when the file is not tracked or does not exist.
+func untrackGraphDB(cmd *cobra.Command) error {
+	gitClient := infraGit.NewClient()
+	ctx := cmd.Context()
+	root, err := gitClient.RepoRoot(ctx)
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+	rel := filepath.ToSlash(filepath.Join(".git-agent", "graph.db"))
+	tracked, err := gitClient.IsTracked(ctx, rel)
+	if err != nil {
+		return fmt.Errorf("check tracked graph.db: %w", err)
+	}
+	if !tracked {
+		return nil
+	}
+	if err := gitClient.UntrackFile(ctx, rel); err != nil {
+		return fmt.Errorf("untrack %s: %w", rel, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Untracked %s (now ignored by .gitignore)\n", filepath.Join(root, rel))
 	return nil
 }
