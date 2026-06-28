@@ -398,6 +398,39 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 	return nil
 }
 
+// IsTracked reports whether path is tracked in the git index (repo-relative).
+// Used to detect generated files (e.g. .git-agent/graph.db) that were committed
+// before an ignore rule existed and so defeat .gitignore.
+func (c *Client) IsTracked(ctx context.Context, path string) (bool, error) {
+	root, err := c.RepoRoot(ctx)
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "--error-unmatch", "--", path)
+	if err == nil {
+		cmd.Dir = root
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// ls-files --error-unmatch exits non-zero when the path is not tracked.
+		return false, nil
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// UntrackFile removes path from the git index while leaving the working-tree
+// file in place (git rm --cached). Used by init to stop tracking generated
+// databases that .gitignore cannot ignore because they are already tracked.
+func (c *Client) UntrackFile(ctx context.Context, path string) error {
+	root, err := c.RepoRoot(ctx)
+	cmd := exec.CommandContext(ctx, "git", "rm", "--cached", "--", path)
+	if err == nil {
+		cmd.Dir = root
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	contentOut, err := gitCmd(ctx, "diff", "HEAD~1..HEAD", "--ignore-submodules=all").Output()
 	if err != nil {

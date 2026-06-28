@@ -247,6 +247,85 @@ func TestClient_Commit_NothingToCommit(t *testing.T) {
 	}
 }
 
+// TestClient_UntrackFile verifies that UntrackFile removes a path from the git
+// index while keeping the working-tree file, and that IsTracked reflects the
+// change. This is the contract init relies on to stop tracking .git-agent/graph.db.
+func TestClient_UntrackFile(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	dbPath := filepath.Join(dir, ".git-agent", "graph.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("sqlite-ish"), 0o644); err != nil {
+		t.Fatalf("write graph.db: %v", err)
+	}
+	runGit(t, dir, "add", ".git-agent/graph.db")
+	runGit(t, dir, "commit", "-q", "-m", "add graph.db")
+
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	c := NewClient()
+	ctx := context.Background()
+
+	tracked, err := c.IsTracked(ctx, ".git-agent/graph.db")
+	if err != nil {
+		t.Fatalf("IsTracked: %v", err)
+	}
+	if !tracked {
+		t.Fatal("graph.db should be tracked after git add")
+	}
+
+	if err := c.UntrackFile(ctx, ".git-agent/graph.db"); err != nil {
+		t.Fatalf("UntrackFile: %v", err)
+	}
+
+	tracked, err = c.IsTracked(ctx, ".git-agent/graph.db")
+	if err != nil {
+		t.Fatalf("IsTracked after untrack: %v", err)
+	}
+	if tracked {
+		t.Error("graph.db should not be tracked after UntrackFile")
+	}
+	// Working-tree file must remain (UntrackFile uses --cached).
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Errorf("working-tree graph.db must still exist after untrack: %v", err)
+	}
+}
+
+// TestClient_IsTracked_NotTracked confirms IsTracked returns false (not an error)
+// for a path git does not know about.
+func TestClient_IsTracked_NotTracked(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	c := NewClient()
+	tracked, err := c.IsTracked(context.Background(), ".git-agent/graph.db")
+	if err != nil {
+		t.Fatalf("IsTracked on untracked path: %v", err)
+	}
+	if tracked {
+		t.Error("IsTracked should return false for a never-tracked path")
+	}
+}
+
 func TestParseNameStatus(t *testing.T) {
 	tests := []struct {
 		name  string
