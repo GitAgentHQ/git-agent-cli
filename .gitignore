@@ -74,3 +74,4 @@ git-agent-proxy/.wrangler
 *.db-shm
 *.db-wal
 *.db-journal
+.git-agent/graph.db
