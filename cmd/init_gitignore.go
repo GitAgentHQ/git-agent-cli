@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/gitagenthq/git-agent/application"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
+	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
@@ -49,17 +51,36 @@ func untrackGraphDB(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
-	rel := filepath.ToSlash(filepath.Join(".git-agent", "graph.db"))
+	untracked, err := ensureGraphDBUntracked(ctx, gitClient, root)
+	if err != nil {
+		return err
+	}
+	if untracked {
+		fmt.Fprintf(cmd.OutOrStdout(), "Untracked %s (now ignored by .gitignore)\n",
+			filepath.Join(root, infraGraph.GraphDBRelPath))
+	}
+	return nil
+}
+
+// ensureGraphDBUntracked removes .git-agent/graph.db from the git index if it is
+// tracked, leaving the working-tree file in place. It returns true when it
+// actually untracked the file (false on the no-op path). Shared by init (which
+// reports the action) and the runtime graph-db open paths (capture/timeline/
+// impact), so the "infinite recreation" loop is broken even when init has not
+// run — e.g. a repo cloned from a fork that already committed graph.db. Both
+// the IsTracked guard and UntrackFile are idempotent, so this is safe to call
+// on every graph-db open.
+func ensureGraphDBUntracked(ctx context.Context, gitClient *infraGit.Client, root string) (bool, error) {
+	rel := infraGraph.GraphDBRelPath
 	tracked, err := gitClient.IsTracked(ctx, rel)
 	if err != nil {
-		return fmt.Errorf("check tracked graph.db: %w", err)
+		return false, fmt.Errorf("check tracked graph.db: %w", err)
 	}
 	if !tracked {
-		return nil
+		return false, nil
 	}
 	if err := gitClient.UntrackFile(ctx, rel); err != nil {
-		return fmt.Errorf("untrack %s: %w", rel, err)
+		return false, fmt.Errorf("untrack %s: %w", rel, err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Untracked %s (now ignored by .gitignore)\n", filepath.Join(root, rel))
-	return nil
+	return true, nil
 }
