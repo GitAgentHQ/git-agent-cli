@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-28
+
+### Added
+- Add `is-tracked` and `untrack-file` git methods to detect and untrack files (infra)
+
+### Changed
+- Simplify and remove reasoning model (pkg)
+- Harden graph.db ignore and rename skill (skills)
+- Remove outdated skill documentation (skills)
+
+### Fixed
+- Centralize graph.db path and harden commands (infra)
+- Harden graph.db untrack on init and runtime (cli)
+- Enforce gitignore for the graph database and rename skill (app)
+- Untrack graph.db after the gitignore rule is applied (cli)
+
 ## [0.6.0] - 2026-06-27
 
 ### Changed
