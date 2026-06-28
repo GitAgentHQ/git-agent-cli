@@ -214,7 +214,7 @@ func TestGitignoreService_Generate_IgnoresGraphDB(t *testing.T) {
 		t.Fatalf(".gitignore not created: %v", err)
 	}
 	content := string(data)
-	for _, want := range []string{".git-agent/graph.db", "*.db-shm", "*.db-wal"} {
+	for _, want := range []string{".git-agent/graph.db", "*.db-shm", "*.db-wal", ".git-agent/config.local.yml"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated .gitignore must ignore %s (prevents tracking the runtime graph database):\n%s", want, content)
 		}

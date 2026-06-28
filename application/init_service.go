@@ -19,6 +19,7 @@ type GitReader interface {
 	TopLevelDirs(ctx context.Context) ([]string, error)
 	ProjectFiles(ctx context.Context) ([]string, error)
 	IsGitRepo(ctx context.Context) bool
+	RepoRoot(ctx context.Context) (string, error)
 }
 
 type InitRequest struct {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
@@ -43,9 +44,19 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	dbPath := infraGraph.DBPath(root)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return fmt.Errorf("create .git-agent dir: %w", err)
+	}
+	// Ensure .gitignore ignores graph.db before the timeline read creates it,
+	// defending repos where init has not run yet.
+	if err := application.EnsureGitAgentIgnoredAt(root); err != nil {
+		return fmt.Errorf("ensure gitignore: %w", err)
+	}
+	// Untrack graph.db if a prior commit tracked it, so the loop breaks even
+	// without init. Idempotent no-op when already untracked.
+	if _, err := ensureGraphDBUntracked(ctx, gitClient, root); err != nil {
+		return err
 	}
 
 	client := infraGraph.NewSQLiteClient(dbPath)

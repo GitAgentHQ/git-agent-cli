@@ -2,6 +2,9 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -271,5 +274,43 @@ func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 	}
 	if len(prov.Rows) == 0 {
 		t.Errorf("provenance src/a.go returned no rows (path mismatch)\n%s", out)
+	}
+}
+
+// TestGraphStatus_UntracksAlreadyTrackedGraphDB locks the runtime defence:
+// when a repo was cloned from a fork that committed .git-agent/graph.db, the
+// first graph command (graph status, which opens the DB via openGraphDB) must
+// untrack it so the ignore rule can take effect — breaking the "infinite
+// recreation" loop without requiring `git-agent init`. The working-tree file
+// is preserved.
+func TestGraphStatus_UntracksAlreadyTrackedGraphDB(t *testing.T) {
+	dir := newGitRepo(t)
+	dbPath := filepath.Join(dir, ".git-agent", "graph.db")
+	writeFile(t, dbPath, "stale-tracked-graph-db")
+	runGit(t, dir, "add", ".git-agent/graph.db")
+	runGit(t, dir, "commit", "-q", "-m", "fork committed graph.db")
+
+	// Sanity: it is tracked before the command runs.
+	if out, err := exec.Command("git", "-C", dir, "ls-files", "--", ".git-agent/graph.db").Output(); err != nil || !strings.Contains(string(out), "graph.db") {
+		t.Fatalf("precondition: graph.db should be tracked, got out=%q err=%v", string(out), err)
+	}
+
+	// `git-agent graph status` opens the DB via openGraphDB, which must untrack
+	// graph.db before opening it. The committed file is bogus (not real SQLite),
+	// so the command may exit non-zero on schema validation — but the untrack
+	// runs before the Open, so the side-effect must hold regardless of exit code.
+	gitAgent(t, dir, "graph", "status")
+
+	// No longer tracked.
+	out, err := exec.Command("git", "-C", dir, "ls-files", "--", ".git-agent/graph.db").Output()
+	if err != nil {
+		t.Fatalf("git ls-files after: %v", err)
+	}
+	if strings.Contains(string(out), "graph.db") {
+		t.Errorf("graph.db should be untracked after graph status, got %q", string(out))
+	}
+	// Working-tree file preserved (untrack uses --cached).
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Errorf("working-tree graph.db must still exist after untrack: %v", err)
 	}
 }

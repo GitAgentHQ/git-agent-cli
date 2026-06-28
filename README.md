@@ -29,7 +29,7 @@ go install github.com/gitagenthq/git-agent@latest
 Install the git-agent skill to enable AI agents to commit on your behalf:
 
 ```bash
-npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill use-git-agent
+npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill using-git-agent
 ```
 
 ## Quick Start

@@ -28,6 +28,7 @@ type mockGitReader struct {
 	dirs      []string
 	files     []string
 	isGitRepo bool
+	repoRoot  string
 	err       error
 }
 
@@ -49,6 +50,19 @@ func (m *mockGitReader) ProjectFiles(ctx context.Context) ([]string, error) {
 
 func (m *mockGitReader) IsGitRepo(ctx context.Context) bool {
 	return m.isGitRepo
+}
+
+func (m *mockGitReader) RepoRoot(ctx context.Context) (string, error) {
+	if m.repoRoot != "" {
+		return m.repoRoot, nil
+	}
+	// Default to the process cwd so tests that chdir into a temp dir resolve
+	// the .gitignore path at the current location.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return cwd, nil
 }
 
 func TestInitService_WritesProjectYML(t *testing.T) {

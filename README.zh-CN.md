@@ -29,7 +29,7 @@ go install github.com/gitagenthq/git-agent@latest
 安装 git-agent skill，让 AI agent 代替你执行提交：
 
 ```bash
-npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill use-git-agent
+npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill using-git-agent
 ```
 
 ## 快速开始

@@ -226,9 +226,19 @@ func runCoChangeWithRepo(ctx context.Context, root string, req graph.ImpactReque
 }
 
 func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteClient, error) {
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	dbPath := infraGraph.DBPath(root)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return "", nil, fmt.Errorf("create .git-agent dir: %w", err)
+	}
+	// Defend the "first write before init" path: ensure .gitignore carries the
+	// mandatory ignore rules so a later `git add -A` cannot track graph.db.
+	if err := application.EnsureGitAgentIgnoredAt(root); err != nil {
+		return "", nil, fmt.Errorf("ensure gitignore: %w", err)
+	}
+	// Untrack graph.db if a prior commit tracked it, so the loop breaks even
+	// without init. Idempotent no-op when already untracked.
+	if _, err := ensureGraphDBUntracked(ctx, infraGit.NewClient(), root); err != nil {
+		return "", nil, err
 	}
 	client := infraGraph.NewSQLiteClient(dbPath)
 	if err := client.Open(ctx); err != nil {

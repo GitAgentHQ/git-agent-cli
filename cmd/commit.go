@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -152,7 +151,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	// Wire graph-backed co-change hints and action linking only when an index
 	// already exists; commit never forces indexing.
-	graphDBPath := filepath.Join(root, ".git-agent", "graph.db")
+	graphDBPath := infraGraph.DBPath(root)
 	if _, err := os.Stat(graphDBPath); err == nil {
 		graphClient := infraGraph.NewSQLiteClient(graphDBPath)
 		graphRepo := infraGraph.NewSQLiteRepository(graphClient)

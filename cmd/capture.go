@@ -73,9 +73,20 @@ func captureOnce(cmd *cobra.Command, req graph.CaptureRequest) (*graph.CaptureRe
 		return nil, fmt.Errorf("repo root: %w", err)
 	}
 
-	dbPath := filepath.Join(root, ".git-agent", "graph.db")
+	dbPath := infraGraph.DBPath(root)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("create .git-agent dir: %w", err)
+	}
+	// Ensure .gitignore ignores graph.db before the capture hook writes it, so
+	// the hidden PostToolUse path cannot trigger tracking in a fresh repo.
+	if err := application.EnsureGitAgentIgnoredAt(root); err != nil {
+		return nil, fmt.Errorf("ensure gitignore: %w", err)
+	}
+	// If graph.db is already tracked (e.g. cloned from a fork that committed it),
+	// untrack it now so the ignore rule can take effect — breaking the
+	// "infinite recreation" loop even when init has not run.
+	if _, err := ensureGraphDBUntracked(ctx, gitClient, root); err != nil {
+		return nil, err
 	}
 
 	client := infraGraph.NewSQLiteClient(dbPath)
