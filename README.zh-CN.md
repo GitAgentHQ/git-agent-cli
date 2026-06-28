@@ -72,6 +72,24 @@ git-agent init --local --scope          # 将作用域写入 .git-agent/config.l
 | `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
 | `--user` | 将配置写入 `~/.config/git-agent/config.yml`（需要至少一个操作参数） |
 
+#### `.git-agent/graph.db` 永不追踪
+
+图数据库（`.git-agent/graph.db`）由 `commit`、`capture`、`timeline` 和 `graph`
+命令在运行时生成。它绝不能被提交——一旦被追踪，每次运行都会再次修改它，
+产生一连串 `chore: update graph database file` 提交（即"无限重建"循环）。
+
+git-agent 自动守护这一不变量，无需 `init`：
+
+- **`git-agent init`**：把 `.git-agent/graph.db`（及 `*.db-shm`/`*.db-wal`/`*.db-journal`、`.git-agent/config.local.yml`）写入提交版 `.gitignore`，并对已追踪的 `graph.db` 执行 `git rm --cached`，使忽略规则生效。
+- **运行时防护**：每个打开图库的命令（`capture`、`timeline`、`graph *`）都会把强制忽略规则写入 `.git/info/exclude`（本地、未追踪、`git diff` 不可见），并在 `graph.db` 已被追踪时自动 untrack——例如从已提交该文件的 fork 克隆下来的仓库。即便未运行 `init`，也能阻断循环。
+
+存疑时验证：
+
+```bash
+git ls-files .git-agent/graph.db        # 应无输出（未追踪）
+git check-ignore .git-agent/graph.db    # 输出路径，exit 0（已忽略）
+```
+
 ### `git-agent commit`
 
 读取暂存和未暂存的变更，将其拆分为原子组，为每组生成提交信息，并依次提交。

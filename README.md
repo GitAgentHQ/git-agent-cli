@@ -72,6 +72,25 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 | `--local` | Write config to `.git-agent/config.local.yml` (requires an action flag) |
 | `--user` | Write config to `~/.config/git-agent/config.yml` (requires an action flag) |
 
+#### `.git-agent/graph.db` is never tracked
+
+The graph database (`.git-agent/graph.db`) is generated at runtime by `commit`,
+`capture`, `timeline`, and `graph` commands. It must never be committed — if it
+is, every run re-modifies it and produces a stream of `chore: update graph
+database file` commits (the "infinite recreation" loop).
+
+git-agent defends this invariant automatically, with no `init` required:
+
+- **`git-agent init`** writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal` and `.git-agent/config.local.yml`) into the committed `.gitignore`, and runs `git rm --cached` on any already-tracked `graph.db` so the rule can take effect.
+- **Runtime defence**: every command that opens the graph DB (`capture`, `timeline`, `graph *`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
+
+Verify when in doubt:
+
+```bash
+git ls-files .git-agent/graph.db        # must print nothing (untracked)
+git check-ignore .git-agent/graph.db    # prints the path, exit 0 (ignored)
+```
+
 ### `git-agent commit`
 
 Reads staged and unstaged changes, splits them into atomic groups, generates a commit message for each group, and commits them in sequence.
