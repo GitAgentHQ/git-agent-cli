@@ -62,7 +62,7 @@ The CLI is a Cobra tree. Every command lives in exactly one of three namespaces;
 
 - **Action** (top-level): `init`, `commit`, `capture` (hidden). These mutate the repo or the graph. `capture` is a hook target — invoked by `git-agent capture --source claude-code` from the Claude Code PostToolUse hook, never by a human — and stays `Hidden: true`.
 - **Meta** (top-level): `config`, `version`, `completion`. Configuration and tooling, not repo mutation.
-- **`graph`** (parent): every command that reads or audits the agent Event Log or its derived indexes (co-change, AST). Children: `status`, `verify`, `index`, `sync`, `impact`, `timeline`, `diagnose`, `provenance`, `callers`, `callees`, `node`, `query`, `affected`. **No graph read/audit command lives at the top level.** A new forensic/query command over the graph goes under `graph`.
+- **`graph`** (parent): every command that reads or audits the agent Event Log or its derived indexes (co-change, AST). Children: `status`, `verify`, `index`, `sync`, `impact`, `timeline`, `diagnose`, `provenance`, `callers`, `callees`, `node`, `query`, `affected`, `external-refs`. **No graph read/audit command lives at the top level.** A new forensic/query command over the graph goes under `graph`.
 
 ### Registration
 
