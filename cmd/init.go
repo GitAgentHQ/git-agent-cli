@@ -11,9 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/graph"
 	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
@@ -30,6 +32,9 @@ With no flags, runs the full setup wizard:
   4. Writes .git-agent/config.yml with scopes and hook: [conventional]
 
 Use --scope or --gitignore to run individual steps.
+Use --graph to build the code graph (commit-history co-change + Event-Log
+projections + AST index) as a one-shot cold start; otherwise the graph is
+built automatically by the first commit.
 Use 'git-agent config set hook <value>' to reconfigure hooks.`,
 	RunE: runInit,
 }
@@ -39,6 +44,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	hookChanged := cmd.Flags().Changed("hook")
 	agentHookChanged := cmd.Flags().Changed("agent-hook")
+	graphChanged := cmd.Flags().Changed("graph")
 	localChanged := cmd.Flags().Changed("local")
 	userChanged := cmd.Flags().Changed("user")
 
@@ -47,6 +53,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
 	doAgentHook, _ := cmd.Flags().GetBool("agent-hook")
+	doGraph, _ := cmd.Flags().GetBool("graph")
 	hookValues, _ := cmd.Flags().GetStringArray("hook")
 
 	if userChanged && scopeChanged {
@@ -56,10 +63,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--gitignore cannot be used with --user")
 	}
 
-	// Default: no flags → full wizard.
-	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged && !agentHookChanged
+	// Default: no flags → full wizard. --graph is opt-in: the wizard does NOT
+	// build the graph (the first commit does, via graph_autobuild), so a plain
+	// `init` stays fast and free of an LLM-free but history-bound index pass.
+	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged && !agentHookChanged && !graphChanged
 	if fullWizard && localChanged {
-		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, --hook, or --agent-hook")
+		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, --hook, --agent-hook, or --graph")
 	}
 	if fullWizard && userChanged {
 		return fmt.Errorf("--user requires --hook")
@@ -137,6 +146,70 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "Installed Claude Code capture hook: %s\n", path)
 	}
 
+	if doGraph {
+		if err := runInitGraph(cmd); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// runInitGraph is the one-shot cold start for the code graph: it builds all
+// three layers — commit-history + co-change (L2, via EnsureIndex with Force,
+// which `graph index` never did), Event-Log projections (L3, via SyncEventLog),
+// and the AST symbol/call-graph index (L1, full). It reuses openGraphDB for
+// dir/gitignore/untrack/schema hygiene and needs no LLM provider.
+func runInitGraph(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+	root, err := infraGit.NewClient().RepoRoot(ctx)
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+
+	dbPath, client, err := openGraphDB(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	repo := infraGraph.NewSQLiteRepository(client)
+	graphGit := infraGit.NewGraphClient(root)
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+
+	// L2: commit-history + co-change. EnsureIndex with Force (or an empty DB)
+	// routes to FullIndex, which reads git history and recomputes co_changed —
+	// the step `graph index` omitted, leaving co-change to lazy `impact`.
+	idxSvc := application.NewIndexService(repo, graphGit)
+	ensure := application.NewEnsureIndexService(idxSvc, repo, graphGit, dbPath)
+	ir, err := ensure.EnsureIndex(ctx, graph.IndexRequest{Force: true, MaxFilesPerCommit: 50})
+	if err != nil {
+		return fmt.Errorf("build commit-history index: %w", err)
+	}
+	stats, _ := repo.GetStats(ctx)
+	coChanged := 0
+	if stats != nil {
+		coChanged = stats.CoChangedCount
+	}
+	fmt.Fprintf(out, "Indexed %d commits, %d files, %d co-change pairs\n",
+		ir.IndexedCommits, ir.Files, coChanged)
+
+	// L3: Event-Log projections (sessions/actions/event_files).
+	if _, err := application.SyncEventLog(ctx, repo, graphGit); err != nil {
+		return fmt.Errorf("replay event log: %w", err)
+	}
+
+	// L1: AST symbol/call-graph index (full). Skipped on a repo with no commits
+	// (nothing tracked to index), matching `graph index`'s guard.
+	astRepo := infraGraph.NewSQLiteASTRepository(client)
+	if _, headErr := graphGit.CurrentHead(ctx); headErr != nil {
+		fmt.Fprintln(errOut, "AST index skipped: repo has no commits yet")
+	} else if err := ensureASTIndex(ctx, root, astRepo, repo, graphGit, "", true, errOut); err != nil {
+		return fmt.Errorf("build AST index: %w", err)
+	}
+
+	fmt.Fprintln(out, "Code graph built (commit-history + Event-Log projections + AST)")
 	return nil
 }
 
@@ -242,6 +315,7 @@ func ResetInitFlags() {
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
 	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
+	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change + Event-Log projections + AST) as a one-shot cold start")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")
@@ -254,6 +328,7 @@ func init() {
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
 	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
+	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change + Event-Log projections + AST) as a one-shot cold start")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")

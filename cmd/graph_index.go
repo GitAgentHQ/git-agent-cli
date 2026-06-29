@@ -12,20 +12,22 @@ import (
 
 var graphIndexCmd = &cobra.Command{
 	Use:   "index",
-	Short: "Build the derived indexes from the Event Log and working tree",
-	Long: `Build (or refresh) all derived indexes:
-  1. Verify the hash-chained Event Log, then rebuild the event-log projections
-     (sessions, actions, event_files, co-change) by replaying it, reconciling
-     unexplained working-tree changes into out-of-band Events, and replaying
-     again when any were appended.
-  2. Ensure the AST index is fresh against the current working tree (the symbol
-     and call-graph index that graph impact --symbol / callers / callees / node
-     / query / affected read). Use --reindex to force a full AST re-index.
+	Short: "Rebuild Event-Log projections and the AST index (use init --graph for a full build)",
+	Long: `Rebuild the Event-Log projections (sessions, actions, event_files) by
+replaying the Event Log, reconciling unexplained working-tree changes into
+out-of-band Events, and replaying again when any were appended; then ensure the
+AST index is fresh against the current working tree. Use --reindex to force a
+full AST re-index.
 
-This is the codegraph ` + "`index`" + ` analogue: one command that builds every
-derived store. Mutates only derived tables; the append-only Event Log is never
-touched.`,
-	RunE: runGraphIndex,
+Note: this does NOT rebuild the commit-history co-change index (that layer is
+maintained by ` + "`git-agent commit`" + ` and the ` + "`impact`" + ` read path). For a one-shot
+full build of ALL three layers, use ` + "`git-agent init --graph`" + `.
+
+Hidden because building is now automatic: ` + "`commit`" + ` maintains the graph as it
+writes, and every graph read syncs projections first. Kept as a compatibility
+alias for scripts.`,
+	Hidden: true,
+	RunE:   runGraphIndex,
 }
 
 func runGraphIndex(cmd *cobra.Command, _ []string) error {

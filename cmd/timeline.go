@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,38 +36,26 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	gitClient := infraGit.NewClient()
-	root, err := gitClient.RepoRoot(ctx)
+	root, err := infraGit.NewClient().RepoRoot(ctx)
 	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
-	dbPath := infraGraph.DBPath(root)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return fmt.Errorf("create .git-agent dir: %w", err)
-	}
-	// Ensure .gitignore ignores graph.db before the timeline read creates it,
-	// defending repos where init has not run yet.
-	if err := application.EnsureGitAgentIgnoredAt(root); err != nil {
-		return fmt.Errorf("ensure gitignore: %w", err)
-	}
-	// Untrack graph.db if a prior commit tracked it, so the loop breaks even
-	// without init. Idempotent no-op when already untracked.
-	if _, err := ensureGraphDBUntracked(ctx, gitClient, root); err != nil {
+	// openGraphDB centralizes the dir/gitignore/untrack/schema hygiene every
+	// graph read needs; timeline previously inlined the same steps.
+	_, client, err := openGraphDB(ctx, root)
+	if err != nil {
 		return err
 	}
+	defer client.Close()
 
-	client := infraGraph.NewSQLiteClient(dbPath)
 	repo := infraGraph.NewSQLiteRepository(client)
-	if err := repo.Open(ctx); err != nil {
-		return fmt.Errorf("open graph db: %w", err)
-	}
-	defer repo.Close()
-	if err := client.ValidateSchemaVersion(ctx); err != nil {
-		return err
-	}
-	if err := repo.InitSchema(ctx); err != nil {
-		return fmt.Errorf("init schema: %w", err)
+	// Read-side auto-sync (CQRS): capture only appends to the Event Log, so the
+	// projections may lag. SyncIfStale is a cheap no-op when current and an
+	// incremental replay when stale — best-effort, never blocks the read.
+	graphGit := infraGit.NewGraphClient(root)
+	if _, serr := application.SyncIfStale(ctx, repo, graphGit); serr != nil && verbose {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: projection sync: %v\n", serr)
 	}
 
 	var sinceUnix int64

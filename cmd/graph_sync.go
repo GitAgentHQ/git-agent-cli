@@ -13,15 +13,17 @@ import (
 
 var graphSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Bring projections up to date with the Event Log",
-	Long: `Bring the derived projections (sessions, actions, event_files, co-change)
-up to date with the Event Log. If the projections already reflect the latest
-event seq this is a no-op; otherwise it INCREMENTALLY replays only the new
-events (no reset) and reconciles unexplained working-tree changes, folding any
-out-of-band Events appended. Use ` + "`sync`" + ` for the common refresh; use
-` + "`index`" + ` to force a full reset-and-rebuild unconditionally. Read-only to the
-Event Log; mutates only the derived projection tables.`,
-	RunE: runGraphSync,
+	Short: "Refresh Event-Log projections (automatic; kept for compatibility)",
+	Long: `Bring the derived projections (sessions, actions, event_files) up to date
+with the Event Log by incrementally replaying only the new events.
+
+This is now automatic: every graph read (timeline, provenance, diagnose,
+impact) syncs projections before reading, and ` + "`git-agent commit`" + ` keeps them
+fresh as it writes. Run ` + "`sync`" + ` only when you want to refresh without a read —
+e.g. before a scripted cold read. Read-only to the Event Log; mutates only the
+derived projection tables.`,
+	Hidden: true,
+	RunE:   runGraphSync,
 }
 
 func runGraphSync(cmd *cobra.Command, _ []string) error {

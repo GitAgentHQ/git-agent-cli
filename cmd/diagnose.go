@@ -56,6 +56,12 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	defer client.Close()
 
 	repo := infraGraph.NewSQLiteRepository(client)
+	// Read-side auto-sync (CQRS): capture only appends, so projections may lag.
+	// Cheap no-op when current; best-effort, never blocks the diagnose read.
+	graphGit := infraGit.NewGraphClient(root)
+	if _, serr := application.SyncIfStale(ctx, repo, graphGit); serr != nil && verbose {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: projection sync: %v\n", serr)
+	}
 	impact := application.NewImpactService(repo)
 
 	var reranker application.DiagnoseReranker
