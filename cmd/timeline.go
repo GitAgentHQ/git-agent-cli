@@ -23,7 +23,7 @@ with the files it touched. The broad entry point over the Event Log: start here
 to see what happened, then drill into ` + "`provenance`" + ` for one file's full
 history or ` + "`diagnose`" + ` to trace a regression. Filter with --file, --source,
 or --since. Read-only.`,
-	RunE: runTimeline,
+	RunE: jsonAwareRunE(runTimeline),
 }
 
 func runTimeline(cmd *cobra.Command, args []string) error {
@@ -31,8 +31,6 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 	source, _ := cmd.Flags().GetString("source")
 	file, _ := cmd.Flags().GetString("file")
 	top, _ := cmd.Flags().GetInt("top")
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 
 	ctx := cmd.Context()
 
@@ -73,10 +71,10 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 		Top:    top,
 	})
 	if err != nil {
-		return outputError(jsonFlag, textFlag, err)
+		return err
 	}
 
-	return outputTimeline(cmd, result, jsonFlag, textFlag)
+	return outputTimeline(cmd, result)
 }
 
 func parseSince(s string) (int64, error) {
@@ -104,8 +102,8 @@ func parseSince(s string) (int64, error) {
 	return 0, fmt.Errorf("unsupported format %q: use a duration (2h, 7d) or RFC3339 date", s)
 }
 
-func outputTimeline(cmd *cobra.Command, result *graph.TimelineResult, jsonFlag, textFlag bool) error {
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+func outputTimeline(cmd *cobra.Command, result *graph.TimelineResult) error {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 	return outputTimelineText(cmd, result)
@@ -180,9 +178,6 @@ func init() {
 	timelineCmd.Flags().String("source", "", "filter by source")
 	timelineCmd.Flags().String("file", "", "filter by file path")
 	timelineCmd.Flags().Int("top", 50, "max sessions to show")
-	timelineCmd.Flags().Bool("json", false, "force JSON output")
-	timelineCmd.Flags().Bool("text", false, "force text output")
-	timelineCmd.MarkFlagsMutuallyExclusive("json", "text")
 
-	graphCmd.AddCommand(timelineCmd)
+	auditCmd.AddCommand(timelineCmd)
 }
