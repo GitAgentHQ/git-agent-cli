@@ -157,56 +157,6 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 
 打印构建版本。
 
-### `git-agent impact`
-
-查找与给定种子相关的文件或符号。三种模式：
-
-| 模式 | 触发条件 | 返回内容 |
-|------|----------|----------|
-| `cochange`（默认） | 种子为文件路径（或无参数 = 工作区变更） | 历史上与种子一起变更的文件 |
-| `structural` | `--symbol <name>` | 调用、被调用或引用种子符号的 AST 符号 |
-| `combined` | `--symbol <name> --mode combined` | co-change 和 structural 结果的并集 |
-
-不带参数时，种子默认为当前工作区变更。首次运行自动索引 git 历史；查询为离线操作（无需 LLM，无需 API key）。
-
-```bash
-git-agent impact                                     # "我的改动通常还会涉及哪些文件？"
-git-agent impact application/commit_service.go       # 从特定文件查 co-change
-git-agent impact src/                                # 从目录查 co-change
-git-agent impact --symbol CommitService --json       # structural 影响分析
-git-agent impact --symbol CommitService --mode combined  # 两种信号合并
-```
-
-| 参数 | 默认值 | 描述 |
-|------|--------|------|
-| `--symbol` | | 按符号名查询 structural 影响 |
-| `--mode` | `cochange` | 影响模式：`cochange`、`structural` 或 `combined` |
-| `--depth` | 1 | 传递性 co-change 深度 |
-| `--top` | 20 | 最大结果数 |
-| `--min-count` | 3 | 最小 co-change 次数阈值 |
-| `--reindex` | false | 查询前强制重新索引 |
-| `--json` / `--text` | 自动 | 强制输出格式（管道时为 JSON，TTY 时为文本） |
-
-### `git-agent timeline`
-
-显示最近的 agent 和人类操作历史，按会话分组，包含每次操作的工具和文件信息。由 `git-agent capture` 写入数据。离线操作。
-
-```bash
-git-agent timeline                        # 所有已记录的操作
-git-agent timeline --since 2h             # 最近 2 小时
-git-agent timeline --file src/auth.go     # 按文件过滤
-git-agent timeline --source claude-code   # 按来源过滤
-git-agent timeline --json                 # JSON 输出
-```
-
-| 参数 | 默认值 | 描述 |
-|------|--------|------|
-| `--since` | | 时间窗口：`2h`、`7d` 或 RFC 3339 时间戳 |
-| `--source` | | 按操作来源过滤（如 `claude-code`、`human`） |
-| `--file` | | 按文件路径过滤 |
-| `--top` | 50 | 最大显示会话数 |
-| `--json` / `--text` | 自动 | 强制输出格式 |
-
 ### `git-agent graph`
 
 查询并审计 agent Event Log 及其派生的 AST + 共变索引。AST 索引解析本仓库
@@ -227,11 +177,20 @@ git-agent graph query --kind method Connect   # FTS5 符号搜索
 ```
 
 ```bash
-git-agent graph status      # 索引健康度 + 行数
-git-agent graph index      # 构建/刷新所有派生索引
-git-agent graph verify     # Event Log 链完整性
-git-agent graph timeline   # 操作历史
-git-agent graph impact     # 共变 / structural 影响（见上）
+git-agent graph status        # 索引健康度 + 行数
+git-agent graph index         # 构建/刷新所有派生索引
+git-agent graph sync          # 增量重放新事件到投影
+git-agent graph verify        # Event Log 链完整性
+git-agent graph timeline      # 操作历史（见下）
+git-agent graph impact        # 共变 / structural 影响（见下）
+git-agent graph callers       # 调用或引用某符号的符号
+git-agent graph callees       # 某符号调用或引用的符号
+git-agent graph node          # 符号的位置、签名与调用链
+git-agent graph query         # FTS5 符号搜索
+git-agent graph affected      # 覆盖给定文件符号的测试
+git-agent graph provenance    # 文件的重命名感知变更历史
+git-agent graph diagnose      # 把失败症状追溯到引入它的操作
+git-agent graph external-refs # 指向外部包的调用/字段读取点
 ```
 
 **外部包不索引。** 索引只解析本仓库的文件，因此来自导入包的符号（如
@@ -281,6 +240,56 @@ build+test 通过；graph 没有把任何 fail 翻成 pass，但带来了无 gra
 
 graph 的价值在于调查深度、测试/不变量忠实度、跨文件安全性——不是把不可能
 变可能。在 grep 噪声大、receiver/字段消歧更关键的陌生代码库上，它的作用更明显。
+
+### `git-agent graph impact`
+
+查找与给定种子相关的文件或符号。三种模式：
+
+| 模式 | 触发条件 | 返回内容 |
+|------|----------|----------|
+| `cochange`（默认） | 种子为文件路径（或无参数 = 工作区变更） | 历史上与种子一起变更的文件 |
+| `structural` | `--symbol <name>` | 调用、被调用或引用种子符号的 AST 符号 |
+| `combined` | `--symbol <name> --mode combined` | co-change 和 structural 结果的并集 |
+
+不带参数时，种子默认为当前工作区变更。首次运行自动索引 git 历史；查询为离线操作（无需 LLM，无需 API key）。
+
+```bash
+git-agent graph impact                                     # "我的改动通常还会涉及哪些文件？"
+git-agent graph impact application/commit_service.go       # 从特定文件查 co-change
+git-agent graph impact src/                                # 从目录查 co-change
+git-agent graph impact --symbol CommitService --json       # structural 影响分析
+git-agent graph impact --symbol CommitService --mode combined  # 两种信号合并
+```
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `--symbol` | | 按符号名查询 structural 影响 |
+| `--mode` | `cochange` | 影响模式：`cochange`、`structural` 或 `combined` |
+| `--depth` | 1 | 传递性 co-change 深度 |
+| `--top` | 20 | 最大结果数 |
+| `--min-count` | 3 | 最小 co-change 次数阈值 |
+| `--reindex` | false | 查询前强制重新索引 |
+| `--json` / `--text` | 自动 | 强制输出格式（管道时为 JSON，TTY 时为文本） |
+
+### `git-agent graph timeline`
+
+显示最近的 agent 和人类操作历史，按会话分组，包含每次操作的工具和文件信息。由 `git-agent capture` 写入数据。离线操作。
+
+```bash
+git-agent graph timeline                        # 所有已记录的操作
+git-agent graph timeline --since 2h             # 最近 2 小时
+git-agent graph timeline --file src/auth.go     # 按文件过滤
+git-agent graph timeline --source claude-code   # 按来源过滤
+git-agent graph timeline --json                 # JSON 输出
+```
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `--since` | | 时间窗口：`2h`、`7d` 或 RFC 3339 时间戳 |
+| `--source` | | 按操作来源过滤（如 `claude-code`、`human`） |
+| `--file` | | 按文件路径过滤 |
+| `--top` | 50 | 最大显示会话数 |
+| `--json` / `--text` | 自动 | 强制输出格式 |
 
 ## 配置
 

@@ -158,56 +158,6 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 
 Print the build version.
 
-### `git-agent impact`
-
-Find files or symbols likely to change alongside the given seeds. Three modes:
-
-| Mode | Trigger | What it returns |
-|------|---------|-----------------|
-| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
-| `structural` | `--symbol <name>` | AST symbols that call, are called by, or reference the seed symbol |
-| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
-
-With no arguments, seeds default to your current working-tree changes. The first run auto-indexes git history; queries are offline (no LLM, no API key).
-
-```bash
-git-agent impact                                     # "what else changes with my edits?"
-git-agent impact application/commit_service.go       # co-change from a specific file
-git-agent impact src/                                # co-change from a directory
-git-agent impact --symbol CommitService --json       # structural impact
-git-agent impact --symbol CommitService --mode combined  # both signals
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--symbol` | | Query structural impact by symbol name |
-| `--mode` | `cochange` | Impact mode: `cochange`, `structural`, or `combined` |
-| `--depth` | 1 | Transitive co-change depth |
-| `--top` | 20 | Max results |
-| `--min-count` | 3 | Minimum co-change count to include |
-| `--reindex` | false | Force a full re-index before querying |
-| `--json` / `--text` | auto | Force output format (JSON when piped, text on a TTY) |
-
-### `git-agent timeline`
-
-Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
-
-```bash
-git-agent timeline                        # all recorded actions
-git-agent timeline --since 2h             # last 2 hours
-git-agent timeline --file src/auth.go     # actions touching a file
-git-agent timeline --source claude-code   # filter by source
-git-agent timeline --json                 # JSON output
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--since` | | Time window: `2h`, `7d`, or RFC 3339 timestamp |
-| `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
-| `--file` | | Filter by file path |
-| `--top` | 50 | Max sessions to display |
-| `--json` / `--text` | auto | Force output format |
-
 ### `git-agent graph`
 
 Query and audit the agent Event Log and its derived AST + co-change indexes.
@@ -229,11 +179,20 @@ git-agent graph query --kind method Connect   # FTS5 symbol search
 ```
 
 ```bash
-git-agent graph status      # index health + row counts
-git-agent graph index      # build/refresh all derived indexes
-git-agent graph verify     # Event Log chain integrity
-git-agent graph timeline   # action history
-git-agent graph impact     # co-change / structural impact (see above)
+git-agent graph status        # index health + row counts
+git-agent graph index         # build/refresh all derived indexes
+git-agent graph sync          # incrementally replay new events into projections
+git-agent graph verify        # Event Log chain integrity
+git-agent graph timeline      # action history (see below)
+git-agent graph impact        # co-change / structural impact (see below)
+git-agent graph callers       # symbols that call or reference a symbol
+git-agent graph callees       # symbols called or referenced by a symbol
+git-agent graph node          # a symbol's location, signature, caller/callee trail
+git-agent graph query         # FTS5 symbol search
+git-agent graph affected      # test files exercising the given files' symbols
+git-agent graph provenance    # rename-aware change history for a file
+git-agent graph diagnose      # trace a failing symptom to its introducing action
+git-agent graph external-refs # call/field sites reaching into external packages
 ```
 
 **External packages are not indexed.** The index only parses files in your
@@ -288,6 +247,56 @@ All six arms built and tested green; the graph did not flip any fail→pass. It
 The graph's value is investigation depth, test/invariant fidelity, and
 cross-file safety — not enabling the impossible. It shines most on unfamiliar
 codebases where grep noise is high and receiver/field disambiguation matters.
+
+### `git-agent graph impact`
+
+Find files or symbols likely to change alongside the given seeds. Three modes:
+
+| Mode | Trigger | What it returns |
+|------|---------|-----------------|
+| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
+| `structural` | `--symbol <name>` | AST symbols that call, are called by, or reference the seed symbol |
+| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
+
+With no arguments, seeds default to your current working-tree changes. The first run auto-indexes git history; queries are offline (no LLM, no API key).
+
+```bash
+git-agent graph impact                                     # "what else changes with my edits?"
+git-agent graph impact application/commit_service.go       # co-change from a specific file
+git-agent graph impact src/                                # co-change from a directory
+git-agent graph impact --symbol CommitService --json       # structural impact
+git-agent graph impact --symbol CommitService --mode combined  # both signals
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--symbol` | | Query structural impact by symbol name |
+| `--mode` | `cochange` | Impact mode: `cochange`, `structural`, or `combined` |
+| `--depth` | 1 | Transitive co-change depth |
+| `--top` | 20 | Max results |
+| `--min-count` | 3 | Minimum co-change count to include |
+| `--reindex` | false | Force a full re-index before querying |
+| `--json` / `--text` | auto | Force output format (JSON when piped, text on a TTY) |
+
+### `git-agent graph timeline`
+
+Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
+
+```bash
+git-agent graph timeline                        # all recorded actions
+git-agent graph timeline --since 2h             # last 2 hours
+git-agent graph timeline --file src/auth.go     # actions touching a file
+git-agent graph timeline --source claude-code   # filter by source
+git-agent graph timeline --json                 # JSON output
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--since` | | Time window: `2h`, `7d`, or RFC 3339 timestamp |
+| `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
+| `--file` | | Filter by file path |
+| `--top` | 50 | Max sessions to display |
+| `--json` / `--text` | auto | Force output format |
 
 ## Configuration
 
