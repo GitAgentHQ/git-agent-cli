@@ -20,12 +20,18 @@ import (
 
 var impactCmd = &cobra.Command{
 	Use:   "impact [path...]",
-	Short: "Show files likely to change with a feature",
+	Short: "Show co-change or structural impact of a change",
 	Long: `Analyze co-change patterns to show which files are typically modified
 together with the given seeds. Seeds may be one or more files or directories;
 with no arguments, the current working-tree changes are used as seeds — "given
 what I've edited, what else usually changes?". Files coupled to several seeds
-rank highest. Auto-indexes git history on first run.`,
+rank highest. Auto-indexes git history on first run.
+
+With --symbol <name>, query structural impact instead: --mode structural (the
+default for --symbol) returns the symbols that call or reference it; --mode
+combined also runs the co-change of the symbol's file; --mode cochange runs
+only that co-change. Without --symbol, --mode defaults to co-change over the
+seeds.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runImpact,
 }
@@ -52,6 +58,14 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 
+	// Reject an unknown --mode up front so a typo can never silently fall through
+	// to the default co-change path (which would discard --symbol entirely).
+	switch mode {
+	case "", "structural", "combined", "cochange":
+	default:
+		return outputError(jsonFlag, textFlag, fmt.Errorf("invalid --mode %q: want structural, combined, or cochange", mode))
+	}
+
 	// Mode dispatch:
 	//   --symbol with no explicit --mode (or --mode structural) → AST only
 	//   --symbol with --mode combined → co-change of symbol's file + AST
@@ -66,7 +80,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	case symbol != "" && mode == "cochange":
 		return runSymbolCoChangeImpact(cmd, ctx, root, symbol, depth, top, minCount, reindex, jsonFlag, textFlag)
 	case symbol == "" && (mode == "structural" || mode == "combined"):
-		return fmt.Errorf("--mode %s requires --symbol", mode)
+		return outputError(jsonFlag, textFlag, fmt.Errorf("--mode %s requires --symbol", mode))
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
