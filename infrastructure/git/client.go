@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -301,6 +302,12 @@ func (c *Client) IsGitRepo(ctx context.Context) bool {
 func (c *Client) RepoRoot(ctx context.Context) (string, error) {
 	out, err := gitCmd(ctx, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
+		// .Output() drops stderr into ExitError.Stderr; surface git's own message
+		// ("fatal: not a git repository ...") instead of a bare "exit status 128".
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
+		}
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\n"), nil

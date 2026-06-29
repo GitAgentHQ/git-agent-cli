@@ -311,12 +311,24 @@ func (r *SQLiteRepository) MaxEventSeq(ctx context.Context) (int64, error) {
 	return seq, err
 }
 
-// MaxProjectedEventSeq returns the highest event_seq reflected in the event_files
-// projection, or 0 when empty. Since one Rebuild pass derives all projections
-// together, this equal to MaxEventSeq means the cold path is current.
+// MaxProjectedEventSeq returns the highest Event Log seq folded into the derived
+// Projections. It reads the explicit high-water mark (ProjectionHighWaterKey)
+// that every Rebuild/SyncIncremental records. The event_files row count cannot
+// stand in for replay progress: Outcome Events touch no files, so the tail of
+// the log may leave no event_files row, which would peg the staleness check
+// below MaxEventSeq forever and make sync re-replay (and duplicate) the tail.
+// A DB written before the mark existed falls back to the old event_files max;
+// the next Rebuild/SyncIncremental then writes the mark and supersedes it.
 func (r *SQLiteRepository) MaxProjectedEventSeq(ctx context.Context) (int64, error) {
+	val, err := r.GetIndexState(ctx, graph.ProjectionHighWaterKey)
+	if err != nil {
+		return 0, err
+	}
+	if val != "" {
+		return strconv.ParseInt(val, 10, 64)
+	}
 	var seq int64
-	err := r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_files`).Scan(&seq)
+	err = r.db().QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_files`).Scan(&seq)
 	return seq, err
 }
 
@@ -1035,6 +1047,7 @@ func (r *SQLiteRepository) ResetProjections(ctx context.Context) error {
 		`DELETE FROM action_modifies`,
 		`DELETE FROM actions`,
 		`DELETE FROM sessions`,
+		`DELETE FROM index_state WHERE key = 'max_projected_event_seq'`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("reset projections: %w", err)
