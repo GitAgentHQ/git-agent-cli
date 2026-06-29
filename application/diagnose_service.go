@@ -12,26 +12,24 @@ import (
 
 // Candidate is one ranked suspect Event within the Suspect Window.
 type Candidate struct {
-	Seq        int64
-	EventID    string
-	Tool       string
-	Files      []string
-	BeforeBlob string
-	AfterBlob  string
-	Score      float64
+	Seq        int64    `json:"seq"`
+	EventID    string   `json:"event_id"`
+	Tool       string   `json:"tool"`
+	Files      []string `json:"files"`
+	BeforeBlob string   `json:"before_blob"`
+	AfterBlob  string   `json:"after_blob"`
+	Score      float64  `json:"score"`
 }
 
 // DiagnosisResult is the forensic output of graph diagnose.
 type DiagnosisResult struct {
-	GreenSeq      int64 // last-green Outcome Event seq (0 if none)
-	RedSeq        int64 // first-red Outcome Event seq
-	GreenCommit   string
-	RedCommit     string
-	WindowSize    int
-	Candidates    []Candidate // ranked, total order
-	ChainVerified bool
-	LowConfidence string   // e.g. "no_green_baseline", empty when high-confidence
-	Warnings      []string // non-fatal degradations, e.g. an LLM re-rank that fell back to deterministic order
+	GreenSeq      int64       `json:"green_seq"` // last-green Outcome Event seq (0 if none)
+	RedSeq        int64       `json:"red_seq"`   // first-red Outcome Event seq
+	WindowSize    int         `json:"window_size"`
+	Candidates    []Candidate `json:"candidates"` // ranked, total order
+	ChainVerified bool        `json:"chain_verified"`
+	LowConfidence string      `json:"low_confidence"` // e.g. "no_green_baseline", empty when high-confidence
+	Warnings      []string    `json:"warnings"`       // non-fatal degradations, e.g. an LLM re-rank that fell back to deterministic order
 }
 
 // DiagnoseRequest carries the symptom and diagnose options.

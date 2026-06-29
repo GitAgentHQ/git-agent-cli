@@ -50,8 +50,14 @@ func SyncIfStale(ctx context.Context, repo graph.GraphRepository, git graph.Grap
 		return summary, fmt.Errorf("reconcile: %w", err)
 	}
 	if res.OutOfBandAppended > 0 {
-		// Out-of-band Events were appended at seq > maxProjected; fold them.
-		if err := rb.SyncIncremental(ctx, maxProjected); err != nil {
+		// Reconcile appended out-of-band Events past the first replay's high-water.
+		// Fold only those: re-read the mark the first SyncIncremental just stamped
+		// so the prior range is not re-folded (which would duplicate its actions).
+		since, herr := repo.MaxProjectedEventSeq(ctx)
+		if herr != nil {
+			return summary, fmt.Errorf("projected high-water: %w", herr)
+		}
+		if err := rb.SyncIncremental(ctx, since); err != nil {
 			return summary, fmt.Errorf("incremental replay after reconcile: %w", err)
 		}
 	}

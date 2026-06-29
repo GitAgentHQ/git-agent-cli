@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gitagenthq/git-agent/domain/graph"
@@ -113,6 +114,21 @@ func (r *ProjectionRebuilder) Rebuild(ctx context.Context) error {
 	}
 	if err := cur.Err(); err != nil {
 		return fmt.Errorf("replay events: %w", err)
+	}
+	return r.recordHighWater(ctx)
+}
+
+// recordHighWater stamps the projected high-water mark at the current Event Log
+// tail, so a later staleness check sees the Replay as caught up even when the
+// tail Event left no event_files row (an Outcome Event touches no files).
+// Without it, sync re-replays the tail every run and duplicates its action.
+func (r *ProjectionRebuilder) recordHighWater(ctx context.Context) error {
+	seq, err := r.repo.MaxEventSeq(ctx)
+	if err != nil {
+		return fmt.Errorf("max event seq: %w", err)
+	}
+	if err := r.repo.SetIndexState(ctx, graph.ProjectionHighWaterKey, strconv.FormatInt(seq, 10)); err != nil {
+		return fmt.Errorf("record projection high-water: %w", err)
 	}
 	return nil
 }
@@ -337,7 +353,7 @@ func (r *ProjectionRebuilder) SyncIncremental(ctx context.Context, sinceSeq int6
 	if err := cur.Err(); err != nil {
 		return fmt.Errorf("replay events: %w", err)
 	}
-	return nil
+	return r.recordHighWater(ctx)
 }
 
 // splitSessionKey reverses the "\x00"-joined (source, instance_id) key.
