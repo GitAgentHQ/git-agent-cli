@@ -30,18 +30,23 @@ func (e *HookBlockedError) Is(target error) bool {
 	return target == ErrHookBlocked
 }
 
-// SingleCommitResult holds the output of one committed group.
+// SingleCommitResult holds the output of one committed group. The JSON tags are
+// part of the agent-facing `commit -o json` contract; GitOutput and Explanation
+// drive only the human text rendering and are excluded from JSON.
 type SingleCommitResult struct {
-	Title       string
-	Explanation string
-	GitOutput   string
-	Files       []string
+	Title       string   `json:"title"`
+	Message     string   `json:"message"` // full message (title + body), without trailers
+	Explanation string   `json:"-"`       // closing paragraph; text output only
+	GitOutput   string   `json:"-"`       // raw `git commit` stdout; text output only
+	Files       []string `json:"files"`
+	SHA         string   `json:"sha,omitempty"`          // commit hash; empty on dry-run
+	HookOutcome string   `json:"hook_outcome,omitempty"` // passed | skipped
 }
 
 // CommitResult holds the output of a successful Commit call.
 type CommitResult struct {
-	Commits []SingleCommitResult
-	DryRun  bool
+	Commits []SingleCommitResult `json:"commits"`
+	DryRun  bool                 `json:"dry_run"`
 }
 
 type CommitGitClient interface {
@@ -534,6 +539,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		var assembled string
 		var msg *commit.CommitMessage
 		hookPassed := false
+		hookOutcome := ""
 		var previousMessage string
 		var preTrailer string // assembled before trailers — used for HookBlockedError
 
@@ -570,6 +576,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 			if len(req.Config.Hooks) == 0 && !req.Config.RequireModelCoAuthor {
 				hookPassed = true
+				hookOutcome = "skipped"
 				break
 			}
 
@@ -585,6 +592,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			}
 			if hookResult.ExitCode == 0 {
 				hookPassed = true
+				if hooksAreEffective(req.Config.Hooks) || req.Config.RequireModelCoAuthor {
+					hookOutcome = "passed"
+				} else {
+					hookOutcome = "skipped"
+				}
 				break
 			}
 
@@ -646,8 +658,10 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 		result := SingleCommitResult{
 			Title:       msg.Title,
+			Message:     preTrailer,
 			Explanation: msg.Explanation,
 			Files:       group.Files,
+			HookOutcome: hookOutcome,
 		}
 		if req.DryRun {
 			committed = append(committed, result)
@@ -665,14 +679,18 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, err
 		}
 		result.GitOutput = gitOut
+		// Promote the SHA to a first-class field (the raw git stdout in GitOutput
+		// is human-only) and reuse it for action linking below.
+		hash, hashErr := s.git.CommitHash(ctx)
+		if hashErr == nil {
+			result.SHA = hash
+		}
 		committed = append(committed, result)
 
 		// Link unlinked actions to this commit (graceful — never fails the commit)
-		if s.actionLinker != nil {
-			if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil && hash != "" {
-				if linkErr := s.actionLinker.LinkActionsToCommit(ctx, hash, group.Files); linkErr != nil {
-					s.vlog(req, "action-to-commit linking failed: %v", linkErr)
-				}
+		if s.actionLinker != nil && hashErr == nil && hash != "" {
+			if linkErr := s.actionLinker.LinkActionsToCommit(ctx, hash, group.Files); linkErr != nil {
+				s.vlog(req, "action-to-commit linking failed: %v", linkErr)
 			}
 		}
 		for _, f := range group.Files {
@@ -732,6 +750,7 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	if body := msg.Body(); body != "" {
 		assembled += "\n\n" + body
 	}
+	preTrailer := assembled
 	if len(req.Trailers) > 0 {
 		assembled, err = s.git.FormatTrailers(ctx, assembled, req.Trailers)
 		if err != nil {
@@ -741,8 +760,10 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 
 	result := SingleCommitResult{
 		Title:       msg.Title,
+		Message:     preTrailer,
 		Explanation: msg.Explanation,
 		Files:       amendDiff.Files,
+		HookOutcome: "skipped",
 	}
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
@@ -752,6 +773,9 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 		return nil, err
 	}
 	result.GitOutput = gitOut
+	if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil {
+		result.SHA = hash
+	}
 	return &CommitResult{Commits: []SingleCommitResult{result}}, nil
 }
 
@@ -810,6 +834,19 @@ func appendPassthroughFiles(plan *commit.CommitPlan, allowed map[string]bool) {
 func hasUnscopedGroups(plan *commit.CommitPlan) bool {
 	for _, g := range plan.Groups {
 		if !strings.Contains(g.Message.Title, "(") {
+			return true
+		}
+	}
+	return false
+}
+
+// hooksAreEffective reports whether any configured hook performs real validation
+// — i.e. is something other than the no-op "" / "empty" sentinels. Used to label
+// a commit's hook_outcome as "passed" (a real hook accepted it) vs "skipped"
+// (no validation ran).
+func hooksAreEffective(hooks []string) bool {
+	for _, h := range hooks {
+		if h != "" && h != "empty" {
 			return true
 		}
 	}

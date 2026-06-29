@@ -10,21 +10,21 @@ import (
 
 // ProvenanceRow is one chronological change to a file in the Provenance View.
 type ProvenanceRow struct {
-	Seq          int64
-	When         int64  // recorded_at, unix seconds
-	Who          string // EventSource: claude-code | cursor | human | unknown
-	Tool         string
-	BeforeBlob   string // File Blob Ref
-	AfterBlob    string // File Blob Ref
-	ChangeKind   string // A|M|D|R
-	LinkedCommit string // from action_produces, empty if none
-	OutOfBand    bool   // true when Who == "unknown"
+	Seq          int64  `json:"seq"`
+	When         int64  `json:"when"` // recorded_at, unix seconds
+	Who          string `json:"who"`  // EventSource: claude-code | cursor | human | unknown
+	Tool         string `json:"tool"`
+	BeforeBlob   string `json:"before_blob"`   // File Blob Ref
+	AfterBlob    string `json:"after_blob"`    // File Blob Ref
+	ChangeKind   string `json:"change_kind"`   // A|M|D|R
+	LinkedCommit string `json:"linked_commit"` // from action_produces, empty if none
+	OutOfBand    bool   `json:"out_of_band"`   // true when Who == "unknown"
 }
 
 // ProvenanceView is the chronological, rename-aware history for one file.
 type ProvenanceView struct {
-	File string
-	Rows []ProvenanceRow
+	File string          `json:"file"`
+	Rows []ProvenanceRow `json:"rows"`
 }
 
 // ProvenanceService builds a rename-aware, chronological change history for a
