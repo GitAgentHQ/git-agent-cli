@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -310,6 +311,137 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	}
 }
 
+// TestCommitCmd_JSONOutput locks the agent-facing `commit -o json` contract:
+// stdout is a structured envelope carrying a first-class SHA, the per-commit
+// message/files, the hook outcome, and the committed_count / final_sha aggregate.
+func TestCommitCmd_JSONOutput(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+
+	gitInRepo := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	gitInRepo("add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "test-model",
+		"--no-stage",
+		"--no-attribution",
+		"-o", "json",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit -o json failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	var res struct {
+		DryRun         bool   `json:"dry_run"`
+		CommittedCount int    `json:"committed_count"`
+		FinalSHA       string `json:"final_sha"`
+		Commits        []struct {
+			Title       string   `json:"title"`
+			Message     string   `json:"message"`
+			Files       []string `json:"files"`
+			SHA         string   `json:"sha"`
+			HookOutcome string   `json:"hook_outcome"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
+		t.Fatalf("commit -o json stdout is not a JSON object: %v\n%s", err, stdout.String())
+	}
+	if res.DryRun {
+		t.Errorf("dry_run = true, want false")
+	}
+	if res.CommittedCount != 1 {
+		t.Errorf("committed_count = %d, want 1", res.CommittedCount)
+	}
+	if len(res.Commits) != 1 {
+		t.Fatalf("commits len = %d, want 1\n%s", len(res.Commits), stdout.String())
+	}
+	cm := res.Commits[0]
+	if cm.SHA == "" {
+		t.Error("commit sha is empty")
+	}
+	if res.FinalSHA != cm.SHA {
+		t.Errorf("final_sha %q != last commit sha %q", res.FinalSHA, cm.SHA)
+	}
+	if cm.HookOutcome != "skipped" {
+		t.Errorf("hook_outcome = %q, want skipped for an empty hook", cm.HookOutcome)
+	}
+	if cm.Title == "" || cm.Message == "" || len(cm.Files) == 0 {
+		t.Errorf("commit object missing title/message/files: %+v", cm)
+	}
+}
+
+// TestCommitCmd_JSONDryRun locks the dry-run shape of `commit -o json`: the plan
+// is reported with dry_run=true, committed_count 0, and empty per-commit SHAs.
+func TestCommitCmd_JSONDryRun(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	if out, err := exec.Command("git", "-C", dir, "add", "readme.txt").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(agentBin, "commit",
+		"--api-key", "test-key", "--base-url", server.URL, "--model", "test-model",
+		"--no-stage", "--no-attribution", "--dry-run", "-o", "json",
+	)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "XDG_CONFIG_HOME=" + t.TempDir()}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("commit --dry-run -o json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var res struct {
+		DryRun         bool `json:"dry_run"`
+		CommittedCount int  `json:"committed_count"`
+		Commits        []struct {
+			SHA string `json:"sha"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
+		t.Fatalf("dry-run JSON parse: %v\n%s", err, stdout.String())
+	}
+	if !res.DryRun {
+		t.Errorf("dry_run = false, want true")
+	}
+	if res.CommittedCount != 0 {
+		t.Errorf("committed_count = %d, want 0 on dry-run", res.CommittedCount)
+	}
+	for i, cm := range res.Commits {
+		if cm.SHA != "" {
+			t.Errorf("commit[%d].sha = %q, want empty on dry-run", i, cm.SHA)
+		}
+	}
+}
+
 // TestCommitCmd_NoReasoningEffortSent locks the contract that the CLI never
 // asks the model to think: even when pointed at an o-series model name
 // (formerly the only branch that set reasoning_effort=low), the outbound
@@ -444,7 +576,7 @@ func TestCommitCmd_BootstrapsGraph(t *testing.T) {
 	}
 
 	// The new commit must be reflected in the co-change index.
-	out, code := gitAgent(t, dir, "graph", "status", "--json")
+	out, code := gitAgent(t, dir, "graph", "status", "-o", "json")
 	if code != 0 {
 		t.Fatalf("graph status exit %d: %s", code, out)
 	}

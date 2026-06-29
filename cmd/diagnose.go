@@ -30,7 +30,7 @@ configured via git-agent.diagnose-model / diagnose-base-url / diagnose-api-key
 'git-agent config set diagnose-model <value>'. The LLM may reorder but never
 add candidates.`,
 	Args: cobra.ArbitraryArgs,
-	RunE: runDiagnose,
+	RunE: jsonAwareRunE(runDiagnose),
 }
 
 func runDiagnose(cmd *cobra.Command, args []string) error {
@@ -39,8 +39,6 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	useLLM, _ := cmd.Flags().GetBool("llm")
 	force, _ := cmd.Flags().GetBool("force")
 	topN, _ := cmd.Flags().GetInt("top")
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	symptom := strings.TrimSpace(strings.Join(args, " "))
 
 	gitClient := infraGit.NewClient()
@@ -88,7 +86,7 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(out, result)
 	}
 
@@ -139,8 +137,5 @@ func init() {
 	diagnoseCmd.Flags().Bool("llm", false, "re-rank the top candidates with the configured LLM")
 	diagnoseCmd.Flags().Bool("force", false, "proceed despite an Event Log chain integrity break")
 	diagnoseCmd.Flags().Int("top", 5, "number of candidates passed to the LLM re-rank")
-	diagnoseCmd.Flags().Bool("json", false, "emit the diagnosis result as JSON")
-	diagnoseCmd.Flags().Bool("text", false, "emit the diagnosis result as text")
-	diagnoseCmd.MarkFlagsMutuallyExclusive("json", "text")
-	graphCmd.AddCommand(diagnoseCmd)
+	auditCmd.AddCommand(diagnoseCmd)
 }

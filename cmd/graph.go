@@ -4,31 +4,35 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// graphCmd is the parent for every command that reads or audits the agent
-// Event Log and its derived indexes (co-change, AST). No graph read/audit
-// command lives at the top level — see CLAUDE.md "Command Surface Conventions".
+// graphCmd is the parent for read-only queries over the deterministic code
+// graph: the AST (structure) and the commit-history co-change index. Forensic
+// queries over the append-only agent Event Log live under `audit`, not here.
+// No graph read command lives at the top level — see CLAUDE.md "Command Surface
+// Conventions".
 var graphCmd = &cobra.Command{
 	Use:   "graph",
-	Short: "Query and audit the agent Event Log",
-	Long: `Query and audit the agent Event Log and its derived indexes (co-change,
-AST). The Event Log is the append-only, hash-chained record of every captured
-agent and human action; the graph indexes are its derived projections.
+	Short: "Query code structure and change-coupling (read-only, offline)",
+	Long: `Query the deterministic code graph: the AST (symbols and their call
+structure) and the commit-history co-change index (which files change together).
+Both are re-derivable from the current repository state; all queries are
+read-only, offline, and need no API key.
 
-Start from timeline for a broad view of recent action history, then drill in:
-  status, verify, index, sync — index health, chain integrity audit, build, and sync
-  timeline, impact         — action history and co-change / structural impact
-  diagnose, provenance     — regression tracing and file provenance
-  callers, callees, node   — AST call-graph traversal and symbol lookup
-  query, affected          — symbol search and test-files-affected tracing
+  search, symbol           — full-text symbol search and symbol lookup
+  callers, callees         — AST call-graph traversal (incoming / outgoing)
+  external-refs, affected  — external-package call sites and tests-affected
+  impact                   — co-change coupling for files
+  status                   — index health and row counts
+
+For forensic queries over the agent Event Log (action history, regression
+tracing, file provenance, chain-integrity audit) use ` + "`git-agent audit`" + `.
 
 Do not re-derive what the graph already holds: do not hand-walk git log to
-reconstruct history (timeline/provenance already did it), do not re-verify the
-chain after verify reports ok, and do not run index to check freshness
-(status reports the last indexed commit; sync brings projections up to date
-without a full replay when already current).
+reconstruct co-change, and do not run ` + "`graph index`" + ` to check freshness
+(status reports the last indexed commit; reads sync themselves).
 `,
 }
 
 func init() {
+	addOutputFlag(graphCmd, true)
 	rootCmd.AddCommand(graphCmd)
 }

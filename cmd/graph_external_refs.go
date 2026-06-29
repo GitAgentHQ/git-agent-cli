@@ -25,7 +25,7 @@ Group by external package; each entry shows the referencing symbol, the file
 and line, and the qualified reference name. Use this when ` + "`graph callers`" + `
 reports a symbol is "exported by external package".`,
 	Args: cobra.NoArgs,
-	RunE: runGraphExternalRefs,
+	RunE: jsonAwareRunE(runGraphExternalRefs),
 }
 
 type externalRefEntry struct {
@@ -37,9 +37,13 @@ type externalRefEntry struct {
 	Kind          string `json:"kind"`
 }
 
+// externalRefsResult is the JSON envelope for graph external-refs.
+type externalRefsResult struct {
+	Results []externalRefEntry `json:"results"`
+	Total   int                `json:"total"`
+}
+
 func runGraphExternalRefs(cmd *cobra.Command, _ []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
 
@@ -117,11 +121,8 @@ func runGraphExternalRefs(cmd *cobra.Command, _ []string) error {
 	})
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		return output.EncodeJSON(out, map[string]any{
-			"results": entries,
-			"total":   len(entries),
-		})
+	if outputFormat(cmd) == output.FormatJSON {
+		return output.EncodeJSON(out, externalRefsResult{Results: entries, Total: len(entries)})
 	}
 	renderExternalRefs(out, entries)
 	return nil
@@ -153,8 +154,5 @@ func trimQuote(s string) string {
 
 func init() {
 	graphExternalRefsCmd.Flags().Bool("reindex", false, "force a full AST re-index before listing")
-	graphExternalRefsCmd.Flags().Bool("json", false, "emit the results as JSON")
-	graphExternalRefsCmd.Flags().Bool("text", false, "emit the results as text")
-	graphExternalRefsCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphExternalRefsCmd)
 }

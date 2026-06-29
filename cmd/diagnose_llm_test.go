@@ -28,8 +28,6 @@ func newDiagnoseCmdForTest(t *testing.T) *cobra.Command {
 		{"llm", false},
 		{"force", false},
 		{"top", 5},
-		{"json", false},
-		{"text", false},
 	} {
 		switch d := f.def.(type) {
 		case bool:
@@ -129,15 +127,19 @@ func TestBuildDiagnoseReranker_ConfigKeyBuildsReranker(t *testing.T) {
 
 func TestDiagnoseFlagsRegistered(t *testing.T) {
 	// Sanity: the public diagnoseCmd exposes only behavioral flags — provider
-	// values come from config keys, not flags.
-	for _, flag := range []string{"file", "llm", "force", "top", "json", "text"} {
+	// values come from config keys, and output format is the shared -o/--output
+	// flag on the audit parent, not per-command --json/--text.
+	for _, flag := range []string{"file", "llm", "force", "top"} {
 		if diagnoseCmd.Flags().Lookup(flag) == nil {
 			t.Errorf("diagnoseCmd missing flag %q", flag)
 		}
 	}
-	for _, flag := range []string{"llm-model", "llm-base-url", "llm-api-key", "llm-timeout"} {
+	for _, flag := range []string{"json", "text", "llm-model", "llm-base-url", "llm-api-key", "llm-timeout"} {
 		if diagnoseCmd.Flags().Lookup(flag) != nil {
-			t.Errorf("diagnoseCmd must not expose removed flag %q (use a config key)", flag)
+			t.Errorf("diagnoseCmd must not expose removed flag %q", flag)
 		}
+	}
+	if auditCmd.PersistentFlags().Lookup("output") == nil {
+		t.Error("audit parent must expose the shared -o/--output flag")
 	}
 }

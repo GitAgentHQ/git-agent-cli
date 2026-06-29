@@ -14,11 +14,11 @@ var graphCallersCmd = &cobra.Command{
 	Use:   "callers <symbol>",
 	Short: "Show symbols that call or reference a symbol",
 	Long: `Find the AST nodes that call or reference the given symbol (incoming
-edges), traversed up to --depth. The inverse of ` + "`callees`" + `. Drills into
-the AST call graph that ` + "`impact --symbol`" + ` uses for its structural walk.
+edges), traversed up to --depth. The inverse of ` + "`callees`" + `. Raise --depth
+to widen the blast radius of changing the symbol (its transitive dependents).
 Read-only.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runGraphCallers,
+	RunE: jsonAwareRunE(runGraphCallers),
 }
 
 func runGraphCallers(cmd *cobra.Command, args []string) error {
@@ -29,22 +29,27 @@ var graphCalleesCmd = &cobra.Command{
 	Use:   "callees <symbol>",
 	Short: "Show symbols called or referenced by a symbol",
 	Long: `Find the AST nodes the given symbol calls or references (outgoing
-edges), traversed up to --depth. The inverse of ` + "`callers`" + `. Drills into
-the AST call graph that ` + "`impact --symbol`" + ` uses for its structural walk.
-Read-only.`,
+edges), traversed up to --depth. The inverse of ` + "`callers`" + `. Read-only.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runGraphCallees,
+	RunE: jsonAwareRunE(runGraphCallees),
 }
 
 func runGraphCallees(cmd *cobra.Command, args []string) error {
 	return runASTNeighbors(cmd, args[0], "callees")
 }
 
+// astNeighborsResult is the JSON envelope for callers/callees.
+type astNeighborsResult struct {
+	Symbol    string                 `json:"symbol"`
+	Direction string                 `json:"direction"`
+	Depth     int                    `json:"depth"`
+	Results   []graph.ASTImpactEntry `json:"results"`
+	Total     int                    `json:"total"`
+}
+
 // runASTNeighbors resolves symbol to its AST nodes and lists the incoming
 // (callers) or outgoing (callees) edges up to --depth.
 func runASTNeighbors(cmd *cobra.Command, symbol, direction string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	depth, _ := cmd.Flags().GetInt("depth")
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
@@ -81,13 +86,13 @@ func runASTNeighbors(cmd *cobra.Command, symbol, direction string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		return output.EncodeJSON(out, map[string]any{
-			"symbol":    symbol,
-			"direction": direction,
-			"depth":     depth,
-			"results":   entries,
-			"total":     len(entries),
+	if outputFormat(cmd) == output.FormatJSON {
+		return output.EncodeJSON(out, astNeighborsResult{
+			Symbol:    symbol,
+			Direction: direction,
+			Depth:     depth,
+			Results:   entries,
+			Total:     len(entries),
 		})
 	}
 	renderASTNeighbors(out, symbol, direction, entries)
@@ -114,9 +119,6 @@ func init() {
 	for _, c := range []*cobra.Command{graphCallersCmd, graphCalleesCmd} {
 		c.Flags().Int("depth", 1, "transitive traversal depth")
 		c.Flags().Bool("reindex", false, "force a full AST re-index before query")
-		c.Flags().Bool("json", false, "emit the result as JSON")
-		c.Flags().Bool("text", false, "emit the result as text")
-		c.MarkFlagsMutuallyExclusive("json", "text")
 		graphCmd.AddCommand(c)
 	}
 }

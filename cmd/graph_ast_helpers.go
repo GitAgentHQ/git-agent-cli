@@ -9,18 +9,27 @@ import (
 	"github.com/gitagenthq/git-agent/domain/graph"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
+	pkgerrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
 
 // openASTQuery opens the graph db, ensures the AST index is fresh, and returns
 // the repo root, AST repo, and db client (caller closes it). When symbol is
 // non-empty the index is ensured for that symbol; otherwise the whole index is
-// ensured (for graph query / node by name). root is returned so commands that
-// need to read working-tree files (graph node) can resolve repo-relative paths.
+// ensured (for graph search / symbol by name). root is returned so commands that
+// need to read working-tree files (graph symbol) can resolve repo-relative paths.
 func openASTQuery(ctx context.Context, symbol string, force bool, progress io.Writer) (string, graph.ASTRepository, *infraGraph.SQLiteClient, error) {
 	gitClient := infraGit.NewClient()
 	root, err := gitClient.RepoRoot(ctx)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("repo root: %w", err)
+	}
+	graphGit := infraGit.NewGraphClient(root)
+	// The AST index keys off the committed HEAD; a repo with no commits has
+	// nothing to index. Signal "graph not indexed" (exit 3) so an agent knows to
+	// run `git-agent init --graph` or make a commit, rather than reading an empty
+	// result as "no matches".
+	if _, headErr := graphGit.CurrentHead(ctx); headErr != nil {
+		return "", nil, nil, pkgerrors.ErrGraphNotIndexed
 	}
 	_, client, err := openGraphDB(ctx, root)
 	if err != nil {
@@ -28,7 +37,6 @@ func openASTQuery(ctx context.Context, symbol string, force bool, progress io.Wr
 	}
 	astRepo := infraGraph.NewSQLiteASTRepository(client)
 	stateRepo := infraGraph.NewSQLiteRepository(client)
-	graphGit := infraGit.NewGraphClient(root)
 	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, force, progress); err != nil {
 		client.Close()
 		return "", nil, nil, err

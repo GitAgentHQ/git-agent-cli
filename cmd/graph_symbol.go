@@ -12,20 +12,31 @@ import (
 	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
-var graphNodeCmd = &cobra.Command{
-	Use:   "node <name>",
+var graphSymbolCmd = &cobra.Command{
+	Use:   "symbol <name>",
 	Short: "Show a symbol's location, signature, and caller/callee trail",
 	Long: `Look up an AST symbol by name and print its kind, file, line range, and
 signature, plus the one-hop caller and callee trails. The symbol's source
-snippet is read from the working tree when available. Drills into the AST call
-graph that ` + "`impact --symbol`" + ` uses. Read-only.`,
+snippet is read from the working tree when available. Read-only.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runGraphNode,
+	RunE: jsonAwareRunE(runGraphSymbol),
 }
 
-func runGraphNode(cmd *cobra.Command, args []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
+// symbolView is one matched symbol with its source snippet and one-hop trails.
+type symbolView struct {
+	Node    graph.ASTNode          `json:"node"`
+	Source  string                 `json:"source,omitempty"`
+	Callers []graph.ASTImpactEntry `json:"callers"`
+	Callees []graph.ASTImpactEntry `json:"callees"`
+}
+
+// symbolResult is the JSON envelope for graph symbol (an object, not a bare
+// array, so sibling fields can be added without breaking the contract).
+type symbolResult struct {
+	Matches []symbolView `json:"matches"`
+}
+
+func runGraphSymbol(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
 	name := args[0]
@@ -44,23 +55,17 @@ func runGraphNode(cmd *cobra.Command, args []string) error {
 		return symbolNotFoundHint(ctx, astRepo, name, cmd.ErrOrStderr())
 	}
 
-	type nodeView struct {
-		Node    graph.ASTNode          `json:"node"`
-		Source  string                 `json:"source,omitempty"`
-		Callers []graph.ASTImpactEntry `json:"callers"`
-		Callees []graph.ASTImpactEntry `json:"callees"`
-	}
 	reader := newSourceReader(root)
-	views := make([]nodeView, 0, len(nodes))
+	views := make([]symbolView, 0, len(nodes))
 	for _, n := range nodes {
 		callers, _ := astRepo.GetCallers(ctx, n.ID, 1)
 		callees, _ := astRepo.GetCallees(ctx, n.ID, 1)
-		views = append(views, nodeView{Node: n, Source: reader.snippet(n), Callers: callers, Callees: callees})
+		views = append(views, symbolView{Node: n, Source: reader.snippet(n), Callers: callers, Callees: callees})
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		return output.EncodeJSON(out, views)
+	if outputFormat(cmd) == output.FormatJSON {
+		return output.EncodeJSON(out, symbolResult{Matches: views})
 	}
 	for i, v := range views {
 		if i > 0 {
@@ -126,9 +131,6 @@ func (s *sourceReader) snippet(n graph.ASTNode) string {
 }
 
 func init() {
-	graphNodeCmd.Flags().Bool("reindex", false, "force a full AST re-index before lookup")
-	graphNodeCmd.Flags().Bool("json", false, "emit the node view as JSON")
-	graphNodeCmd.Flags().Bool("text", false, "emit the node view as text")
-	graphNodeCmd.MarkFlagsMutuallyExclusive("json", "text")
-	graphCmd.AddCommand(graphNodeCmd)
+	graphSymbolCmd.Flags().Bool("reindex", false, "force a full AST re-index before lookup")
+	graphCmd.AddCommand(graphSymbolCmd)
 }

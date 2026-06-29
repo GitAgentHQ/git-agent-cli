@@ -10,20 +10,25 @@ import (
 	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
-var graphQueryCmd = &cobra.Command{
-	Use:   "query <search>",
-	Short: "Search AST symbols by name or FTS5 query",
+var graphSearchCmd = &cobra.Command{
+	Use:   "search <query>",
+	Short: "Search code symbols by name or FTS5 query",
 	Long: `Full-text search over indexed AST symbols (FTS5, bm25-ranked). Match by
 name, qualified name, or signature. Filter by --kind (function, method, type,
 etc.). The search substrate behind symbol lookups in ` + "`callers`" + ` / ` + "`callees`" + `
-/ ` + "`node`" + `. Read-only.`,
+/ ` + "`symbol`" + `. Read-only.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runGraphQuery,
+	RunE: jsonAwareRunE(runGraphSearch),
 }
 
-func runGraphQuery(cmd *cobra.Command, args []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
+// searchResult is the JSON envelope for graph search.
+type searchResult struct {
+	Query   string                  `json:"query"`
+	Results []graph.ASTSearchResult `json:"results"`
+	Total   int                     `json:"total"`
+}
+
+func runGraphSearch(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("reindex")
 	kind, _ := cmd.Flags().GetString("kind")
 	ctx := cmd.Context()
@@ -45,12 +50,8 @@ func runGraphQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		return output.EncodeJSON(out, map[string]any{
-			"query":   query,
-			"results": results,
-			"total":   len(results),
-		})
+	if outputFormat(cmd) == output.FormatJSON {
+		return output.EncodeJSON(out, searchResult{Query: query, Results: results, Total: len(results)})
 	}
 	renderSearchResults(out, query, results)
 	return nil
@@ -69,10 +70,7 @@ func renderSearchResults(out io.Writer, query string, results []graph.ASTSearchR
 }
 
 func init() {
-	graphQueryCmd.Flags().String("kind", "", "filter by node kind (e.g. function, method, type)")
-	graphQueryCmd.Flags().Bool("reindex", false, "force a full AST re-index before search")
-	graphQueryCmd.Flags().Bool("json", false, "emit the search results as JSON")
-	graphQueryCmd.Flags().Bool("text", false, "emit the search results as text")
-	graphQueryCmd.MarkFlagsMutuallyExclusive("json", "text")
-	graphCmd.AddCommand(graphQueryCmd)
+	graphSearchCmd.Flags().String("kind", "", "filter by node kind (e.g. function, method, type)")
+	graphSearchCmd.Flags().Bool("reindex", false, "force a full AST re-index before search")
+	graphCmd.AddCommand(graphSearchCmd)
 }

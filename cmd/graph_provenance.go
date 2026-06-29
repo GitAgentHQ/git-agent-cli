@@ -20,12 +20,10 @@ Event Log: every captured change (via event_files) merged with any out-of-band
 changes, folding in the file's pre-rename identities. Out-of-band rows (source
 "unknown") are flagged. Read-only.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runGraphProvenance,
+	RunE: jsonAwareRunE(runGraphProvenance),
 }
 
 func runGraphProvenance(cmd *cobra.Command, args []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	ctx := cmd.Context()
 	file := args[0]
 
@@ -54,7 +52,7 @@ func runGraphProvenance(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(out, view)
 	}
 
@@ -76,8 +74,5 @@ func runGraphProvenance(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	graphProvenanceCmd.Flags().Bool("json", false, "emit the provenance view as JSON")
-	graphProvenanceCmd.Flags().Bool("text", false, "emit the provenance view as text")
-	graphProvenanceCmd.MarkFlagsMutuallyExclusive("json", "text")
-	graphCmd.AddCommand(graphProvenanceCmd)
+	auditCmd.AddCommand(graphProvenanceCmd)
 }

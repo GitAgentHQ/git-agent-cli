@@ -37,7 +37,7 @@ func TestInitCmd_GraphFlag_BuildsAllThreeLayers(t *testing.T) {
 	}
 
 	// L2: commit-history + co-change populated.
-	status, code := gitAgent(t, dir, "graph", "status", "--json")
+	status, code := gitAgent(t, dir, "graph", "status", "-o", "json")
 	if code != 0 {
 		t.Fatalf("graph status: exit %d\noutput: %s", code, status)
 	}
@@ -49,7 +49,7 @@ func TestInitCmd_GraphFlag_BuildsAllThreeLayers(t *testing.T) {
 	}
 
 	// L1: AST index populated — callers of B must resolve to A.
-	callers, code := gitAgent(t, dir, "graph", "callers", "B", "--json")
+	callers, code := gitAgent(t, dir, "graph", "callers", "B", "-o", "json")
 	if code != 0 {
 		t.Fatalf("graph callers B: exit %d\noutput: %s", code, callers)
 	}

@@ -5,15 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-06-30
+
+### Changed (BREAKING)
+- **Command-surface refactor — clean break, no compatibility aliases.** The forensic Event Log commands moved out of `graph` into a new top-level `audit` namespace: `timeline`, `diagnose`, `provenance`, and `verify` are now `git-agent audit <cmd>` (e.g. `git-agent graph timeline` → `git-agent audit timeline`). `graph` now covers only deterministic code structure (AST) and change-coupling (co-change).
+- Renamed graph subcommands: `graph query` → `graph search`, `graph node` → `graph symbol`.
+- `graph impact` is co-change only: removed the `--symbol` and `--mode {structural,combined,cochange}` flags. For symbol-level structural blast radius use `graph callers <symbol> --depth N` instead.
+- Unified output flag: the per-command `--json` / `--text` pair is replaced by a single `-o, --output {auto,json,text}` flag on every read command (`auto` = JSON when stdout is piped, text on a TTY). `commit` and `version` also accept `-o` but default to `text`.
 
 ### Added
+- `commit -o json` structured output: a single object with `dry_run`, `commits[]` (each `{title, message, files, sha, hook_outcome}`), `committed_count`, and `final_sha`
+- Documented, authoritative exit-code taxonomy: `0` success, `1` general error, `2` hook blocked commit, `3` graph not indexed (a graph read before the index is built), `4` event-log chain integrity broken
 - `init --graph` flag: one-shot cold start that builds all three graph layers (commit-history co-change + Event-Log projections + AST index) without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`
-- Read-path auto-sync: `graph timeline`, `provenance`, and `diagnose` now call `SyncIfStale` before reading, so they reflect just-captured events without a manual `graph sync` (CQRS read-side projection refresh)
+- Read-path auto-sync: `audit timeline`, `audit provenance`, and `audit diagnose` now call `SyncIfStale` before reading, so they reflect just-captured events without a manual `graph sync` (CQRS read-side projection refresh)
 
 ### Changed
 - `graph index` and `graph sync` are now hidden from `--help` (building is automatic via `commit` + read-path auto-sync) but remain as compatibility aliases for scripts; `graph index` Long text corrected to state it does not build the commit-history co-change layer (use `init --graph` for a full build)
-- `graph timeline` consolidated onto the shared `openGraphDB` helper (removed inlined dir/gitignore/untrack/schema hygiene)
+- `audit timeline` consolidated onto the shared `openGraphDB` helper (removed inlined dir/gitignore/untrack/schema hygiene)
 
 ## [0.6.1] - 2026-06-28
 
@@ -213,7 +221,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.2.0...v0.3.0

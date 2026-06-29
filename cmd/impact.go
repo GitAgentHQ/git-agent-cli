@@ -20,20 +20,17 @@ import (
 
 var impactCmd = &cobra.Command{
 	Use:   "impact [path...]",
-	Short: "Show co-change or structural impact of a change",
+	Short: "Show co-change coupling for the given files",
 	Long: `Analyze co-change patterns to show which files are typically modified
 together with the given seeds. Seeds may be one or more files or directories;
 with no arguments, the current working-tree changes are used as seeds — "given
 what I've edited, what else usually changes?". Files coupled to several seeds
-rank highest. Auto-indexes git history on first run.
+rank highest. Auto-indexes git history on first run. Read-only.
 
-With --symbol <name>, query structural impact instead: --mode structural (the
-default for --symbol) returns the symbols that call or reference it; --mode
-combined also runs the co-change of the symbol's file; --mode cochange runs
-only that co-change. Without --symbol, --mode defaults to co-change over the
-seeds.`,
+For symbol-level structural blast radius (which symbols call a function), use
+` + "`git-agent graph callers <symbol> --depth N`" + ` instead.`,
 	Args: cobra.ArbitraryArgs,
-	RunE: runImpact,
+	RunE: jsonAwareRunE(runImpact),
 }
 
 func runImpact(cmd *cobra.Command, args []string) error {
@@ -41,10 +38,6 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	top, _ := cmd.Flags().GetInt("top")
 	minCount, _ := cmd.Flags().GetInt("min-count")
 	reindex, _ := cmd.Flags().GetBool("reindex")
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
-	symbol, _ := cmd.Flags().GetString("symbol")
-	mode, _ := cmd.Flags().GetString("mode")
 
 	ctx := cmd.Context()
 
@@ -56,31 +49,6 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
-	}
-
-	// Reject an unknown --mode up front so a typo can never silently fall through
-	// to the default co-change path (which would discard --symbol entirely).
-	switch mode {
-	case "", "structural", "combined", "cochange":
-	default:
-		return outputError(jsonFlag, textFlag, fmt.Errorf("invalid --mode %q: want structural, combined, or cochange", mode))
-	}
-
-	// Mode dispatch:
-	//   --symbol with no explicit --mode (or --mode structural) → AST only
-	//   --symbol with --mode combined → co-change of symbol's file + AST
-	//   --symbol with --mode cochange → co-change of symbol's file
-	//   --mode structural/combined without --symbol → error (need a symbol)
-	//   everything else → existing co-change behavior
-	switch {
-	case symbol != "" && (mode == "" || mode == "structural"):
-		return runASTImpact(cmd, ctx, root, symbol, depth, "structural", reindex, jsonFlag, textFlag)
-	case symbol != "" && mode == "combined":
-		return runASTImpact(cmd, ctx, root, symbol, depth, "combined", reindex, jsonFlag, textFlag)
-	case symbol != "" && mode == "cochange":
-		return runSymbolCoChangeImpact(cmd, ctx, root, symbol, depth, top, minCount, reindex, jsonFlag, textFlag)
-	case symbol == "" && (mode == "structural" || mode == "combined"):
-		return outputError(jsonFlag, textFlag, fmt.Errorf("--mode %s requires --symbol", mode))
 	}
 
 	graphGit := infraGit.NewGraphClient(root)
@@ -116,7 +84,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("index: %w", err)
 	}
 	if indexResult != nil && indexResult.NewCommits > 0 {
-		fmt.Fprintf(os.Stderr, "Indexed %d commits [%dms]\n", indexResult.NewCommits, indexResult.DurationMs)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Indexed %d commits [%dms]\n", indexResult.NewCommits, indexResult.DurationMs)
 	}
 
 	impactSvc := application.NewImpactService(repo)
@@ -127,116 +95,10 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		MinCount: minCount,
 	})
 	if err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-
-	return outputResult(cmd, result, jsonFlag, textFlag)
-}
-
-// runASTImpact handles --symbol / --mode structural|combined.
-func runASTImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth int, mode string, forceIndex, jsonFlag, textFlag bool) error {
-	dbPath, client, err := openGraphDB(ctx, root)
-	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	astRepo := infraGraph.NewSQLiteASTRepository(client)
-	stateRepo := infraGraph.NewSQLiteRepository(client)
-	graphGit := infraGit.NewGraphClient(root)
-
-	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-
-	impactSvc := application.NewASTImpactService(astRepo)
-	astResult, err := impactSvc.ImpactBySymbol(ctx, symbol, depth)
-	if err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-
-	// Combined mode: also run co-change for the seed symbol's file.
-	if mode == "combined" {
-		repo := infraGraph.NewSQLiteRepository(client)
-		coChangeResult, err := runCoChangeWithRepo(ctx, root, graph.ImpactRequest{
-			Paths: []string{astResult.SeedNode.FilePath},
-			Top:   10,
-		}, dbPath, repo)
-		if err != nil {
-			return outputError(jsonFlag, textFlag, err)
-		}
-		if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-			return outputCombinedJSON(cmd.OutOrStdout(), astResult, coChangeResult)
-		}
-		outputCombinedText(cmd.OutOrStdout(), astResult, coChangeResult)
-		return nil
-	}
-
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		return outputASTImpactJSON(cmd.OutOrStdout(), astResult)
-	}
-	outputASTImpactText(cmd.OutOrStdout(), astResult)
-	return nil
-}
-
-func runSymbolCoChangeImpact(cmd *cobra.Command, ctx context.Context, root, symbol string, depth, top, minCount int, forceIndex, jsonFlag, textFlag bool) error {
-	dbPath, client, err := openGraphDB(ctx, root)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	astRepo := infraGraph.NewSQLiteASTRepository(client)
-	stateRepo := infraGraph.NewSQLiteRepository(client)
-	graphGit := infraGit.NewGraphClient(root)
-	if err := ensureASTIndex(ctx, root, astRepo, stateRepo, graphGit, symbol, forceIndex, cmd.ErrOrStderr()); err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-
-	astResult, err := application.NewASTImpactService(astRepo).ImpactBySymbol(ctx, symbol, 1)
-	if err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-	result, err := runCoChangeWithRepo(ctx, root, graph.ImpactRequest{
-		Paths:    []string{astResult.SeedNode.FilePath},
-		Depth:    depth,
-		Top:      top,
-		MinCount: minCount,
-	}, dbPath, infraGraph.NewSQLiteRepository(client))
-	if err != nil {
-		return outputError(jsonFlag, textFlag, err)
-	}
-	return outputResult(cmd, result, jsonFlag, textFlag)
-}
-
-// runCoChangeForSymbol runs a co-change query for a symbol's resolved file path.
-func runCoChangeForSymbol(ctx context.Context, root string, req graph.ImpactRequest) (*graph.ImpactResult, error) {
-	dbPath, client, err := openGraphDB(ctx, root)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-	return runCoChangeWithRepo(ctx, root, req, dbPath, infraGraph.NewSQLiteRepository(client))
-}
-
-func runCoChangeWithRepo(ctx context.Context, root string, req graph.ImpactRequest, dbPath string, repo graph.GraphRepository) (*graph.ImpactResult, error) {
-	if len(req.Paths) == 0 || req.Paths[0] == "" {
-		return nil, fmt.Errorf("symbol file path is empty")
-	}
-
-	graphGit := infraGit.NewGraphClient(root)
-	indexSvc := application.NewIndexService(repo, graphGit)
-	ensureSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
-	if _, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{MaxFilesPerCommit: 50}); err != nil {
-		return nil, err
-	}
-
-	impactSvc := application.NewImpactService(repo)
-	result, err := impactSvc.Impact(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return outputResult(cmd, result)
 }
 
 func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteClient, error) {
@@ -271,7 +133,7 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 
 // ensureASTIndex brings the AST index up to date. When symbol is non-empty the
 // index is ensured for that symbol; otherwise the whole index is ensured for
-// unscoped queries (graph query, graph node by name).
+// unscoped queries (graph search, graph symbol by name).
 func ensureASTIndex(ctx context.Context, root string, astRepo graph.ASTRepository, stateRepo application.ASTIndexStateRepository, graphGit *infraGit.GraphClient, symbol string, force bool, progress io.Writer) error {
 	extractor := infraExtraction.NewTreeSitterExtractor("go", infraExtraction.GoExtractor())
 	return application.NewASTEnsureIndexService(astRepo, stateRepo, graphGit, extractor).
@@ -319,15 +181,8 @@ func resolveSeeds(ctx context.Context, args []string, root, cwd string, graphGit
 	return seeds, nil
 }
 
-func outputError(jsonFlag, textFlag bool, err error) error {
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
-		_ = output.EncodeJSON(os.Stdout, map[string]string{"error": err.Error()})
-	}
-	return err
-}
-
-func outputResult(cmd *cobra.Command, result *graph.ImpactResult, jsonFlag, textFlag bool) error {
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+func outputResult(cmd *cobra.Command, result *graph.ImpactResult) error {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 	return outputText(cmd, result)
@@ -439,109 +294,10 @@ func realPath(p string) string {
 	return filepath.Join(parent, base)
 }
 
-// outputASTImpactJSON renders the structural impact result as JSON.
-func outputASTImpactJSON(w io.Writer, result *graph.ASTImpactResult) error {
-	return output.EncodeJSON(w, result)
-}
-
-// outputASTImpactText renders the structural impact result as human-readable text.
-func outputASTImpactText(w io.Writer, result *graph.ASTImpactResult) {
-	fmt.Fprintf(w, "Structural impact of %s (%s):\n\n", result.SeedNode.Name, result.SeedNode.Kind)
-
-	if len(result.Impacted) == 0 {
-		fmt.Fprintln(w, "  (no callers or references found)")
-		fmt.Fprintf(w, "\n0 impacted symbols | query: %dms\n", result.QueryMs)
-		return
-	}
-
-	// Split production callers (first) from test callers (last) so signal is
-	// not buried under test noise. Entries keep their original order within
-	// each group.
-	var prod, tests []graph.ASTImpactEntry
-	for _, e := range result.Impacted {
-		if graph.IsTestFile(e.Node.FilePath) || isTestSymbol(e.Node.Name) {
-			tests = append(tests, e)
-		} else {
-			prod = append(prod, e)
-		}
-	}
-
-	renderImpactEntries(w, prod)
-	if len(tests) > 0 {
-		fmt.Fprintf(w, "\n  -- tests (%d) --\n", len(tests))
-		renderImpactEntries(w, tests)
-	}
-
-	fmt.Fprintf(w, "\n%d impacted symbols | query: %dms\n", result.TotalFound, result.QueryMs)
-}
-
-func renderImpactEntries(w io.Writer, entries []graph.ASTImpactEntry) {
-	if len(entries) == 0 {
-		return
-	}
-	maxLen := 0
-	for _, e := range entries {
-		if len(e.Node.Name) > maxLen {
-			maxLen = len(e.Node.Name)
-		}
-	}
-	for _, e := range entries {
-		padding := strings.Repeat(" ", maxLen-len(e.Node.Name)+2)
-		line := fmt.Sprintf("  %s%s%s  %s  d%d", e.Node.Name, padding, e.Node.Kind, e.Node.FilePath, e.Depth)
-		if e.Depth > 1 {
-			line += "  [indirect]"
-		}
-		fmt.Fprintln(w, line)
-	}
-}
-
-// isTestSymbol reports whether a symbol name looks like a Go test function/benchmark.
-func isTestSymbol(name string) bool {
-	return strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Example")
-}
-
 func init() {
 	impactCmd.Flags().Int("depth", 1, "transitive co-change depth")
 	impactCmd.Flags().Int("top", 20, "max results")
 	impactCmd.Flags().Int("min-count", 3, "minimum co-change count")
 	impactCmd.Flags().Bool("reindex", false, "force full re-index before query")
-	impactCmd.Flags().Bool("json", false, "force JSON output")
-	impactCmd.Flags().Bool("text", false, "force text output")
-	impactCmd.Flags().String("symbol", "", "query structural impact by Go symbol name (tree-sitter, Go only)")
-	impactCmd.Flags().String("mode", "", "impact mode: structural, combined, or cochange (default: cochange, or structural if --symbol given)")
-	impactCmd.MarkFlagsMutuallyExclusive("json", "text")
-
 	graphCmd.AddCommand(impactCmd)
-}
-
-// outputCombinedJSON renders both co-change and structural results as JSON.
-func outputCombinedJSON(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) error {
-	return output.EncodeJSON(w, map[string]any{
-		"mode":           "combined",
-		"structural":     astResult,
-		"co_change":      ccResult,
-		"seed_symbol":    astResult.SeedNode.Name,
-		"seed_file":      astResult.SeedNode.FilePath,
-		"struct_total":   astResult.TotalFound,
-		"cochange_total": ccResult.TotalFound,
-	})
-}
-
-// outputCombinedText renders both results in text format.
-func outputCombinedText(w io.Writer, astResult *graph.ASTImpactResult, ccResult *graph.ImpactResult) {
-	// Section 1: Structural impact
-	outputASTImpactText(w, astResult)
-
-	// Section 2: Co-change impact
-	fmt.Fprintf(w, "\n--- Co-change for %s ---\n", astResult.SeedNode.FilePath)
-	if len(ccResult.CoChanged) == 0 {
-		fmt.Fprintln(w, "  (no co-changed files found)")
-		return
-	}
-	for _, e := range ccResult.CoChanged {
-		pct := int(e.CouplingStrength * 100)
-		fmt.Fprintf(w, "  %-40s %3d%%  (%d co-changes)\n", e.Path, pct, e.CouplingCount)
-	}
-	fmt.Fprintf(w, "\n%d co-changed files | %d structural impacts\n",
-		ccResult.TotalFound, astResult.TotalFound)
 }

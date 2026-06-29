@@ -23,12 +23,10 @@ reads ` + "`git diff --name-only`" + ` from stdin; with no args and a TTY, uses 
 working-tree changes. The inverse question of ` + "`impact`" + `: given what I
 changed, which tests should I run? Read-only.`,
 	Args: cobra.ArbitraryArgs,
-	RunE: runGraphAffected,
+	RunE: jsonAwareRunE(runGraphAffected),
 }
 
 func runGraphAffected(cmd *cobra.Command, args []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	depth, _ := cmd.Flags().GetInt("depth")
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
@@ -53,7 +51,7 @@ func runGraphAffected(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(out, result)
 	}
 	renderAffected(out, result)
@@ -118,8 +116,5 @@ func renderAffected(out io.Writer, r *application.AffectedResult) {
 func init() {
 	graphAffectedCmd.Flags().Int("depth", 2, "transitive caller traversal depth")
 	graphAffectedCmd.Flags().Bool("reindex", false, "force a full AST re-index before tracing")
-	graphAffectedCmd.Flags().Bool("json", false, "emit the affected set as JSON")
-	graphAffectedCmd.Flags().Bool("text", false, "emit the affected set as text")
-	graphAffectedCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphAffectedCmd)
 }

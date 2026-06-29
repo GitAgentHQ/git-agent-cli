@@ -104,7 +104,13 @@ git-agent commit --intent "fix auth bug"      # provide a context hint to the LL
 git-agent commit --co-author "Name <email>"  # add a co-author trailer
 git-agent commit --trailer "Fixes: #123"     # add an arbitrary git trailer
 git-agent commit --no-attribution             # omit the default Git Agent trailer
+git-agent commit -o json                      # structured result (titles, SHAs, hook outcome)
 ```
+
+With `-o json`, commit prints a single object: `dry_run`, `commits[]` (each
+`{title, message, files, sha, hook_outcome}`), `committed_count`, and
+`final_sha`. `hook_outcome` is `passed` or `skipped`. Otherwise output is
+human-readable text.
 
 ### `git-agent config`
 
@@ -160,12 +166,14 @@ Print the build version.
 
 ### `git-agent graph`
 
-Query and audit the agent Event Log and its derived AST + co-change indexes.
-The AST index parses git-tracked Go files in your repo and records functions,
-methods, structs/interfaces, **struct fields**, type aliases, imports, calls,
-and field-read `references` edges. Offline (no LLM, no API key).
+Query the deterministic code graph: the AST index and the commit-history
+co-change index. The AST index parses git-tracked Go files in your repo and
+records functions, methods, structs/interfaces, **struct fields**, type aliases,
+imports, calls, and field-read `references` edges; co-change is derived from git
+history. Offline (no LLM, no API key). For forensic queries over the agent Event
+Log, see [`git-agent audit`](#git-agent-audit).
 
-**Symbol syntax** for `callers` / `callees` / `node` — accepts a bare name, a
+**Symbol syntax** for `callers` / `callees` / `symbol` — accepts a bare name, a
 receiver-qualified `Type.Method`, or a fully-qualified `file::Type.Method`:
 
 ```bash
@@ -173,30 +181,26 @@ git-agent graph callers Flag                  # all callers of any Flag method
 git-agent graph callers decoder.alias         # narrow to one receiver type
 git-agent graph callers "decode.go::decoder.alias"  # fully-qualified
 git-agent graph callers HideHelpCommand       # struct field reads surface here
-git-agent graph node Commit.Run               # signature + one-hop trails
+git-agent graph symbol Commit.Run             # signature + one-hop trails
 git-agent graph affected command.go           # tests exercising the file's symbols
-git-agent graph query --kind method Connect   # FTS5 symbol search
+git-agent graph search --kind method Connect  # FTS5 symbol search
 ```
 
 ```bash
 git-agent graph status        # index health + row counts
 git-agent init --graph        # one-shot full graph build (co-change + Event-Log + AST)
-git-agent graph verify        # Event Log chain integrity
-git-agent graph timeline      # action history (see below)
-git-agent graph impact        # co-change / structural impact (see below)
-git-agent graph callers       # symbols that call or reference a symbol
+git-agent graph impact        # co-change coupling for files (see below)
+git-agent graph callers       # symbols that call or reference a symbol (blast radius)
 git-agent graph callees       # symbols called or referenced by a symbol
-git-agent graph node          # a symbol's location, signature, caller/callee trail
-git-agent graph query         # FTS5 symbol search
+git-agent graph symbol        # a symbol's location, signature, caller/callee trail
+git-agent graph search        # FTS5 symbol search
 git-agent graph affected      # test files exercising the given files' symbols
-git-agent graph provenance    # rename-aware change history for a file
-git-agent graph diagnose      # trace a failing symptom to its introducing action
 git-agent graph external-refs # call/field sites reaching into external packages
 ```
 
 **External packages are not indexed.** The index only parses files in your
 repo, so symbols from imported packages (e.g. `github.com/spf13/pflag`) are
-never AST nodes. `callers`/`node` report this explicitly instead of failing
+never AST nodes. `callers`/`symbol` report this explicitly instead of failing
 with a bare "not found"; `graph external-refs` lists every call/field-read
 site that reaches into an external package:
 
@@ -207,11 +211,11 @@ git-agent graph callers pflag.Lookup
 # `git-agent graph external-refs` to list call sites into it
 
 git-agent graph external-refs            # all external-package reference sites
-git-agent graph external-refs --json
+git-agent graph external-refs -o json
 ```
 
-> **Build note:** AST commands (`callers`, `callees`, `node`, `query`,
-> `affected`, `impact --symbol`, `index`) require a tree-sitter build
+> **Build note:** AST commands (`callers`, `callees`, `symbol`, `search`,
+> `affected`, `index`) require a tree-sitter build
 > (`CGO_ENABLED=1 go build`). Release binaries are compiled with
 > `CGO_ENABLED=0` and stub these out; `external-refs` reads only unresolved
 > refs and works in either build. After upgrading the binary on a repo with an
@@ -227,12 +231,12 @@ once without `graph` (grep/Read only) and once with `graph` forensic commands.
 All six arms built and tested green; the graph did not flip any fail→pass. It
 **did** deliver measurable non-trivial value the no-graph arm lacked:
 
-- **Field disambiguation (cli):** `graph query Hide` returned empty (no such
-  field) while `graph query Hidden` returned the field node + its 19 readers
+- **Field disambiguation (cli):** `graph search Hide` returned empty (no such
+  field) while `graph search Hidden` returned the field node + its 19 readers
   via `graph callers Hidden`. A bare `grep Hide` matches three separate fields
   (`Hidden`, `HideHelp`, `HideHelpCommand`); the graph prevented a wrong-field
   accessor.
-- **Receiver disambiguation (yaml):** `graph node alias` showed both
+- **Receiver disambiguation (yaml):** `graph symbol alias` showed both
   `parser.alias` and `decoder.alias` source + signatures in one call,
   revealing that `decoder.alias` only dereferences already-parsed alias nodes
   — the real anchor-capture site is `parser.anchor`. Both arms landed on the
@@ -250,44 +254,53 @@ codebases where grep noise is high and receiver/field disambiguation matters.
 
 ### `git-agent graph impact`
 
-Find files or symbols likely to change alongside the given seeds. Three modes:
+Show the files that historically change together with the given seeds
+(co-change coupling). Seeds are file paths, a directory, or — with no
+arguments — your current working-tree changes. A file coupled to several seeds
+ranks highest. The first run auto-indexes git history; queries are offline (no
+LLM, no API key).
 
-| Mode | Trigger | What it returns |
-|------|---------|-----------------|
-| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
-| `structural` | `--symbol <name>` | AST symbols that call, are called by, or reference the seed symbol |
-| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
-
-With no arguments, seeds default to your current working-tree changes. The first run auto-indexes git history; queries are offline (no LLM, no API key).
+For symbol-level structural blast radius — which symbols call or reference a
+function — use `git-agent graph callers <symbol> --depth N` instead.
 
 ```bash
 git-agent graph impact                                     # "what else changes with my edits?"
 git-agent graph impact application/commit_service.go       # co-change from a specific file
 git-agent graph impact src/                                # co-change from a directory
-git-agent graph impact --symbol CommitService --json       # structural impact
-git-agent graph impact --symbol CommitService --mode combined  # both signals
+git-agent graph impact application/commit_service.go -o json
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--symbol` | | Query structural impact by symbol name |
-| `--mode` | `cochange` | Impact mode: `cochange`, `structural`, or `combined` |
 | `--depth` | 1 | Transitive co-change depth |
 | `--top` | 20 | Max results |
 | `--min-count` | 3 | Minimum co-change count to include |
 | `--reindex` | false | Force a full re-index before querying |
-| `--json` / `--text` | auto | Force output format (JSON when piped, text on a TTY) |
+| `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |
 
-### `git-agent graph timeline`
+### `git-agent audit`
+
+Query and audit the agent Event Log — the append-only, hash-chained record of
+every captured agent and human action. All queries are read-only and offline
+(no LLM, no API key).
+
+```bash
+git-agent audit timeline      # agent/human action history (start here)
+git-agent audit diagnose      # trace a regression to its introducing action
+git-agent audit provenance    # rename-aware change history for a file
+git-agent audit verify        # Event Log chain integrity (exits 4 on a break)
+```
+
+#### `git-agent audit timeline`
 
 Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
 
 ```bash
-git-agent graph timeline                        # all recorded actions
-git-agent graph timeline --since 2h             # last 2 hours
-git-agent graph timeline --file src/auth.go     # actions touching a file
-git-agent graph timeline --source claude-code   # filter by source
-git-agent graph timeline --json                 # JSON output
+git-agent audit timeline                        # all recorded actions
+git-agent audit timeline --since 2h             # last 2 hours
+git-agent audit timeline --file src/auth.go     # actions touching a file
+git-agent audit timeline --source claude-code   # filter by source
+git-agent audit timeline -o json                # JSON output
 ```
 
 | Flag | Default | Description |
@@ -296,7 +309,19 @@ git-agent graph timeline --json                 # JSON output
 | `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
 | `--file` | | Filter by file path |
 | `--top` | 50 | Max sessions to display |
-| `--json` / `--text` | auto | Force output format |
+| `-o`, `--output` | auto | Output format: `auto`, `json`, `text` |
+
+#### `git-agent audit diagnose`
+
+Trace a regression to the agent action that most likely introduced it: derives the suspect window between the last passing and first failing test outcome, expands the file set via co-change, and ranks the suspect actions. `--file <source>` seeds the relevant set (effectively required for candidates); `[symptom]` is optional context; `--llm` re-ranks the top candidates via the configured diagnose LLM. Exits 4 on an Event Log chain break unless `--force`.
+
+#### `git-agent audit provenance`
+
+Reconstruct a file's full, rename-aware change history from the Event Log: every captured change plus out-of-band edits, folding in pre-rename identities. Out-of-band rows are flagged. Usage: `git-agent audit provenance <file>`.
+
+#### `git-agent audit verify`
+
+Walk the hash-chained Event Log and verify it has not been tampered with (recomputes each event's hash, checks chain linkage and sequence continuity). Exits 4 on any integrity break.
 
 ## Configuration
 
@@ -366,6 +391,7 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | `--no-attribution` | Omit the default Git Agent co-author trailer |
 | `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no line limit; a byte cap always applies) |
 | `--max-diff-bytes` | Maximum diff bytes sent to the model (default: 0, falls back to the built-in ~384 KiB cap; pass a positive value to override) |
+| `-o`, `--output` | Output format: `text` (default), `json`, or `auto` (JSON when piped) |
 
 ### Global
 
@@ -384,6 +410,8 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | 0 | Success |
 | 1 | General error — no changes, API failure, missing config |
 | 2 | Hook blocked — pre-commit hook returned non-zero after retries |
+| 3 | Graph not indexed — a `graph` read ran before the index was built (run `git-agent init --graph`, or let the next `commit` build it) |
+| 4 | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
 
 ## Changelog
 

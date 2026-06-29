@@ -16,12 +16,10 @@ var graphStatusCmd = &cobra.Command{
 	Long: `Print a snapshot of the agent graph: whether the index exists, the last
 indexed commit, and row counts for commits, files, authors, co-change pairs,
 sessions, and actions. Read-only.`,
-	RunE: runGraphStatus,
+	RunE: jsonAwareRunE(runGraphStatus),
 }
 
 func runGraphStatus(cmd *cobra.Command, _ []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	ctx := cmd.Context()
 
 	gitClient := infraGit.NewClient()
@@ -43,7 +41,7 @@ func runGraphStatus(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(out, stats)
 	}
 
@@ -62,8 +60,5 @@ func runGraphStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
-	graphStatusCmd.Flags().Bool("json", false, "emit the graph stats as JSON")
-	graphStatusCmd.Flags().Bool("text", false, "emit the graph stats as text")
-	graphStatusCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphStatusCmd)
 }

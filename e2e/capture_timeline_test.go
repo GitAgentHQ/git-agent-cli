@@ -16,7 +16,7 @@ import (
 // Event exists, so diagnose reports zero candidates and exits 0.
 func TestDiagnose_EmptyLogReportsNoCandidates(t *testing.T) {
 	dir := newGitRepo(t)
-	stdout, stderr, code := gitAgentSeparated(t, dir, "graph", "diagnose", "test bug", "--text")
+	stdout, stderr, code := gitAgentSeparated(t, dir, "audit", "diagnose", "test bug", "-o", "text")
 	if code != 0 {
 		t.Fatalf("diagnose: exit code %d (want 0)\nstderr: %s", code, stderr)
 	}
@@ -26,8 +26,8 @@ func TestDiagnose_EmptyLogReportsNoCandidates(t *testing.T) {
 }
 
 // TestCapture_HiddenFromHelp locks the command visibility contract: capture
-// is an internal hook target and must stay hidden, while the graph read
-// commands (timeline, diagnose) are user-facing under the `graph` parent.
+// is an internal hook target and must stay hidden, while the forensic read
+// commands (timeline, diagnose) are user-facing under the `audit` parent.
 func TestCapture_HiddenFromHelp(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "--help")
@@ -40,20 +40,23 @@ func TestCapture_HiddenFromHelp(t *testing.T) {
 	if !strings.Contains(out, "graph") {
 		t.Errorf("graph parent missing from --help\noutput: %s", out)
 	}
-	// timeline and diagnose moved under `graph`; they must not appear at the
-	// top level, only under `git-agent graph --help`.
+	// timeline and diagnose moved under `audit`; they must not appear at the
+	// top level, only under `git-agent audit --help`.
 	if strings.Contains(out, "timeline") || strings.Contains(out, "diagnose") {
-		t.Errorf("timeline/diagnose must not appear at top-level --help (now under graph)\noutput: %s", out)
+		t.Errorf("timeline/diagnose must not appear at top-level --help (now under audit)\noutput: %s", out)
 	}
-	graphHelp, code := gitAgent(t, dir, "graph", "--help")
+	if !strings.Contains(out, "audit") {
+		t.Errorf("audit parent missing from --help\noutput: %s", out)
+	}
+	auditHelp, code := gitAgent(t, dir, "audit", "--help")
 	if code != 0 {
-		t.Fatalf("graph --help: exit code %d\noutput: %s", code, graphHelp)
+		t.Fatalf("audit --help: exit code %d\noutput: %s", code, auditHelp)
 	}
-	if !strings.Contains(graphHelp, "timeline") {
-		t.Errorf("timeline missing from graph --help\noutput: %s", graphHelp)
+	if !strings.Contains(auditHelp, "timeline") {
+		t.Errorf("timeline missing from audit --help\noutput: %s", auditHelp)
 	}
-	if !strings.Contains(graphHelp, "diagnose") {
-		t.Errorf("diagnose missing from graph --help\noutput: %s", graphHelp)
+	if !strings.Contains(auditHelp, "diagnose") {
+		t.Errorf("diagnose missing from audit --help\noutput: %s", auditHelp)
 	}
 }
 
@@ -127,7 +130,7 @@ func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 		t.Fatalf("graph index: exit %d\n%s", code, out)
 	}
 
-	out, code := gitAgent(t, dir, "graph", "status", "--json")
+	out, code := gitAgent(t, dir, "graph", "status", "-o", "json")
 	if code != 0 {
 		t.Fatalf("graph status: exit %d\n%s", code, out)
 	}
@@ -168,7 +171,7 @@ func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 		t.Fatalf("graph index: exit %d\n%s", code, out)
 	}
 
-	out, code := gitAgent(t, dir, "graph", "timeline", "--json")
+	out, code := gitAgent(t, dir, "audit", "timeline", "-o", "json")
 	if code != 0 {
 		t.Fatalf("timeline: exit %d\n%s", code, out)
 	}
@@ -246,7 +249,7 @@ func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 
 	// Relative path filter must match the captured row despite the payload's
 	// absolute file_path.
-	out, code := gitAgent(t, dir, "graph", "timeline", "--file", "src/a.go", "--json")
+	out, code := gitAgent(t, dir, "audit", "timeline", "--file", "src/a.go", "-o", "json")
 	if code != 0 {
 		t.Fatalf("timeline --file: exit %d\n%s", code, out)
 	}
@@ -259,7 +262,7 @@ func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 	}
 
 	// Provenance on the relative path must return the captured row.
-	out, code = gitAgent(t, dir, "graph", "provenance", "src/a.go", "--json")
+	out, code = gitAgent(t, dir, "audit", "provenance", "src/a.go", "-o", "json")
 	if code != 0 {
 		t.Fatalf("provenance: exit %d\n%s", code, out)
 	}

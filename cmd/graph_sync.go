@@ -23,12 +23,10 @@ fresh as it writes. Run ` + "`sync`" + ` only when you want to refresh without a
 e.g. before a scripted cold read. Read-only to the Event Log; mutates only the
 derived projection tables.`,
 	Hidden: true,
-	RunE:   runGraphSync,
+	RunE:   jsonAwareRunE(runGraphSync),
 }
 
 func runGraphSync(cmd *cobra.Command, _ []string) error {
-	jsonFlag, _ := cmd.Flags().GetBool("json")
-	textFlag, _ := cmd.Flags().GetBool("text")
 	ctx := cmd.Context()
 
 	gitClient := infraGit.NewClient()
@@ -52,7 +50,7 @@ func runGraphSync(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	if output.Decide(jsonFlag, textFlag) == output.FormatJSON {
+	if outputFormat(cmd) == output.FormatJSON {
 		return output.EncodeJSON(out, summary)
 	}
 	if summary.UpToDate {
@@ -65,8 +63,5 @@ func runGraphSync(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
-	graphSyncCmd.Flags().Bool("json", false, "emit the sync result as JSON")
-	graphSyncCmd.Flags().Bool("text", false, "emit the sync result as text")
-	graphSyncCmd.MarkFlagsMutuallyExclusive("json", "text")
 	graphCmd.AddCommand(graphSyncCmd)
 }

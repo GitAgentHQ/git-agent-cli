@@ -61,7 +61,7 @@ func newVerifyCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	cmd.Flags().Bool("json", false, "json output")
+	cmd.Flags().String("output", "auto", "output format")
 	return cmd
 }
 

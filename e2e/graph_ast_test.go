@@ -52,7 +52,7 @@ func TestValidate(t *testing.T) {
 
 func TestGraph_Callers(t *testing.T) {
 	dir := setupASTFixture(t)
-	out, code := gitAgent(t, dir, "graph", "callers", "validateData", "--text")
+	out, code := gitAgent(t, dir, "graph", "callers", "validateData", "-o", "text")
 	if code != 0 {
 		t.Fatalf("callers: exit %d\n%s", code, out)
 	}
@@ -66,7 +66,7 @@ func TestGraph_Callers(t *testing.T) {
 
 func TestGraph_Callees(t *testing.T) {
 	dir := setupASTFixture(t)
-	out, code := gitAgent(t, dir, "graph", "callees", "runHandler", "--text")
+	out, code := gitAgent(t, dir, "graph", "callees", "runHandler", "-o", "text")
 	if code != 0 {
 		t.Fatalf("callees: exit %d\n%s", code, out)
 	}
@@ -77,25 +77,27 @@ func TestGraph_Callees(t *testing.T) {
 
 func TestGraph_Node(t *testing.T) {
 	dir := setupASTFixture(t)
-	out, _, code := gitAgentSeparated(t, dir, "graph", "node", "validateData", "--json")
+	out, _, code := gitAgentSeparated(t, dir, "graph", "symbol", "validateData", "-o", "json")
 	if code != 0 {
 		t.Fatalf("node: exit %d\n%s", code, out)
 	}
-	var views []map[string]any
-	if err := json.Unmarshal([]byte(out), &views); err != nil {
-		t.Fatalf("node output not JSON: %v\n%s", err, out)
+	var res struct {
+		Matches []map[string]any `json:"matches"`
 	}
-	if len(views) == 0 {
-		t.Fatalf("node returned no views\n%s", out)
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("symbol output not JSON: %v\n%s", err, out)
 	}
-	if got, _ := views[0]["node"].(map[string]any); got["name"] != "validateData" {
-		t.Errorf("node name = %v, want validateData", got["name"])
+	if len(res.Matches) == 0 {
+		t.Fatalf("symbol returned no matches\n%s", out)
+	}
+	if got, _ := res.Matches[0]["node"].(map[string]any); got["name"] != "validateData" {
+		t.Errorf("symbol name = %v, want validateData", got["name"])
 	}
 }
 
 func TestGraph_Query(t *testing.T) {
 	dir := setupASTFixture(t)
-	out, _, code := gitAgentSeparated(t, dir, "graph", "query", "validate", "--json")
+	out, _, code := gitAgentSeparated(t, dir, "graph", "search", "validate", "-o", "json")
 	if code != 0 {
 		t.Fatalf("query: exit %d\n%s", code, out)
 	}
@@ -109,10 +111,36 @@ func TestGraph_Query(t *testing.T) {
 	}
 }
 
+// TestGraph_NotIndexedExitsThree locks the exit-3 contract: a graph AST read on
+// a repo with no commits (no index can exist yet) exits 3 and, in JSON mode,
+// emits a clean error envelope on stderr with an empty stdout.
+func TestGraph_NotIndexedExitsThree(t *testing.T) {
+	dir := newGitRepo(t) // git init only — no commit, so no committed HEAD to index
+	stdout, stderr, code := gitAgentSeparated(t, dir, "graph", "search", "Foo", "-o", "json")
+	if code != 3 {
+		t.Fatalf("graph search on a no-commit repo: exit %d (want 3)\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on error, got: %s", stdout)
+	}
+	var env struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+		t.Fatalf("stderr is not a JSON error envelope: %v\n%s", err, stderr)
+	}
+	if env.Error.Code != 3 {
+		t.Errorf("error.code = %d, want 3", env.Error.Code)
+	}
+}
+
 func TestGraph_Affected(t *testing.T) {
 	dir := setupASTFixture(t)
 	// validateData lives in handler.go; the test file handler_test.go calls it.
-	out, code := gitAgent(t, dir, "graph", "affected", "handler.go", "--text")
+	out, code := gitAgent(t, dir, "graph", "affected", "handler.go", "-o", "text")
 	if code != 0 {
 		t.Fatalf("affected: exit %d\n%s", code, out)
 	}
@@ -134,7 +162,7 @@ func TestGraph_Sync_NoOpWhenCurrent(t *testing.T) {
 	}
 
 	// Projections already reflect the latest event: sync is a no-op.
-	out, code := gitAgent(t, dir, "graph", "sync", "--json")
+	out, code := gitAgent(t, dir, "graph", "sync", "-o", "json")
 	if code != 0 {
 		t.Fatalf("sync: exit %d\n%s", code, out)
 	}
@@ -156,7 +184,7 @@ func TestGraph_Sync_ReplaysWhenStale(t *testing.T) {
 		t.Fatalf("capture: exit %d\n%s", code, out)
 	}
 	// No index yet: projections lag the Event Log, so sync must replay.
-	out, code := gitAgent(t, dir, "graph", "sync", "--json")
+	out, code := gitAgent(t, dir, "graph", "sync", "-o", "json")
 	if code != 0 {
 		t.Fatalf("sync: exit %d\n%s", code, out)
 	}
@@ -168,7 +196,7 @@ func TestGraph_Sync_ReplaysWhenStale(t *testing.T) {
 		t.Errorf("sync should not be up_to_date when projections lag\n%s", out)
 	}
 	// After sync, timeline reflects the captured action.
-	out, code = gitAgent(t, dir, "graph", "timeline", "--json")
+	out, code = gitAgent(t, dir, "audit", "timeline", "-o", "json")
 	if code != 0 {
 		t.Fatalf("timeline: exit %d\n%s", code, out)
 	}
