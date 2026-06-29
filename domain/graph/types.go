@@ -192,6 +192,6 @@ type ASTImpactEntry struct {
 
 // ASTSearchResult is a node found via symbol search.
 type ASTSearchResult struct {
-	Node  ASTNode
-	Score float64
+	Node  ASTNode `json:"node"`
+	Score float64 `json:"score"`
 }

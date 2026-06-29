@@ -113,19 +113,19 @@ const (
 
 // ChainBreak describes the first integrity violation in the Event Log.
 type ChainBreak struct {
-	Seq              int64
-	EventID          string
-	Kind             ChainBreakKind
-	ExpectedThisHash string
-	StoredThisHash   string
+	Seq              int64          `json:"seq"`
+	EventID          string         `json:"event_id"`
+	Kind             ChainBreakKind `json:"kind"`
+	ExpectedThisHash string         `json:"expected_this_hash"`
+	StoredThisHash   string         `json:"stored_this_hash"`
 }
 
 // VerifyResult is the outcome of walking and recomputing the Event chain.
 type VerifyResult struct {
-	Status         string // "ok" | "broken"
-	EventsTotal    int64
-	EventsVerified int64
-	FirstBreak     *ChainBreak
+	Status         string      `json:"status"` // "ok" | "broken"
+	EventsTotal    int64       `json:"events_total"`
+	EventsVerified int64       `json:"events_verified"`
+	FirstBreak     *ChainBreak `json:"first_break"`
 }
 
 // GenesisHash is the prev_hash of the first Event (seq 1): 64 hex zeros.

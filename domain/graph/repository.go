@@ -2,6 +2,13 @@ package graph
 
 import "context"
 
+// ProjectionHighWaterKey is the index_state key holding the highest Event Log
+// seq folded into the derived Projections. It is the staleness check's projected
+// high-water mark, stored explicitly because not every Event kind produces an
+// event_files row (Outcome Events touch no files), so the row count cannot stand
+// in for how far the Replay has progressed.
+const ProjectionHighWaterKey = "max_projected_event_seq"
+
 // GraphRepository defines all persistence operations for the code graph.
 type GraphRepository interface {
 	// Lifecycle
@@ -60,8 +67,9 @@ type GraphRepository interface {
 	HeadHash(ctx context.Context) (string, error)
 	// MaxEventSeq returns the highest seq in the Event Log (0 when empty).
 	MaxEventSeq(ctx context.Context) (int64, error)
-	// MaxProjectedEventSeq returns the highest event_seq reflected in the
-	// event_files projection (0 when empty). Equal to MaxEventSeq, the cold
+	// MaxProjectedEventSeq returns the highest Event Log seq folded into the
+	// derived Projections (0 when none), read from the explicit high-water mark
+	// (ProjectionHighWaterKey) the Replay records. Equal to MaxEventSeq, the cold
 	// path is current — the basis of sync's staleness check.
 	MaxProjectedEventSeq(ctx context.Context) (int64, error)
 	StreamEvents(ctx context.Context, sinceSeq int64) (EventCursor, error)
