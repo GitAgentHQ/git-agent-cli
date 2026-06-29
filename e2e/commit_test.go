@@ -391,3 +391,79 @@ func TestCommitCmd_AmendAndNoStage_MutuallyExclusive(t *testing.T) {
 		t.Fatalf("expected non-zero exit for --amend + --no-stage, got 0\noutput: %s", out)
 	}
 }
+
+// commitOneFile runs a real single-file commit through the fast LLM server. A
+// single staged file skips the planning round-trip, so the canned message
+// response suffices. configYML seeds .git-agent/config.yml (a scope
+// short-circuits auto-scope so the LLM is hit exactly once). It fails the test
+// if the commit does not succeed.
+func commitOneFile(t *testing.T, dir, serverURL, configYML string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"), configYML)
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", serverURL,
+		"--model", "test-model",
+		"--no-stage",
+		"--no-attribution",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+}
+
+// TestCommitCmd_BootstrapsGraph asserts commit is the git-first graph-generation
+// path: a commit in a repo with no graph bootstraps .git-agent/graph.db and
+// folds the new commit into the co-change index.
+func TestCommitCmd_BootstrapsGraph(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+	dir := newGitRepo(t)
+
+	graphDB := filepath.Join(dir, ".git-agent", "graph.db")
+	if _, err := os.Stat(graphDB); err == nil {
+		t.Fatal("precondition: graph.db should not exist before the first commit")
+	}
+
+	commitOneFile(t, dir, server.URL, "scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+
+	if _, err := os.Stat(graphDB); err != nil {
+		t.Fatalf("expected commit to bootstrap %s, but it is absent: %v", graphDB, err)
+	}
+
+	// The new commit must be reflected in the co-change index.
+	out, code := gitAgent(t, dir, "graph", "status", "--json")
+	if code != 0 {
+		t.Fatalf("graph status exit %d: %s", code, out)
+	}
+	if !strings.Contains(out, `"commit_count"`) || strings.Contains(out, `"commit_count": 0`) {
+		t.Errorf("expected commit_count > 0 after commit, got: %s", out)
+	}
+}
+
+// TestCommitCmd_GraphAutobuildOptOut asserts graph_autobuild=false keeps the
+// graph untouched: the commit still succeeds and no graph.db is created.
+func TestCommitCmd_GraphAutobuildOptOut(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+	dir := newGitRepo(t)
+
+	commitOneFile(t, dir, server.URL,
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\ngraph_autobuild: false\n")
+
+	if _, err := os.Stat(filepath.Join(dir, ".git-agent", "graph.db")); !os.IsNotExist(err) {
+		t.Errorf("graph_autobuild=false must not create graph.db; stat err = %v", err)
+	}
+}
