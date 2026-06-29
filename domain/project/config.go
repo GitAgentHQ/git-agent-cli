@@ -32,14 +32,15 @@ func (s *Scope) UnmarshalJSON(data []byte) error {
 // Config holds project-level configuration for git-agent.
 type Config struct {
 	Scopes               []Scope  `json:"scopes"`
-	Hooks                []string `json:"hooks"`                // ordered list: "conventional", file paths, etc. Empty = no validation.
-	MaxDiffLines         int      `json:"maxDiffLines"`         // 0 = no limit
-	MaxDiffBytes         int      `json:"maxDiffBytes"`         // 0 = built-in default cap
-	PlanFallback         string   `json:"planFallback"`         // PlanFallbackNone | PlanFallbackHeuristic; empty = none
-	NoGitAgentCoAuthor   bool     `json:"noGitAgentCoAuthor"`   // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor      bool     `json:"noModelCoAuthor"`      // When true, ignore all --co-author trailers
-	RequireModelCoAuthor bool     `json:"requireModelCoAuthor"` // When true, every commit must carry a Co-Authored-By from an AI-provider domain
-	ModelCoAuthorDomains []string `json:"modelCoAuthorDomains"` // Extra email domains accepted by the require check; appended to DefaultModelCoAuthorDomains
+	Hooks                []string `json:"hooks"`                    // ordered list: "conventional", file paths, etc. Empty = no validation.
+	MaxDiffLines         int      `json:"maxDiffLines"`             // 0 = no limit
+	MaxDiffBytes         int      `json:"maxDiffBytes"`             // 0 = built-in default cap
+	PlanFallback         string   `json:"planFallback"`             // PlanFallbackNone | PlanFallbackHeuristic; empty = none
+	NoGitAgentCoAuthor   bool     `json:"noGitAgentCoAuthor"`       // When true, omit the default Co-Authored-By: Git Agent trailer
+	NoModelCoAuthor      bool     `json:"noModelCoAuthor"`          // When true, ignore all --co-author trailers
+	RequireModelCoAuthor bool     `json:"requireModelCoAuthor"`     // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	ModelCoAuthorDomains []string `json:"modelCoAuthorDomains"`     // Extra email domains accepted by the require check; appended to DefaultModelCoAuthorDomains
+	GraphAutobuild       *bool    `json:"graphAutobuild,omitempty"` // nil = default on; commit bootstraps and maintains the code graph unless set false
 }
 
 // PlanFallback values accepted by Config.PlanFallback.
