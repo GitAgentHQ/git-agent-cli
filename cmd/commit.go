@@ -22,7 +22,18 @@ import (
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
+
+// commitJSONResult is the agent-facing envelope for `commit -o json`: the
+// per-commit results plus the aggregate fields an agent needs to verify the
+// outcome without parsing human text.
+type commitJSONResult struct {
+	DryRun         bool                             `json:"dry_run"`
+	Commits        []application.SingleCommitResult `json:"commits"`
+	CommittedCount int                              `json:"committed_count"`
+	FinalSHA       string                           `json:"final_sha,omitempty"`
+}
 
 // stderrIsTerminal reports whether os.Stderr is connected to an interactive
 // terminal. Agents, pipes, and CI runners get false and therefore receive no
@@ -227,29 +238,80 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		// cmd.Context().Err() too because net/http surfaces signal-driven
 		// cancellation as an opaque signal sentinel (not context.Canceled),
 		// so errors.Is alone misses the SIGINT case.
+		jsonOut := outputFormat(cmd) == output.FormatJSON
+		if jsonOut {
+			// We emit the JSON error envelope ourselves; stop cobra from also
+			// printing its "Error:" line so stderr stays valid JSON for agents.
+			cmd.SilenceErrors = true
+		}
 		if errors.Is(err, context.Canceled) || cmd.Context().Err() != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+			if jsonOut {
+				_ = output.EncodeError(cmd.ErrOrStderr(), 1, "cancelled")
+			} else {
+				fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+			}
 			return agentErrors.NewExitCodeError(1, "")
+		}
+		if jsonOut {
+			// Reuse RenderCommitError to classify the exit code, but discard its
+			// human text and emit the uniform JSON error envelope instead.
+			mapped := RenderCommitError(io.Discard, err)
+			code := 1
+			msg := mapped.Error()
+			var ece *agentErrors.ExitCodeError
+			if errors.As(mapped, &ece) {
+				code = ece.Code
+				if ece.Message != "" {
+					msg = ece.Message
+				}
+			}
+			// Planner timeout/budget map to an empty ExitCodeError message (their
+			// human text went to io.Discard); fall back to the underlying error so
+			// the JSON envelope is never blank.
+			if msg == "" {
+				msg = err.Error()
+			}
+			_ = output.EncodeError(cmd.ErrOrStderr(), code, msg)
+			return mapped
 		}
 		return RenderCommitError(cmd.ErrOrStderr(), err)
 	}
 
 	out := cmd.OutOrStdout()
 
-	if result.DryRun {
+	if outputFormat(cmd) == output.FormatJSON {
+		committedCount := 0
+		if !result.DryRun {
+			committedCount = len(result.Commits)
+		}
+		finalSHA := ""
+		if n := len(result.Commits); n > 0 {
+			finalSHA = result.Commits[n-1].SHA
+		}
+		if err := output.EncodeJSON(out, commitJSONResult{
+			DryRun:         result.DryRun,
+			Commits:        result.Commits,
+			CommittedCount: committedCount,
+			FinalSHA:       finalSHA,
+		}); err != nil {
+			return err
+		}
+		// Fall through: graph autobuild below is gated on !DryRun and writes only
+		// to a TTY/verbose stderr writer, so it never pollutes the JSON on stdout.
+	} else if result.DryRun {
 		for i, c := range result.Commits {
 			fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
 		}
 		return nil
-	}
-
-	for _, c := range result.Commits {
-		fmt.Fprintln(out)
-		if c.GitOutput != "" {
-			fmt.Fprintln(out, c.GitOutput)
-		}
-		if c.Explanation != "" {
-			fmt.Fprintln(out, c.Explanation)
+	} else {
+		for _, c := range result.Commits {
+			fmt.Fprintln(out)
+			if c.GitOutput != "" {
+				fmt.Fprintln(out, c.GitOutput)
+			}
+			if c.Explanation != "" {
+				fmt.Fprintln(out, c.Explanation)
+			}
 		}
 	}
 
@@ -393,6 +455,7 @@ func init() {
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
 	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
+	addOutputFlagWithDefault(commitCmd, false, "text")
 
 	rootCmd.AddCommand(commitCmd)
 }
