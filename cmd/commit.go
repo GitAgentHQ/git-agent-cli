@@ -13,6 +13,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/graph"
 	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
@@ -30,6 +31,12 @@ import (
 var stderrIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stderr.Fd()))
 }
+
+// commitGraphBackfillMaxCommits bounds the one-time co-change backfill the first
+// commit performs when bootstrapping the graph, so a deep history cannot turn
+// the first commit into a long index. Recency-weighting fades older commits, so
+// a bounded recent window carries nearly all the co-change signal anyway.
+const commitGraphBackfillMaxCommits = 1000
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
@@ -149,23 +156,30 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
 
-	// Wire graph-backed co-change hints and action linking only when an index
-	// already exists; commit never forces indexing.
+	// git-first graph generation: commit is the primary write path for the code
+	// graph. Before committing, engage an EXISTING graph only — no bootstrap, so
+	// nothing dirties the working tree being committed — to feed co-change hints
+	// into planning and link captured actions to the commit. The graph is
+	// bootstrapped and maintained AFTER the commit lands (see end of runCommit).
+	graphAutobuild := projCfg == nil || projCfg.GraphAutobuild == nil || *projCfg.GraphAutobuild
 	graphDBPath := infraGraph.DBPath(root)
-	if _, err := os.Stat(graphDBPath); err == nil {
+	var graphRepo *infraGraph.SQLiteRepository
+	var graphGit *infraGit.GraphClient
+	if _, statErr := os.Stat(graphDBPath); statErr == nil {
 		graphClient := infraGraph.NewSQLiteClient(graphDBPath)
-		graphRepo := infraGraph.NewSQLiteRepository(graphClient)
-		if err := graphRepo.Open(cmd.Context()); err == nil {
-			defer graphRepo.Close()
+		repo := infraGraph.NewSQLiteRepository(graphClient)
+		if err := repo.Open(cmd.Context()); err == nil {
+			defer repo.Close()
 			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
+				graphRepo = repo
+				graphGit = infraGit.NewGraphClient(root)
 				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
 				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
 				// Sync projections and reconcile out-of-band edits before committing
 				// so captured actions are linkable and unexplained changes are
 				// recorded. Best-effort: a cold-path failure must never block commit.
-				graphGit := infraGit.NewGraphClient(root)
-				if _, err := application.SyncEventLog(cmd.Context(), graphRepo, graphGit); err != nil && verbose {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: event log sync: %v\n", err)
+				if _, serr := application.SyncEventLog(cmd.Context(), graphRepo, graphGit); serr != nil && verbose {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: event log sync: %v\n", serr)
 				}
 			}
 		}
@@ -236,6 +250,43 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 		if c.Explanation != "" {
 			fmt.Fprintln(out, c.Explanation)
+		}
+	}
+
+	// git-first graph generation (continued): the commit(s) have landed and the
+	// output is printed, so now bootstrap the graph if none existed and fold the
+	// new commit into the co-change index — the graph grows as a byproduct of
+	// committing, never needing a separate manual `graph index`. Running here,
+	// after the commit, keeps the gitignore/dir bootstrap from dirtying the
+	// committed tree. Disabled by graph_autobuild=false. Strictly best-effort:
+	// the commit is already done, so failures only surface under --verbose.
+	if graphAutobuild && !result.DryRun {
+		if graphRepo == nil {
+			// First-time bootstrap does a one-time, bounded history backfill that
+			// can take a moment. Announce it (only on a TTY / --verbose, like the
+			// other commit phase lines) so the user isn't left at a silent prompt
+			// after the commit hash already printed. Subsequent commits index
+			// incrementally and print nothing.
+			if outWriter != nil {
+				fmt.Fprintln(outWriter, "Building code graph (first run)...")
+			}
+			if _, graphClient, err := openGraphDB(cmd.Context(), root); err == nil {
+				defer graphClient.Close()
+				graphRepo = infraGraph.NewSQLiteRepository(graphClient)
+				graphGit = infraGit.NewGraphClient(root)
+			} else if verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph bootstrap: %v\n", err)
+			}
+		}
+		if graphRepo != nil {
+			idxSvc := application.NewIndexService(graphRepo, graphGit)
+			ensure := application.NewEnsureIndexService(idxSvc, graphRepo, graphGit, graphDBPath)
+			if _, err := ensure.EnsureIndex(cmd.Context(), graph.IndexRequest{
+				MaxCommits:        commitGraphBackfillMaxCommits,
+				MaxFilesPerCommit: 50,
+			}); err != nil && verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph co-change update: %v\n", err)
+			}
 		}
 	}
 
