@@ -65,6 +65,7 @@ type rawProjectConfig struct {
 	NoModelCoAuthor      *bool      `yaml:"no_model_co_author,omitempty"`
 	RequireModelCoAuthor *bool      `yaml:"require_model_co_author,omitempty"`
 	ModelCoAuthorDomains []string   `yaml:"model_co_author_domains,omitempty"`
+	GraphAutobuild       *bool      `yaml:"graph_autobuild,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {
@@ -136,11 +137,14 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if len(local.ModelCoAuthorDomains) > 0 {
 		merged.ModelCoAuthorDomains = local.ModelCoAuthorDomains
 	}
+	if local.GraphAutobuild != nil {
+		merged.GraphAutobuild = local.GraphAutobuild
+	}
 
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
 		merged.MaxDiffBytes == nil && merged.PlanFallback == "" && merged.NoGitAgentCoAuthor == nil &&
 		merged.NoModelCoAuthor == nil && merged.RequireModelCoAuthor == nil &&
-		len(merged.ModelCoAuthorDomains) == 0 {
+		len(merged.ModelCoAuthorDomains) == 0 && merged.GraphAutobuild == nil {
 		return nil
 	}
 
@@ -171,6 +175,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 	if len(merged.ModelCoAuthorDomains) > 0 {
 		cfg.ModelCoAuthorDomains = append([]string(nil), merged.ModelCoAuthorDomains...)
+	}
+	if merged.GraphAutobuild != nil {
+		cfg.GraphAutobuild = merged.GraphAutobuild
 	}
 	return cfg
 }

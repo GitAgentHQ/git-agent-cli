@@ -42,6 +42,7 @@ var KeyRegistry = map[string]KeyDef{
 	"no_model_co_author":      {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_model_co_author": {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"model_co_author_domains": {Name: "model_co_author_domains", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"graph_autobuild":         {Name: "graph_autobuild", Type: "bool", AllowProject: true, AllowLocal: true},
 }
 
 // KeyAliases maps kebab-case flag names to their canonical snake_case registry keys.
@@ -61,6 +62,7 @@ var KeyAliases = map[string]string{
 	"no-model-co-author":      "no_model_co_author",
 	"require-model-co-author": "require_model_co_author",
 	"model-co-author-domains": "model_co_author_domains",
+	"graph-autobuild":         "graph_autobuild",
 }
 
 // coerceForWrite converts a raw string value into the right Go type for the
