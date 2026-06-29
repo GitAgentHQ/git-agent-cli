@@ -9,6 +9,7 @@ import (
 
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
 var configSetCmd = &cobra.Command{
@@ -30,7 +31,7 @@ var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Show the resolved value of a configuration key",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runConfigGet,
+	RunE:  jsonAwareRunE(runConfigGet),
 }
 
 func runConfigSet(cmd *cobra.Command, args []string) error {
@@ -151,11 +152,19 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if outputFormat(cmd) == output.FormatJSON {
+		m := map[string]any{"key": key, "set": scope != ""}
+		if scope != "" {
+			m["value"] = value
+			m["scope"] = scope
+		}
+		return output.EncodeJSON(cmd.OutOrStdout(), m)
+	}
+
 	if scope == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s is not set\n", key)
 		return nil
 	}
-
 	fmt.Fprintf(cmd.OutOrStdout(), "%s = %s  (from %s)\n", key, value, scope)
 	return nil
 }
@@ -168,7 +177,7 @@ var configCmd = &cobra.Command{
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show resolved provider configuration",
-	RunE:  runConfigShow,
+	RunE:  jsonAwareRunE(runConfigShow),
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
@@ -177,11 +186,24 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	if infraConfig.BuildAPIKey != "" && cfg.APIKey == infraConfig.BuildAPIKey {
+	free := infraConfig.BuildAPIKey != "" && cfg.APIKey == infraConfig.BuildAPIKey
+
+	if outputFormat(cmd) == output.FormatJSON {
+		if free {
+			return output.EncodeJSON(cmd.OutOrStdout(), map[string]any{"mode": "free"})
+		}
+		return output.EncodeJSON(cmd.OutOrStdout(), map[string]any{
+			"mode":     "configured",
+			"api_key":  maskAPIKey(cfg.APIKey),
+			"model":    cfg.Model,
+			"base_url": cfg.BaseURL,
+		})
+	}
+
+	if free {
 		fmt.Fprintln(cmd.OutOrStdout(), "mode: FREE (using built-in credentials)")
 		return nil
 	}
-
 	fmt.Fprintf(cmd.OutOrStdout(), "api_key:  %s\n", maskAPIKey(cfg.APIKey))
 	fmt.Fprintf(cmd.OutOrStdout(), "model:    %s\n", cfg.Model)
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url: %s\n", cfg.BaseURL)
@@ -204,6 +226,9 @@ func init() {
 	configSetCmd.Flags().Bool("local", false, "write to local scope (.git-agent/config.local.yml)")
 
 	configSetCmd.MarkFlagsMutuallyExclusive("user", "project", "local")
+
+	addOutputFlagWithDefault(configShowCmd, false, "text")
+	addOutputFlagWithDefault(configGetCmd, false, "text")
 
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
