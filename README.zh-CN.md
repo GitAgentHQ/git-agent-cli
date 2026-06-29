@@ -178,8 +178,7 @@ git-agent graph query --kind method Connect   # FTS5 符号搜索
 
 ```bash
 git-agent graph status        # 索引健康度 + 行数
-git-agent graph index         # 构建/刷新所有派生索引
-git-agent graph sync          # 增量重放新事件到投影
+git-agent init --graph        # 一次性全量建图（共变 + Event-Log + AST）
 git-agent graph verify        # Event Log 链完整性
 git-agent graph timeline      # 操作历史（见下）
 git-agent graph impact        # 共变 / structural 影响（见下）
@@ -213,8 +212,8 @@ git-agent graph external-refs --json
 > （`CGO_ENABLED=1 go build`）。发布二进制以 `CGO_ENABLED=0` 编译并禁用这些
 > 命令；`external-refs` 只读取未解析引用，两种构建下均可使用。在已有
 > `.git-agent/graph.db` 的仓库升级二进制后，运行一次
-> `git-agent graph index --reindex`，让旧 DB 补上结构体字段节点与
-> receiver 解析后的调用边。
+> `git-agent init --graph`（全量重建三层）——或 `git-agent graph index --reindex`
+> （仅 AST）——让旧 DB 补上结构体字段节点与 receiver 解析后的调用边。
 
 #### `graph` 能否帮助模型开发功能？
 

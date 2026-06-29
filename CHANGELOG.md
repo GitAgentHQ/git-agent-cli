@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `init --graph` flag: one-shot cold start that builds all three graph layers (commit-history co-change + Event-Log projections + AST index) without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`
+- Read-path auto-sync: `graph timeline`, `provenance`, and `diagnose` now call `SyncIfStale` before reading, so they reflect just-captured events without a manual `graph sync` (CQRS read-side projection refresh)
+
+### Changed
+- `graph index` and `graph sync` are now hidden from `--help` (building is automatic via `commit` + read-path auto-sync) but remain as compatibility aliases for scripts; `graph index` Long text corrected to state it does not build the commit-history co-change layer (use `init --graph` for a full build)
+- `graph timeline` consolidated onto the shared `openGraphDB` helper (removed inlined dir/gitignore/untrack/schema hygiene)
+
 ## [0.6.1] - 2026-06-28
 
 ### Added

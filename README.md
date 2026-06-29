@@ -180,8 +180,7 @@ git-agent graph query --kind method Connect   # FTS5 symbol search
 
 ```bash
 git-agent graph status        # index health + row counts
-git-agent graph index         # build/refresh all derived indexes
-git-agent graph sync          # incrementally replay new events into projections
+git-agent init --graph        # one-shot full graph build (co-change + Event-Log + AST)
 git-agent graph verify        # Event Log chain integrity
 git-agent graph timeline      # action history (see below)
 git-agent graph impact        # co-change / structural impact (see below)
@@ -216,8 +215,9 @@ git-agent graph external-refs --json
 > (`CGO_ENABLED=1 go build`). Release binaries are compiled with
 > `CGO_ENABLED=0` and stub these out; `external-refs` reads only unresolved
 > refs and works in either build. After upgrading the binary on a repo with an
-> existing `.git-agent/graph.db`, run `git-agent graph index --reindex` once to
-> pick up struct-field nodes and receiver-resolved call edges on the old DB.
+> existing `.git-agent/graph.db`, run `git-agent init --graph` (full rebuild of
+> all three layers) — or `git-agent graph index --reindex` (AST-only) — to pick
+> up struct-field nodes and receiver-resolved call edges on the old DB.
 
 #### Does `graph` help a model develop features?
 
