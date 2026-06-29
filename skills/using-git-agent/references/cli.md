@@ -375,39 +375,50 @@ check seq continuity. Read-only. **Exits 4** on any integrity break.
 `Status` (`ok`/`broken`), `EventsTotal`, `EventsVerified`, `FirstBreak`
 (`{Kind, Seq, EventID, ExpectedThisHash, StoredThisHash}` — null when clean).
 
-## git-agent graph index
+## git-agent init --graph
+
+```
+git-agent init --graph
+```
+
+One-shot cold start that builds ALL three graph layers in a single pass — no
+LLLM needed:
+1. Commit-history + co-change index (L2): `EnsureIndex` with Force reads git
+   history and recomputes `co_changed` — the layer `graph index` never built.
+2. Event-Log projections (L3): `SyncEventLog` replays the Event Log into
+   sessions/actions/event_files, reconciling out-of-band working-tree changes.
+3. AST index (L1): a full symbol/call-graph index (the index `graph impact
+   --symbol` / `callers` / `callees` / `node` / `query` / `affected` read);
+   skipped on a repo with no commits yet.
+
+This is opt-in: the default `init` wizard does NOT build the graph. The graph
+builds automatically instead — the first `git-agent commit` bootstraps and
+maintains it (via `graph_autobuild`), and every graph read syncs projections
+before reading. Run `init --graph` only for an explicit full cold start.
+
+## git-agent graph index (hidden alias)
 
 ```
 git-agent graph index [--reindex]
 ```
 
-Build (or refresh) every derived index — the codegraph `index` analogue:
-1. Verify the hash-chained Event Log, then rebuild the event-log projections
-   (sessions, actions, event_files, co-change) by replaying it, reconciling
-   unexplained working-tree changes into out-of-band Events, and replaying
-   again when any were appended.
-2. Ensure the AST index is fresh against the current working tree (the
-   symbol/call-graph index that `graph impact --symbol` / `callers` / `callees`
-   / `node` / `query` / `affected` read). `--reindex` forces a full AST re-index.
+Hidden from `--help`. Rebuilds the Event-Log projections (sessions, actions,
+event_files) and ensures the AST index (`--reindex` forces a full AST re-index).
+It does NOT rebuild the commit-history co-change layer. For a full build of all
+three layers, use `git-agent init --graph`. Kept as a compatibility alias for
+scripts; building is otherwise automatic.
 
-Mutates only derived tables; the append-only Event Log is never touched. No
-`--json` flag (status line only). Use `graph sync` for a no-op-when-current
-refresh of just the event-log projections.
-
-## git-agent graph sync
+## git-agent graph sync (hidden alias)
 
 ```
 git-agent graph sync [--json|--text]
 ```
 
-Bring the derived projections up to date with the Event Log. A no-op when the
-projections already reflect the latest event seq (`max_projected_seq >=
-max_event_seq`); otherwise INCREMENTALLY replays only the new events (no reset —
-appends to existing projections) and reconciles unexplained working-tree
-changes, folding any out-of-band Events appended. Use `sync` for the common
-refresh; use `index` to force a full reset-and-rebuild. The incremental fold
-reuses the same state machine as `index`, so `sync` produces projections
-byte-identical to `index` over the same Event Log.
+Hidden from `--help`. Brings the Event-Log projections up to date by
+incrementally replaying only the new events (no-op when already current;
+`max_projected_seq >= max_event_seq`). This is now automatic — every graph read
+(timeline/provenance/diagnose/impact) syncs before reading, and `commit` keeps
+projections fresh. Kept as a compatibility alias for scripted cold reads.
 
 ### Fields
 
@@ -549,7 +560,8 @@ failure markers (`--- FAIL`, `PASS`, `ok`/`FAIL` lines) and promotes the Event
 to `Kind: "outcome"` with the test name and pass/fail. Without Outcome Events
 there is no green/red boundary, so diagnose returns no candidates. To use
 diagnose: capture the agent's test-run actions (the PostToolUse hook does this
-automatically for Bash), then `graph index`, then `graph diagnose`.
+automatically for Bash), then `graph diagnose` (projections auto-sync before
+the read; no separate `graph index`/`sync` needed).
 
 ### Flags
 

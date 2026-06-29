@@ -23,10 +23,11 @@ Reach for git-agent at these moments. Each situation maps to one command:
 | A test/regression broke — find the agent action that introduced it | `git-agent graph diagnose [symptom] --file <source>` |
 | "What did the agent (or a human) change recently" / audit a session | `git-agent graph timeline` (`--file`/`--source`/`--since`) |
 | Full history of one file, rename-aware, with out-of-band edits flagged | `git-agent graph provenance <file>` |
-| Graph queries return nothing or look stale | `git-agent graph status` → `git-agent graph sync` (or `git-agent graph index` for a full rebuild) |
+| Symbol is exported by an external package — where does this repo call into it | `git-agent graph external-refs` |
+| Graph queries return nothing or look stale | `git-agent graph status` (reads auto-sync; if a full rebuild is needed, `git-agent init --graph`) |
 | Suspect the Event Log was tampered with | `git-agent graph verify` |
 | Ready to commit staged changes | `git-agent commit --intent "..."` |
-| New repo, or no scopes configured | `git-agent init` |
+| New repo, or no scopes configured | `git-agent init` (add `--graph` to also build the code graph now) |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
 If the situation isn't listed, run `git-agent --help` or `git-agent graph --help`.
@@ -216,8 +217,7 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | `git-agent graph provenance <file>` | Rename-aware change history for one file: every captured change plus out-of-band changes, folding in pre-rename identities |
 | `git-agent graph status` | Show graph index health and row counts (commits, files, authors, co-change pairs, sessions, actions) |
 | `git-agent graph verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
-| `git-agent graph index` | Build/refresh all derived indexes: replay the Event Log into projections (sessions, actions, co-change) and ensure the AST index. `--reindex` forces a full AST re-index |
-| `git-agent graph sync` | Bring projections up to date with the Event Log (no-op when already current; otherwise incrementally replays only the new events) |
+| `git-agent graph external-refs` | List every call/field site where this repo reaches into an external (non-indexed) package. The answer `callers`/`query` cannot give — they only walk the resolved AST edge graph |
 | `git-agent graph callers <symbol>` | AST nodes that call or reference a symbol (incoming edges), up to `--depth` |
 | `git-agent graph callees <symbol>` | AST nodes a symbol calls or references (outgoing edges), up to `--depth` |
 | `git-agent graph node <name>` | Symbols matching the name: each one's location, signature, source snippet, and one-hop caller/callee trail. Returns an array (one entry per match) |
@@ -225,6 +225,7 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | `git-agent graph affected [files...]` | Test files transitively affected by changes to the given files (stdin: `git diff --name-only`) |
 | `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
+| `git-agent init --graph` | One-shot cold start: build the full code graph (commit-history co-change + Event-Log projections + AST index). No LLM needed. Otherwise the first `commit` builds it automatically |
 | `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
 | `git-agent init --scope` | Regenerate scopes only |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
