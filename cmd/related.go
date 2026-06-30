@@ -133,6 +133,24 @@ func filterToTests(result *graph.ImpactResult) {
 	result.TotalFound = len(kept)
 }
 
+// openGraphDBConn opens an existing graph database, validates its version, and
+// runs schema migrations. It does not touch gitignore or the working tree.
+func openGraphDBConn(ctx context.Context, dbPath string) (*infraGraph.SQLiteClient, error) {
+	client := infraGraph.NewSQLiteClient(dbPath)
+	if err := client.Open(ctx); err != nil {
+		return nil, fmt.Errorf("open graph db: %w", err)
+	}
+	if err := client.ValidateSchemaVersion(ctx); err != nil {
+		client.Close()
+		return nil, err
+	}
+	if err := client.InitSchema(ctx); err != nil {
+		client.Close()
+		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	return client, nil
+}
+
 func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteClient, error) {
 	dbPath := infraGraph.DBPath(root)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -148,17 +166,9 @@ func openGraphDB(ctx context.Context, root string) (string, *infraGraph.SQLiteCl
 	if _, err := ensureGraphDBUntracked(ctx, infraGit.NewClient(), root); err != nil {
 		return "", nil, err
 	}
-	client := infraGraph.NewSQLiteClient(dbPath)
-	if err := client.Open(ctx); err != nil {
-		return "", nil, fmt.Errorf("open graph db: %w", err)
-	}
-	if err := client.ValidateSchemaVersion(ctx); err != nil {
-		client.Close()
+	client, err := openGraphDBConn(ctx, dbPath)
+	if err != nil {
 		return "", nil, err
-	}
-	if err := client.InitSchema(ctx); err != nil {
-		client.Close()
-		return "", nil, fmt.Errorf("init schema: %w", err)
 	}
 	return dbPath, client, nil
 }

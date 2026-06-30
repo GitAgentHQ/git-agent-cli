@@ -177,15 +177,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	var graphRepo *infraGraph.SQLiteRepository
 	var graphGit *infraGit.GraphClient
 	if _, statErr := os.Stat(graphDBPath); statErr == nil {
-		graphClient := infraGraph.NewSQLiteClient(graphDBPath)
-		repo := infraGraph.NewSQLiteRepository(graphClient)
-		if err := repo.Open(cmd.Context()); err == nil {
-			defer repo.Close()
-			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
-				graphRepo = repo
-				graphGit = infraGit.NewGraphClient(root)
-				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
-			}
+		if graphClient, err := openGraphDBConn(cmd.Context(), graphDBPath); err == nil {
+			defer graphClient.Close()
+			graphRepo = infraGraph.NewSQLiteRepository(graphClient)
+			graphGit = infraGit.NewGraphClient(root)
+			svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
 		}
 	}
 
