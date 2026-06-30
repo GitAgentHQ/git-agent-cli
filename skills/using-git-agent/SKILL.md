@@ -1,6 +1,6 @@
 ---
 name: using-git-agent
-description: Operates the git-agent CLI — atomic AI commits plus co-change relations for agents, all-language, offline, no API key. Use it whenever the user wants to commit or set up git-agent; when you are about to modify a feature and need the files that historically move with it, with the commits that explain the coupling (related); when deciding which tests to run after a change (related --tests); when checking the co-change index health (status); when a test broke and you want to trace the action that introduced it (audit diagnose); or when you need action history (audit timeline) or a file's rename-aware provenance (audit provenance). All related, status, and audit queries are read-only and offline (no LLM, no API key); only commit and init --scope need a provider.
+description: Operates the git-agent CLI — atomic AI commits plus co-change relations for agents, all-language, offline, no API key. Use it whenever the user wants to commit or set up git-agent; when you are about to modify a feature and need the files that historically move with it, with the commits that explain the coupling (related); when deciding which tests to run after a change (related --tests); or when checking the co-change index health (status). All related and status queries are read-only and offline (no LLM, no API key); only commit and init --scope need a provider.
 ---
 
 # Git Agent CLI
@@ -17,19 +17,14 @@ Reach for git-agent at these moments. Each situation maps to one command:
 |---|---|
 | About to start multi-file work / modify a feature — find what else changes | `git-agent related [files...]` |
 | Deciding which tests to run after a change | `git-agent related <files...> --tests` |
-| A test/regression broke — find the agent action that introduced it | `git-agent audit diagnose [symptom] --file <source>` |
-| "What did the agent (or a human) change recently" / audit a session | `git-agent audit timeline` (`--file`/`--source`/`--since`) |
-| Full history of one file, rename-aware, with out-of-band edits flagged | `git-agent audit provenance <file>` |
 | Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; if a full rebuild is needed, `git-agent init --graph`) |
-| Suspect the Event Log was tampered with | `git-agent audit verify` |
 | Ready to commit staged changes | `git-agent commit --intent "..."` |
 | New repo, or no scopes configured | `git-agent init` (add `--graph` to also build the code graph now) |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
-If the situation isn't listed, run `git-agent --help` or
-`git-agent audit --help`. Every `related`, `status`, and `audit` query is
-read-only and offline (no LLM, no API key); only `commit` and `init --scope`
-need a provider.
+If the situation isn't listed, run `git-agent --help`. Every `related` and
+`status` query is read-only and offline (no LLM, no API key); only `commit`
+and `init --scope` need a provider.
 
 ## Find related files before changing a feature
 
@@ -204,7 +199,7 @@ Hook exit codes (the hook script's own contract): `0` = allow, non-zero = block.
 | `1` | General error (no API key, git error, no changes, etc.) |
 | `2` | Commit blocked by a hook after retries |
 | `3` | Retired / unused — formerly "graph not indexed"; no longer emitted (co-change reads auto-index on first run) |
-| `4` | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
+| `4` | Retired / unused — formerly "Event Log chain integrity"; the Event Log subsystem has been removed and this code is no longer emitted |
 
 ## Commit format
 
@@ -229,15 +224,9 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | Command | What it does |
 |---|---|
 | `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json` |
-| `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, sessions, actions, last indexed commit, db size) |
-| `git-agent audit timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
-| `git-agent audit diagnose [symptom] --file <source>` | Trace a failing symptom to the agent action that most likely introduced it (suspect window + co-change + ranking). `--file <source>` seeds the relevant file set (effectively required for candidates); `[symptom]` is optional context. Add `--llm` to re-rank candidates via the configured diagnose LLM |
-| `git-agent audit provenance <file>` | Rename-aware change history for one file: every captured change plus out-of-band changes, folding in pre-rename identities |
-| `git-agent audit verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
-| `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
+| `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, last indexed commit, db size) |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
-| `git-agent init --graph` | One-shot cold start: build the full code graph (commit-history co-change + Event-Log projections). No LLM needed. Otherwise the first `commit` builds it automatically |
-| `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
+| `git-agent init --graph` | One-shot cold start: build the code graph (commit-history co-change). No LLM needed. Otherwise the first `commit` builds it automatically |
 | `git-agent init --scope` | Regenerate scopes only |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |

@@ -39,7 +39,7 @@ git-agent uses a typed exit-code taxonomy across all commands:
 | `1` | General error (no API key, git error, no changes, etc.) |
 | `2` | Commit blocked by a hook after retries |
 | `3` | Retired / unused (co-change reads auto-index on first run) |
-| `4` | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
+| `4` | Retired / unused — formerly "Event Log chain integrity"; the Event Log subsystem has been removed |
 
 ---
 
@@ -51,7 +51,7 @@ Every read command takes a single `-o, --output` flag:
 -o, --output {auto,json,text}
 ```
 
-- `auto` (the default for `related`, `status`, and `audit` reads): JSON when stdout is piped, text on a TTY.
+- `auto` (the default for `related` and `status` reads): JSON when stdout is piped, text on a TTY.
 - `json`: force machine-readable JSON.
 - `text`: force human-readable text.
 
@@ -400,140 +400,14 @@ indexed by the first `related`), `commit_count`, `file_count`,
 git-agent init --graph
 ```
 
-One-shot cold start that builds both graph layers in a single pass — no LLM
-needed:
-1. Commit-history + co-change index: `EnsureIndex` with Force reads git history
-   and recomputes `co_changed` (the data `related` reads).
-2. Event-Log projections: `SyncEventLog` replays the Event Log into
-   sessions/actions/event_files, reconciling out-of-band working-tree changes.
+One-shot cold start that builds the code graph in a single pass — no LLM
+needed: `EnsureIndex` with Force reads git history and recomputes `co_changed`
+(the data `related` reads).
 
 This is opt-in: the default `init` wizard does NOT build the graph. The graph
 builds automatically instead — the first `git-agent commit` bootstraps and
-maintains it (via `graph_autobuild`), and every read syncs projections before
+maintains it (via `graph_autobuild`), and every read syncs the index before
 reading. Run `init --graph` only for an explicit full cold start.
-
----
-
-## git-agent audit
-
-```
-git-agent audit [command]
-```
-
-Query and audit the agent Event Log: the append-only, hash-chained record of
-every captured agent and human action. All queries are read-only, offline, and
-need no API key.
-
-| Subcommand | Purpose |
-|---|---|
-| `timeline` | Agent and human action history (start here) |
-| `diagnose [symptom]` | Trace a regression to the action that introduced it |
-| `provenance <file>` | Rename-aware change history for one file |
-| `verify` | Check the Event Log hash chain for tampering (exits 4 on break) |
-
-For co-change relations over the current code (which files historically change
-together) use `git-agent related`.
-
----
-
-## git-agent audit timeline
-
-```
-git-agent audit timeline [--file <path>] [--source <src>] [--since <2h|7d|RFC3339>] [--top N] [-o <format>]
-```
-
-Show recent agent/human action history grouped into sessions, with the tool and
-files for each action. Populated by `git-agent capture` (see below). Offline.
-
-## git-agent audit diagnose
-
-```
-git-agent audit diagnose [symptom] [--file <source>] [--llm] [--top N] [--force] [-o <format>]
-```
-
-Trace a regression to the agent action that most likely introduced it. Verifies
-the Event Log, derives the Suspect Window between the last passing and first
-failing test **Outcome Event**, expands the relevant file set via co-change
-`related`, then ranks the suspect Events deterministically. Each Candidate
-carries before/after File Blob Refs so the introducing diff can be
-reconstructed. Exits 4 on a chain integrity break unless `--force`.
-
-`--file <source>` seeds the relevant file set and is **effectively required**
-for candidates — without it the suspect window has no file set to expand and
-diagnose returns no candidates even when the green/red boundary is found.
-`[symptom]` (a test name) is optional context. `--llm` re-ranks the top-N
-candidates via the `git-agent.diagnose-*` config keys (model, base-url,
-api-key, timeout — each falling back to the main provider); it reorders but
-never adds candidates. Set them with `git-agent config set diagnose-model
-<value>`.
-
-### How Outcome Events are created
-
-diagnose depends on **Outcome Events** in the Event Log marking test pass/fail.
-These are created when `capture` records a Bash action whose `tool_response`
-contains `go test` output — `capture` parses the response for an exit code and
-failure markers (`--- FAIL`, `PASS`, `ok`/`FAIL` lines) and promotes the Event
-to `Kind: "outcome"` with the test name and pass/fail. Without Outcome Events
-there is no green/red boundary, so diagnose returns no candidates. To use
-diagnose: capture the agent's test-run actions (the PostToolUse hook does this
-automatically for Bash), then `audit diagnose` (projections auto-sync before
-the read; no separate index step needed).
-
-### Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--file <source>` | | Seed source file(s) for the relevant set (repeatable). Effectively required for candidates |
-| `--llm` | false | Re-rank the top-N candidates with the configured diagnose LLM |
-| `--top N` | 5 | Number of candidates passed to the LLM re-rank |
-| `--force` | false | Proceed despite an Event Log chain integrity break |
-| `-o, --output` | auto | Output format: `auto`, `json`, or `text` |
-
-## git-agent audit provenance
-
-```
-git-agent audit provenance <file> [-o <format>]
-```
-
-Reconstruct a file's full, rename-aware chronological history from the Event
-Log. `ResolveRenames` folds in the file's pre-rename identities, then a single
-ordered read over `event_files` covers both observed and out-of-band changes.
-Out-of-band rows (source `unknown` — content no captured action explains) are
-flagged. Read-only.
-
-### Fields
-
-`File`, `Rows[]`: `{Seq, When, Who, Tool, BeforeBlob, AfterBlob, ChangeKind,
-LinkedCommit, OutOfBand}`.
-
-## git-agent audit verify
-
-```
-git-agent audit verify [-o <format>]
-```
-
-Walk the hash-chained Event Log and verify it has not been tampered with:
-recompute each event's `this_hash`, follow the genesis `prev_hash` linkage, and
-check seq continuity. Read-only. **Exits 4** on any integrity break.
-
-### Fields
-
-`Status` (`ok`/`broken`), `EventsTotal`, `EventsVerified`, `FirstBreak`
-(`{Kind, Seq, EventID, ExpectedThisHash, StoredThisHash}` — null when clean).
-
----
-
-## git-agent capture (hidden)
-
-```
-git-agent capture --source <src> [--tool <T>] [--instance-id <id>] [--message <m>] [--end-session]
-```
-
-Record one agent action (the working-tree delta since the last capture) into the
-graph. Designed to run as a Claude Code `PostToolUse` hook — `init --agent-hook`
-installs it — and reads `tool_name`/`session_id` from the hook's stdin payload.
-Fast (<200ms), no LLM, never blocks the agent on failure. Tooling directories
-are excluded from recorded actions.
 
 ---
 

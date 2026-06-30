@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (BREAKING)
+- **Agent Event Log subsystem removed.** The append-only, hash-chained action log and all of its forensic machinery are gone — the graph is now a single data source (git commit-history co-change) and the LLM serves only `commit`/`init --scope`. Deleted the `audit` command tree (`timeline`/`diagnose`/`provenance`/`verify`), the hidden `capture` command, the `--agent-hook` PostToolUse installer, the CQRS projection/replay path, the out-of-band reconcile service, the SHA-256 hash chain, the `diagnose` LLM re-ranker, and the `redact` package (~4,100 lines).
+- **Exit code 4 retired.** It was "Event Log chain integrity"; with no Event Log to verify, it is no longer emitted. Codes 3 and 4 are both now retired.
+- **Schema bumped to v4.** The `events`/`event_files`/`sessions`/`actions`/`action_modifies`/`action_produces` tables are dropped on open (idempotent), so existing v3 databases shed them without a full rebuild.
+- **`git-agent status`** no longer reports `sessions`/`actions` counts (those tables no longer exist); it shows commits, files, authors, co-change pairs, last indexed commit, and db size.
+- **`git-agent init --graph`** builds the commit-history co-change index only (the L3 Event-Log projection step is gone). The `--agent-hook` flag is removed.
+- **`git-agent commit`** no longer syncs the Event Log or links captured actions to the commit (there is no Event Log); the co-change hint provider and post-commit autobuild are unchanged.
+
 ## [0.7.0] - 2026-06-30
 
 ### Changed (BREAKING)

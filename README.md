@@ -55,7 +55,6 @@ git-agent init --gitignore              # generate .gitignore only
 git-agent init --hook conventional      # install conventional commit validator
 git-agent init --hook empty             # install empty placeholder hook
 git-agent init --hook /path/to/script   # install a custom hook script
-git-agent init --agent-hook             # install capture hook for Claude Code PostToolUse
 git-agent init --force                  # overwrite existing config/hook/.gitignore
 git-agent init --max-commits 50         # limit commits analyzed for scope generation
 git-agent init --local --scope          # write scopes to .git-agent/config.local.yml
@@ -66,7 +65,6 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 | `--scope` | Generate scopes via AI |
 | `--gitignore` | Generate `.gitignore` via AI |
 | `--hook` | Hook to configure: `conventional`, `empty`, or a file path (repeatable) |
-| `--agent-hook` | Install a `PostToolUse` capture hook for Claude Code |
 | `--force` | Overwrite existing config/.gitignore |
 | `--max-commits` | Max commits to analyze for scope generation (default: 200) |
 | `--local` | Write config to `.git-agent/config.local.yml` (requires an action flag) |
@@ -75,14 +73,14 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 #### `.git-agent/graph.db` is never tracked
 
 The graph database (`.git-agent/graph.db`) is generated at runtime by `commit`,
-`capture`, `timeline`, `related`, and `status` commands. It must never be committed — if it
-is, every run re-modifies it and produces a stream of `chore: update graph
-database file` commits (the "infinite recreation" loop).
+`related`, and `status` commands. It must never be committed — if it is, every
+run re-modifies it and produces a stream of `chore: update graph database file`
+commits (the "infinite recreation" loop).
 
 git-agent defends this invariant automatically, with no `init` required:
 
 - **`git-agent init`** writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal` and `.git-agent/config.local.yml`) into the committed `.gitignore`, and runs `git rm --cached` on any already-tracked `graph.db` so the rule can take effect.
-- **Runtime defence**: every command that opens the graph DB (`capture`, `timeline`, `related`, `status`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
+- **Runtime defence**: every command that opens the graph DB (`commit`, `related`, `status`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
 
 Verify when in doubt:
 
@@ -178,8 +176,7 @@ for *why* the two files are coupled. Use `--tests` to keep only related test
 files, a fast "which tests should I run after this change?".
 
 Language-agnostic (it reads git history, not source parsing), offline (no LLM,
-no API key), and auto-indexed on first run. For forensic queries over the agent
-Event Log, see [`git-agent audit`](#git-agent-audit).
+no API key), and auto-indexed on first run.
 
 ```bash
 git-agent related                                        # "what else changes with my edits?"
@@ -201,59 +198,14 @@ git-agent related application/commit_service.go -o json  # adds the linking `com
 ### `git-agent status`
 
 Report code-graph index health and row counts: commits, files, authors,
-co-change pairs, sessions, actions, the last indexed commit, and database size.
-Auto-syncs projections before reading. Offline (no LLM, no API key).
+co-change pairs, the last indexed commit, and database size. Offline (no LLM,
+no API key).
 
 ```bash
 git-agent status              # index health + row counts
 git-agent status -o json      # structured output
-git-agent init --graph        # one-shot cold build (commit-history co-change + Event-Log projections)
+git-agent init --graph        # one-shot cold build (commit-history co-change)
 ```
-
-### `git-agent audit`
-
-Query and audit the agent Event Log — the append-only, hash-chained record of
-every captured agent and human action. All queries are read-only and offline
-(no LLM, no API key).
-
-```bash
-git-agent audit timeline      # agent/human action history (start here)
-git-agent audit diagnose      # trace a regression to its introducing action
-git-agent audit provenance    # rename-aware change history for a file
-git-agent audit verify        # Event Log chain integrity (exits 4 on a break)
-```
-
-#### `git-agent audit timeline`
-
-Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
-
-```bash
-git-agent audit timeline                        # all recorded actions
-git-agent audit timeline --since 2h             # last 2 hours
-git-agent audit timeline --file src/auth.go     # actions touching a file
-git-agent audit timeline --source claude-code   # filter by source
-git-agent audit timeline -o json                # JSON output
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--since` | | Time window: `2h`, `7d`, or RFC 3339 timestamp |
-| `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
-| `--file` | | Filter by file path |
-| `--top` | 50 | Max sessions to display |
-| `-o`, `--output` | auto | Output format: `auto`, `json`, `text` |
-
-#### `git-agent audit diagnose`
-
-Trace a regression to the agent action that most likely introduced it: derives the suspect window between the last passing and first failing test outcome, expands the file set via co-change, and ranks the suspect actions. `--file <source>` seeds the relevant set (effectively required for candidates); `[symptom]` is optional context; `--llm` re-ranks the top candidates via the configured diagnose LLM. Exits 4 on an Event Log chain break unless `--force`.
-
-#### `git-agent audit provenance`
-
-Reconstruct a file's full, rename-aware change history from the Event Log: every captured change plus out-of-band edits, folding in pre-rename identities. Out-of-band rows are flagged. Usage: `git-agent audit provenance <file>`.
-
-#### `git-agent audit verify`
-
-Walk the hash-chained Event Log and verify it has not been tampered with (recomputes each event's hash, checks chain linkage and sequence continuity). Exits 4 on any integrity break.
 
 ## Configuration
 
@@ -343,7 +295,7 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | 1 | General error — no changes, API failure, missing config |
 | 2 | Hook blocked — pre-commit hook returned non-zero after retries |
 | 3 | Retired/unused (no longer emitted) |
-| 4 | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
+| 4 | Retired/unused — formerly Event Log chain integrity; the Event Log subsystem has been removed (no longer emitted) |
 
 ## Changelog
 

@@ -1,10 +1,10 @@
 Feature: Commit Generates the Graph (git-first)
 
   `git-agent commit` is the primary write path for the code graph, not just a
-  reader of it. Each commit grows git history (the co-change substrate) and links
-  the agent actions that produced it, so the graph is generated as a byproduct of
-  the operations a user already runs — never requiring a separate manual
-  `graph index`. This reverses the earlier "commit never forces indexing" stance.
+  reader of it. Each commit grows git history (the co-change substrate), so the
+  graph is generated as a byproduct of the operations a user already runs —
+  never requiring a separate manual `graph index`. This reverses the earlier
+  "commit never forces indexing" stance.
 
   Generation is strictly best-effort: it runs AFTER the commit is created and a
   failure must never block, fail, or slow the commit itself. It is on by default
@@ -17,7 +17,6 @@ Feature: Commit Generates the Graph (git-first)
     When a commit is created
     Then the graph database is created
     And the co-change index reflects the repository history including the new commit
-    And action-to-commit provenance is linked for any captured actions
 
   Scenario: Subsequent commit updates the graph incrementally
     Given a repository whose graph is already built up to the previous commit
