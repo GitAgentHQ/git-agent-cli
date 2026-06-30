@@ -8,20 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-06-30
 
 ### Changed (BREAKING)
-- **Command-surface refactor — clean break, no compatibility aliases.** The forensic Event Log commands moved out of `graph` into a new top-level `audit` namespace: `timeline`, `diagnose`, `provenance`, and `verify` are now `git-agent audit <cmd>` (e.g. `git-agent graph timeline` → `git-agent audit timeline`). `graph` now covers only deterministic code structure (AST) and change-coupling (co-change).
-- Renamed graph subcommands: `graph query` → `graph search`, `graph node` → `graph symbol`.
-- `graph impact` is co-change only: removed the `--symbol` and `--mode {structural,combined,cochange}` flags. For symbol-level structural blast radius use `graph callers <symbol> --depth N` instead.
-- Unified output flag: the per-command `--json` / `--text` pair is replaced by a single `-o, --output {auto,json,text}` flag on every read command (`auto` = JSON when stdout is piped, text on a TTY). `commit` and `version` also accept `-o` but default to `text`.
+- **Co-change-only graph — all AST/static-analysis machinery removed.** The graph is now built purely from git co-change history: language-agnostic, offline, no API key, no cgo. Deleted the AST extractors, symbol index, reference resolver, and every AST-backed read (~3,000 lines).
+- **Command-surface refactor — clean break, no compatibility aliases.** The whole `graph` namespace and the `impact` family are removed and replaced:
+  - `git-agent impact <files…>` → top-level **`git-agent related <files…>`** — the co-change query, enriched with the commits that prove each coupling (subject + sha + date); `--tests` narrows to related test files.
+  - `git-agent graph status` → top-level **`git-agent status`** — index health + row counts.
+  - The forensic Event Log commands move under a new **`audit`** parent: `git-agent graph {timeline,diagnose,provenance,verify}` → `git-agent audit {timeline,diagnose,provenance,verify}`.
+  - Removed with no replacement: `graph index`, `graph sync`, `graph query`, `graph node`, `graph callers`, `graph callees`, `graph external-refs`, `graph affected`, and `graph impact`. Graph building is automatic (via `commit` / `init --graph` and read-path auto-sync), so there are no manual index/sync commands.
+- **Unified output flag.** The per-command `--json` / `--text` pair is replaced by a single `-o, --output {auto,json,text}` flag on every read command (`auto` = JSON when stdout is piped, text on a TTY). `commit` and `version` also accept `-o` but default to `text`.
+- Exit code `3` ("graph not indexed") is **retired**: co-change reads auto-index on first run, so the condition no longer exists.
 
 ### Added
-- `commit -o json` structured output: a single object with `dry_run`, `commits[]` (each `{title, message, files, sha, hook_outcome}`), `committed_count`, and `final_sha`
-- Documented, authoritative exit-code taxonomy: `0` success, `1` general error, `2` hook blocked commit, `3` graph not indexed (a graph read before the index is built), `4` event-log chain integrity broken
-- `init --graph` flag: one-shot cold start that builds all three graph layers (commit-history co-change + Event-Log projections + AST index) without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`
-- Read-path auto-sync: `audit timeline`, `audit provenance`, and `audit diagnose` now call `SyncIfStale` before reading, so they reflect just-captured events without a manual `graph sync` (CQRS read-side projection refresh)
+- `related` co-change query: ranks the files that habitually change with the seed(s) — a file coupled to several seeds ranks highest — and attaches the linking commits (`{sha, subject, ts}`) that prove each coupling. With no arguments it uses the current working-tree changes. `--tests` keeps only the related test files (which tests to run after a change).
+- `status` top-level read: graph index health and row counts.
+- `audit` namespace for read-only, hash-chained Event Log forensics: `timeline`, `diagnose`, `provenance`, `verify` (exits `4` when the chain is broken).
+- `commit -o json` structured output: a single object with `dry_run`, `commits[]` (each `{title, message, files, sha, hook_outcome}`), `committed_count`, and `final_sha`. Read commands emit a uniform `{"error":{"code","message"}}` envelope on stderr on failure in JSON mode.
+- `init --graph` flag: one-shot cold start that builds the graph (commit-history co-change + Event-Log projections) without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`.
+- `graph_autobuild` config key (project/local): set `false` to stop `commit` from building and maintaining the co-change graph.
+- Read-path auto-sync: `audit timeline`, `audit provenance`, and `audit diagnose` call `SyncIfStale` before reading, so they reflect just-captured events without a manual sync (CQRS read-side projection refresh).
+
+### Fixed
+- Projection staleness now tracks an explicit high-water mark (`max_projected_event_seq`) instead of the `event_files` row count. An Outcome event touches no files, so the row count could peg the projected seq below `MaxEventSeq` forever, making sync re-replay (and duplicate) the tail on every run.
 
 ### Changed
-- `graph index` and `graph sync` are now hidden from `--help` (building is automatic via `commit` + read-path auto-sync) but remain as compatibility aliases for scripts; `graph index` Long text corrected to state it does not build the commit-history co-change layer (use `init --graph` for a full build)
-- `audit timeline` consolidated onto the shared `openGraphDB` helper (removed inlined dir/gitignore/untrack/schema hygiene)
+- Documented, authoritative exit-code taxonomy: `0` success, `1` general error, `2` hook blocked commit, `4` event-log chain integrity broken (`3` retired).
+- Schema v3: opening a pre-refactor database drops the retired AST tables idempotently, preserving co-change data without a full rebuild.
 
 ## [0.6.1] - 2026-06-28
 
