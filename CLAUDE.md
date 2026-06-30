@@ -37,7 +37,7 @@ cmd → application → domain ← infrastructure
 - **`application/`** — orchestration services (`CommitService`, `InitService`, `ScopeService`, `GitignoreService`)
 - **`infrastructure/`** — adapters: git CLI wrappers, OpenAI client, config resolver, Toptal API client
 - **`cmd/`** — Cobra wiring only, no business logic
-- **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 = graph not indexed, 4 = event-log chain integrity broken)
+- **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 = retired/unused, 4 = event-log chain integrity broken)
 - **`e2e/`** — full binary tests via subprocess
 
 ## Key Design Decisions
@@ -62,18 +62,18 @@ The CLI is a Cobra tree. Every command lives in exactly one of four namespaces; 
 
 - **Action** (top-level): `init`, `commit`, `capture` (hidden). These mutate the repo or the graph. `capture` is a hook target — invoked by `git-agent capture --source claude-code` from the Claude Code PostToolUse hook, never by a human — and stays `Hidden: true`.
 - **Meta** (top-level): `config`, `version`, `completion`. Configuration and tooling, not repo mutation.
-- **`graph`** (parent): read-only queries over the deterministic code graph — the AST (structure) and the commit-history co-change index. Children: `search`, `symbol`, `callers`, `callees`, `external-refs`, `affected`, `impact`, `status`, plus the hidden compatibility aliases `index` and `sync`. A new structural / co-change query goes here.
-- **`audit`** (parent): read-only forensic queries over the append-only, hash-chained agent Event Log — a distinct data source and trust model from `graph`. Children: `timeline`, `diagnose`, `provenance`, `verify`. A new Event-Log forensic/audit command goes here.
+- **Reads** (top-level): `related` and `status`. `related <files...>` is the co-change query — the files that habitually change with the given files, enriched with the commits that link them (subject + sha + date); language-agnostic (git history, not parsing), offline, no API key. `status` reports index health and row counts. A new co-change/structural read goes at the top level here.
+- **`audit`** (parent): read-only forensic queries over the append-only, hash-chained agent Event Log — a distinct data source and trust model from the co-change graph behind `related`. Children: `timeline`, `diagnose`, `provenance`, `verify`. A new Event-Log forensic/audit command goes here.
 
-**No graph or audit read command lives at the top level.** The split is by data source: deterministic code structure → `graph`; append-only Event Log → `audit`.
+**Only the Event Log is a query namespace (`audit`); the co-change reads (`related`, `status`) are top-level.** The split is by data source: git-history co-change → top-level `related`/`status`; append-only Event Log → `audit`.
 
 ### Registration
 
-Each command registers itself exactly once in its own `init()` via `<parent>Cmd.AddCommand(xCmd)`. `graphCmd` (`cmd/graph.go`) and `auditCmd` (`cmd/audit.go`) are package vars; package vars are initialized before any `init()`, so child files may reference them without ordering concerns. Never register a command twice, and never prefix a child's `Use` with the parent name — Cobra composes the path from `Use` verbatim.
+Each command registers itself exactly once in its own `init()` via `<parent>Cmd.AddCommand(xCmd)` (top-level reads use `rootCmd.AddCommand`). `auditCmd` (`cmd/audit.go`) is a package var; package vars are initialized before any `init()`, so child files may reference it without ordering concerns. Never register a command twice, and never prefix a child's `Use` with the parent name — Cobra composes the path from `Use` verbatim.
 
 ### Output format
 
-Every read command takes a single `-o, --output {auto,json,text}` flag, registered via `addOutputFlag` (persistent on the `graph`/`audit` parents so children inherit it; local on `commit`/`version`). `auto` (the query default) emits **JSON when stdout is piped, text on a TTY**; `commit`/`version` default to `text` so piping a human-facing action does not silently switch it to JSON. Resolve the format with `outputFormat(cmd)` (wraps `pkg/output.Decide`), encode with `pkg/output.EncodeJSON`, and emit error envelopes with `pkg/output.EncodeError`. Wrap a read command's `RunE` in `jsonAwareRunE` so failures render as `{"error":{"code","message"}}` on stderr in JSON mode. Do not hand-roll `--json`/`--text` or `json.NewEncoder` in a new command. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating.)
+Every read command takes a single `-o, --output {auto,json,text}` flag, registered via `addOutputFlag` (persistent on the `audit` parent so children inherit it; local on `related`/`status`/`commit`/`version`). `auto` (the query default) emits **JSON when stdout is piped, text on a TTY**; `commit`/`version` default to `text` so piping a human-facing action does not silently switch it to JSON. Resolve the format with `outputFormat(cmd)` (wraps `pkg/output.Decide`), encode with `pkg/output.EncodeJSON`, and emit error envelopes with `pkg/output.EncodeError`. Wrap a read command's `RunE` in `jsonAwareRunE` so failures render as `{"error":{"code","message"}}` on stderr in JSON mode. Do not hand-roll `--json`/`--text` or `json.NewEncoder` in a new command. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating.)
 
 ### Flag policy
 
@@ -87,7 +87,7 @@ Prefer config keys over per-command flags. A value belongs on the command line o
 
 ### Hidden commands
 
-Hook-target commands stay `Hidden: true` and are excluded from the skill command table (`capture`). Retired-but-kept compatibility aliases also stay hidden: `graph index` and `graph sync` (graph building is automatic via `commit` / `init --graph` and read-path auto-sync).
+Hook-target commands stay `Hidden: true` and are excluded from the skill command table (`capture`). Graph/projection building is automatic (via `commit` / `init --graph` and read-path auto-sync), so there are no manual index/sync commands.
 
 ## Commit Conventions
 
