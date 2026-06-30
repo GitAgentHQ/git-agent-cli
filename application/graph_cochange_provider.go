@@ -60,8 +60,16 @@ func (p *GraphCoChangeProvider) GetHintsForFiles(ctx context.Context, files []st
 	seen := make(map[pair]bool)
 	var hints []commit.CoChangeHint
 
+	// Query through ImpactService, not the repository directly: IncludeCommits
+	// enrichment (the linking commits that supply each hint's Subjects) lives in
+	// the service, so a raw repo.Impact call would leave Subjects empty.
+	impactSvc := NewImpactService(p.repo)
+
 	for _, f := range files {
-		result, err := p.repo.Impact(ctx, graph.ImpactRequest{
+		if f == "" {
+			continue
+		}
+		result, err := impactSvc.Impact(ctx, graph.ImpactRequest{
 			Paths:          []string{f},
 			Depth:          1,
 			Top:            5,
