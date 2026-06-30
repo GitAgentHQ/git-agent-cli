@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestInitSchema_DropsRetiredASTTables verifies the schema-v3 cleanup: a graph
-// database built before the co-change-only refactor (carrying ast_nodes /
-// ast_edges / ast_unresolved_refs and the FTS index) sheds those tables on the
-// next open via InitSchema, without a full rebuild and without touching the
+// TestInitSchema_DropsRetiredTables verifies the schema cleanup: a graph
+// database built before the co-change-only refactor (carrying the retired AST
+// tables and, after this cut, the Event Log tables) sheds those tables on the
+// next open via InitSchema — without a full rebuild and without touching the
 // co-change tables.
-func TestInitSchema_DropsRetiredASTTables(t *testing.T) {
+func TestInitSchema_DropsRetiredTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "old.db")
 	client := NewSQLiteClient(dbPath)
 	ctx := context.Background()
@@ -23,15 +23,23 @@ func TestInitSchema_DropsRetiredASTTables(t *testing.T) {
 	db := client.DB()
 
 	// Forge a pre-refactor database: the co-change side plus the retired AST
-	// tables and a stale row, mirroring schema v2.
+	// and Event Log tables with a stale row each, mirroring schema v2/v3.
 	stmts := []string{
 		`CREATE TABLE commits (hash TEXT PRIMARY KEY, message TEXT, timestamp INTEGER)`,
 		`CREATE TABLE ast_nodes (id TEXT PRIMARY KEY, name TEXT)`,
 		`CREATE TABLE ast_edges (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT)`,
 		`CREATE TABLE ast_unresolved_refs (id INTEGER PRIMARY KEY AUTOINCREMENT, from_node_id TEXT)`,
 		`CREATE VIRTUAL TABLE ast_nodes_fts USING fts5(name, content='ast_nodes', content_rowid='rowid')`,
+		`CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, this_hash TEXT)`,
+		`CREATE TABLE event_files (event_seq INTEGER, file_path TEXT)`,
+		`CREATE TABLE sessions (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE actions (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE action_modifies (action_id TEXT, file_path TEXT)`,
+		`CREATE TABLE action_produces (action_id TEXT, commit_hash TEXT)`,
 		`INSERT INTO commits (hash, message, timestamp) VALUES ('c1', 'feat: x', 1)`,
 		`INSERT INTO ast_nodes (id, name) VALUES ('n1', 'Foo')`,
+		`INSERT INTO events (seq, this_hash) VALUES (1, 'h1')`,
+		`INSERT INTO sessions (id) VALUES ('s1')`,
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
@@ -40,12 +48,16 @@ func TestInitSchema_DropsRetiredASTTables(t *testing.T) {
 	}
 
 	// Opening the schema (what openGraphDB does on every command) must drop the
-	// AST tables.
+	// retired tables.
 	if err := client.InitSchema(ctx); err != nil {
 		t.Fatalf("InitSchema() error = %v", err)
 	}
 
-	for _, tbl := range []string{"ast_nodes", "ast_edges", "ast_unresolved_refs", "ast_nodes_fts"} {
+	retired := []string{
+		"ast_nodes", "ast_edges", "ast_unresolved_refs", "ast_nodes_fts",
+		"events", "event_files", "sessions", "actions", "action_modifies", "action_produces",
+	}
+	for _, tbl := range retired {
 		var n int
 		if err := db.QueryRowContext(ctx,
 			`SELECT count(*) FROM sqlite_master WHERE name = ?`, tbl,
@@ -53,7 +65,7 @@ func TestInitSchema_DropsRetiredASTTables(t *testing.T) {
 			t.Fatalf("probe %s: %v", tbl, err)
 		}
 		if n != 0 {
-			t.Errorf("retired AST table %q still present after InitSchema", tbl)
+			t.Errorf("retired table %q still present after InitSchema", tbl)
 		}
 	}
 

@@ -14,7 +14,12 @@ import (
 // CurrentSchemaVersion is the schema version written by this git-agent build.
 // A database with a higher stored version was produced by a newer binary and
 // cannot be read safely.
-const CurrentSchemaVersion = 3
+//
+// v4 drops the agent Event Log subsystem (events/event_files/sessions/actions/
+// action_modifies/action_produces) — the tables are shed on open via DROP
+// statements in schemaStatements, so a v3 database is migrated without a full
+// rebuild.
+const CurrentSchemaVersion = 4
 
 // GraphDBRelPath is the repo-relative path to the SQLite graph database. It is
 // the single source of truth shared by every command that opens the DB and by
@@ -157,8 +162,9 @@ func (c *SQLiteClient) setSchemaVersion(ctx context.Context) error {
 }
 
 // migrations are idempotent column additions for pre-existing databases that
-// predate the column. Empty now that the AST layer is gone; kept as the seam
-// for future co-change/audit column additions.
+// predate the column. Empty now; kept as the seam for future co-change column
+// additions. (Retired tables are shed via DROP statements in schemaStatements,
+// not here.)
 var migrations = []struct {
 	table string
 	col   string
@@ -179,90 +185,7 @@ func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
 			return fmt.Errorf("migrate add %s.%s: %w", m.table, m.col, err)
 		}
 	}
-	if _, err := c.migrateActionProduces(ctx); err != nil {
-		return err
-	}
 	return nil
-}
-
-func (c *SQLiteClient) migrateActionProduces(ctx context.Context) (bool, error) {
-	needsRebuild, hasFilePath, err := c.actionProducesNeedsRebuild(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !needsRebuild {
-		return false, nil
-	}
-
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin action_produces migration: %w", err)
-	}
-	defer tx.Rollback()
-
-	if !hasFilePath {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE action_produces ADD COLUMN file_path TEXT DEFAULT ''`); err != nil {
-			return false, fmt.Errorf("add action_produces.file_path: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS action_produces_new`); err != nil {
-		return false, fmt.Errorf("drop stale action_produces_new: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `CREATE TABLE action_produces_new (
-		action_id TEXT NOT NULL,
-		commit_hash TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		PRIMARY KEY (action_id, commit_hash, file_path)
-	)`); err != nil {
-		return false, fmt.Errorf("create action_produces_new: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO action_produces_new (action_id, commit_hash, file_path)
-		SELECT ap.action_id, ap.commit_hash, COALESCE(NULLIF(ap.file_path, ''), am.file_path, '')
-		FROM action_produces ap
-		LEFT JOIN action_modifies am ON am.action_id = ap.action_id`); err != nil {
-		return false, fmt.Errorf("backfill action_produces_new: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DROP TABLE action_produces`); err != nil {
-		return false, fmt.Errorf("drop old action_produces: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `ALTER TABLE action_produces_new RENAME TO action_produces`); err != nil {
-		return false, fmt.Errorf("rename action_produces_new: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit action_produces migration: %w", err)
-	}
-	return true, nil
-}
-
-func (c *SQLiteClient) actionProducesNeedsRebuild(ctx context.Context) (bool, bool, error) {
-	rows, err := c.db.QueryContext(ctx, `PRAGMA table_info(action_produces)`)
-	if err != nil {
-		return false, false, fmt.Errorf("inspect action_produces: %w", err)
-	}
-	defer rows.Close()
-
-	pk := map[string]int{}
-	hasFilePath := false
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pkIndex int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pkIndex); err != nil {
-			return false, false, err
-		}
-		if name == "file_path" {
-			hasFilePath = true
-		}
-		if pkIndex > 0 {
-			pk[name] = pkIndex
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, false, err
-	}
-	needsRebuild := pk["action_id"] != 1 || pk["commit_hash"] != 2 || pk["file_path"] != 3
-	return needsRebuild, hasFilePath, nil
 }
 
 func (c *SQLiteClient) columnExists(ctx context.Context, table, col string) (bool, error) {
@@ -360,85 +283,6 @@ var schemaStatements = []string{
 		value TEXT
 	)`,
 
-	// Action layer
-	`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		source TEXT NOT NULL,
-		instance_id TEXT,
-		started_at INTEGER NOT NULL,
-		ended_at INTEGER
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS actions (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		sequence INTEGER NOT NULL DEFAULT 0,
-		tool TEXT,
-		diff TEXT,
-		files_changed TEXT,
-		timestamp INTEGER NOT NULL,
-		message TEXT
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS action_modifies (
-		action_id TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		additions INTEGER DEFAULT 0,
-		deletions INTEGER DEFAULT 0,
-		PRIMARY KEY (action_id, file_path)
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS action_produces (
-		action_id TEXT NOT NULL,
-		commit_hash TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		PRIMARY KEY (action_id, commit_hash, file_path)
-	)`,
-
-	// Event Log (append-only, hash-chained source of truth)
-	`CREATE TABLE IF NOT EXISTS events (
-		seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-		event_id        TEXT NOT NULL UNIQUE,
-		recorded_at     INTEGER NOT NULL,
-		source          TEXT NOT NULL,
-		instance_id     TEXT,
-		kind            TEXT NOT NULL,
-		hook_event_name TEXT,
-		tool_name       TEXT,
-		cwd             TEXT,
-		transcript_path TEXT,
-		permission_mode TEXT,
-		payload_raw     TEXT NOT NULL,
-		payload_size    INTEGER NOT NULL DEFAULT 0,
-		truncated       INTEGER NOT NULL DEFAULT 0,
-		command         TEXT,
-		exit_code       INTEGER,
-		exit_code_source TEXT,
-		is_test         INTEGER NOT NULL DEFAULT 0,
-		is_build        INTEGER NOT NULL DEFAULT 0,
-		test_name       TEXT,
-		prev_hash       TEXT NOT NULL,
-		this_hash       TEXT NOT NULL
-	)`,
-
-	// Derived (Enrichment-populated; rebuildable). One row per touched file.
-	`CREATE TABLE IF NOT EXISTS event_files (
-		event_seq   INTEGER NOT NULL,
-		file_path   TEXT NOT NULL,
-		before_blob TEXT,
-		after_blob  TEXT,
-		change_kind TEXT,
-		additions   INTEGER NOT NULL DEFAULT 0,
-		deletions   INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (event_seq, file_path)
-	)`,
-
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_events_this_hash ON events(this_hash)`,
-	`CREATE INDEX IF NOT EXISTS idx_events_recorded_at ON events(recorded_at)`,
-	`CREATE INDEX IF NOT EXISTS idx_events_source ON events(source)`,
-	`CREATE INDEX IF NOT EXISTS idx_events_instance ON events(source, instance_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_event_files_path ON event_files(file_path)`,
-
 	// Performance indexes
 	`CREATE INDEX IF NOT EXISTS idx_commits_timestamp ON commits(timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_modifies_file ON modifies(file_path)`,
@@ -446,16 +290,23 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_co_changed_file_a ON co_changed(file_a)`,
 	`CREATE INDEX IF NOT EXISTS idx_co_changed_file_b ON co_changed(file_b)`,
 	`CREATE INDEX IF NOT EXISTS idx_co_changed_strength ON co_changed(coupling_strength)`,
-	`CREATE INDEX IF NOT EXISTS idx_actions_session ON actions(session_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp)`,
-	`CREATE INDEX IF NOT EXISTS idx_action_modifies_file ON action_modifies(file_path)`,
-	`CREATE INDEX IF NOT EXISTS idx_sessions_source_instance ON sessions(source, instance_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_renames_old ON renames(old_path)`,
 	`CREATE INDEX IF NOT EXISTS idx_renames_new ON renames(new_path)`,
 
-	// Retired AST layer (schema v3): drop on open so a database built before
-	// the co-change-only refactor sheds these tables without a full rebuild.
-	// Idempotent — a no-op once the tables are gone (and on a fresh DB).
+	// Retired layers — dropped on open so a database built before the cut sheds
+	// these tables without a full rebuild. Idempotent: a no-op once the tables
+	// are gone (and on a fresh DB).
+	//
+	// Event Log subsystem (schema v3 → v4): the append-only action log and its
+	// projections are gone; the graph is now commit-history co-change only.
+	`DROP TABLE IF EXISTS event_files`,
+	`DROP TABLE IF EXISTS events`,
+	`DROP TABLE IF EXISTS action_produces`,
+	`DROP TABLE IF EXISTS action_modifies`,
+	`DROP TABLE IF EXISTS actions`,
+	`DROP TABLE IF EXISTS sessions`,
+
+	// AST layer (schema v2 → v3): the structural call graph is gone.
 	`DROP TRIGGER IF EXISTS ast_nodes_fts_ai`,
 	`DROP TRIGGER IF EXISTS ast_nodes_fts_ad`,
 	`DROP TRIGGER IF EXISTS ast_nodes_fts_au`,
