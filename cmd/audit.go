@@ -6,9 +6,9 @@ import (
 
 // auditCmd is the parent for read-only forensic queries over the agent Event
 // Log: the append-only, hash-chained record of every captured agent and human
-// action. This is a distinct data source and trust model from the structural
-// code graph under `graph` — Event-Log queries answer "what happened", graph
-// queries answer "what the code is now".
+// action. This is a distinct data source and trust model from the co-change
+// graph behind `related` — Event-Log queries answer "what happened", co-change
+// queries answer "what changes together".
 var auditCmd = &cobra.Command{
 	Use:   "audit",
 	Short: "Query and audit the agent event log (forensic, integrity-checked)",
@@ -21,8 +21,8 @@ and need no API key.
   provenance   — rename-aware change history for one file
   verify       — check the Event Log hash chain for tampering (exits 4 on break)
 
-For structural queries over the current code (callers, symbol lookup, co-change)
-use ` + "`git-agent graph`" + `.
+For the files that change together with a given file (co-change), use
+` + "`git-agent related`" + `.
 `,
 }
 

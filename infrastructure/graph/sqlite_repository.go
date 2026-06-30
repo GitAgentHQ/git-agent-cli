@@ -31,6 +31,14 @@ func isBusyErr(err error) bool {
 // Compile-time check that SQLiteRepository satisfies GraphRepository.
 var _ graph.GraphRepository = (*SQLiteRepository)(nil)
 
+// boolToInt maps a Go bool to the 0/1 integer SQLite stores for boolean columns.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // coChangeHalfLifeDays is the recency half-life for co-change weighting: a
 // co-change this many days old contributes half the strength of a fresh one.
 const coChangeHalfLifeDays = 365
@@ -478,6 +486,45 @@ func (r *SQLiteRepository) coChangedNeighbors(ctx context.Context, path string, 
 			return nil, fmt.Errorf("scan co_changed: %w", err)
 		}
 		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// LinkingCommits returns the commits that modified both seed and related,
+// most-recent first, capped at limit. These are the commits that built the
+// co-change coupling between the pair — the "why are these related?" evidence
+// (subject is the first line of the commit message).
+func (r *SQLiteRepository) LinkingCommits(ctx context.Context, seed, related string, limit int) ([]graph.CommitRef, error) {
+	if limit <= 0 {
+		limit = 3
+	}
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT c.hash, c.message, c.timestamp
+		FROM modifies m1
+		JOIN modifies m2 ON m1.commit_hash = m2.commit_hash
+		JOIN commits  c  ON c.hash = m1.commit_hash
+		WHERE m1.file_path = ? AND m2.file_path = ?
+		ORDER BY c.timestamp DESC
+		LIMIT ?`,
+		seed, related, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query linking commits for %q<->%q: %w", seed, related, err)
+	}
+	defer rows.Close()
+
+	var out []graph.CommitRef
+	for rows.Next() {
+		var hash, message string
+		var ts int64
+		if err := rows.Scan(&hash, &message, &ts); err != nil {
+			return nil, fmt.Errorf("scan linking commit: %w", err)
+		}
+		subject := message
+		if i := strings.IndexByte(subject, '\n'); i >= 0 {
+			subject = subject[:i]
+		}
+		out = append(out, graph.CommitRef{Hash: hash, Subject: strings.TrimSpace(subject), Timestamp: ts})
 	}
 	return out, rows.Err()
 }

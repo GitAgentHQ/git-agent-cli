@@ -41,6 +41,10 @@ type GraphRepository interface {
 	// Queries
 	Impact(ctx context.Context, req ImpactRequest) (*ImpactResult, error)
 	ResolveRenames(ctx context.Context, filePath string) ([]string, error)
+	// LinkingCommits returns the commits that modified both seed and related
+	// (the commits that bind a co-change pair), most-recent first, capped at
+	// limit. It is the "why are these related?" evidence behind a co-change edge.
+	LinkingCommits(ctx context.Context, seed, related string, limit int) ([]CommitRef, error)
 
 	// Session/Action tracking
 	GetActiveSession(ctx context.Context, source, instanceID string, timeoutMinutes int) (*SessionNode, error)
@@ -113,40 +117,7 @@ type GraphRepository interface {
 	GetStats(ctx context.Context) (*GraphStats, error)
 }
 
-// ASTRepository defines persistence operations for AST-extracted code symbols.
-type ASTRepository interface {
-	UpsertASTNode(ctx context.Context, n ASTNode) error
-	UpsertASTEdge(ctx context.Context, e ASTEdge) error
-	UpsertUnresolvedRef(ctx context.Context, ref ASTUnresolvedRef) error
-	GetASTNodeByName(ctx context.Context, name string) ([]ASTNode, error)
-	// GetASTNodeBySymbol resolves a user-supplied symbol specifier to AST nodes.
-	// It accepts a bare name ("alias"), a receiver-qualified form
-	// ("decoder.alias"), or a fully-qualified form ("decode.go::decoder.alias"
-	// or "method:decode.go:decoder.alias"). Bare names return all matching
-	// nodes; qualified forms narrow to the specific symbol so colliding
-	// same-named methods (e.g. parser.alias vs decoder.alias) are addressable.
-	GetASTNodeBySymbol(ctx context.Context, symbol string) ([]ASTNode, error)
-	GetASTNodeByQualifiedName(ctx context.Context, qname string) (*ASTNode, error)
-	ListASTNodesByFile(ctx context.Context, filePath string) ([]ASTNode, error)
-	// ListASTNodesByKind returns every indexed symbol of the given kind
-	// (e.g. all import nodes). Used by `graph external-refs` and the
-	// external-package hint in callers/node.
-	ListASTNodesByKind(ctx context.Context, kind ASTNodeKind) ([]ASTNode, error)
-	GetCallers(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
-	GetCallees(ctx context.Context, nodeID string, maxDepth int) ([]ASTImpactEntry, error)
-	GetImpactRadius(ctx context.Context, nodeID string, maxDepth int) (*ASTImpactResult, error)
-	SearchASTNodes(ctx context.Context, query string, kinds []ASTNodeKind) ([]ASTSearchResult, error)
-	ListUnresolvedRefs(ctx context.Context) ([]ASTUnresolvedRef, error)
-	// ListUnresolvedRefsMatching returns refs in any of filePaths or whose
-	// trailing symbol name (after the last '.') matches lookupNames. When both
-	// slices are empty, all unresolved refs are returned.
-	ListUnresolvedRefsMatching(ctx context.Context, filePaths []string, lookupNames []string) ([]ASTUnresolvedRef, error)
-	ListASTNodeNames(ctx context.Context) ([]string, error)
-	DeleteASTNodesForFile(ctx context.Context, filePath string) error
-	DeleteASTNodesExceptFiles(ctx context.Context, filePaths []string) error
-}
-
-// GraphStats holds counts for graph status display.
+// GraphStats holds counts for the `status` command display.
 type GraphStats struct {
 	Exists            bool   `json:"exists"`
 	LastIndexedCommit string `json:"last_indexed_commit,omitempty"`

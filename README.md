@@ -6,7 +6,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs.
+AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs. It also surfaces co-change relations for agents — which files habitually change together, plus the commits that explain why — all-language, offline, and with no API key.
 
 ## Installation
 
@@ -75,14 +75,14 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 #### `.git-agent/graph.db` is never tracked
 
 The graph database (`.git-agent/graph.db`) is generated at runtime by `commit`,
-`capture`, `timeline`, and `graph` commands. It must never be committed — if it
+`capture`, `timeline`, `related`, and `status` commands. It must never be committed — if it
 is, every run re-modifies it and produces a stream of `chore: update graph
 database file` commits (the "infinite recreation" loop).
 
 git-agent defends this invariant automatically, with no `init` required:
 
 - **`git-agent init`** writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal` and `.git-agent/config.local.yml`) into the committed `.gitignore`, and runs `git rm --cached` on any already-tracked `graph.db` so the rule can take effect.
-- **Runtime defence**: every command that opens the graph DB (`capture`, `timeline`, `graph *`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
+- **Runtime defence**: every command that opens the graph DB (`capture`, `timeline`, `related`, `status`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
 
 Verify when in doubt:
 
@@ -164,110 +164,29 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 
 Print the build version.
 
-### `git-agent graph`
-
-Query the deterministic code graph: the AST index and the commit-history
-co-change index. The AST index parses git-tracked Go files in your repo and
-records functions, methods, structs/interfaces, **struct fields**, type aliases,
-imports, calls, and field-read `references` edges; co-change is derived from git
-history. Offline (no LLM, no API key). For forensic queries over the agent Event
-Log, see [`git-agent audit`](#git-agent-audit).
-
-**Symbol syntax** for `callers` / `callees` / `symbol` — accepts a bare name, a
-receiver-qualified `Type.Method`, or a fully-qualified `file::Type.Method`:
-
-```bash
-git-agent graph callers Flag                  # all callers of any Flag method
-git-agent graph callers decoder.alias         # narrow to one receiver type
-git-agent graph callers "decode.go::decoder.alias"  # fully-qualified
-git-agent graph callers HideHelpCommand       # struct field reads surface here
-git-agent graph symbol Commit.Run             # signature + one-hop trails
-git-agent graph affected command.go           # tests exercising the file's symbols
-git-agent graph search --kind method Connect  # FTS5 symbol search
-```
-
-```bash
-git-agent graph status        # index health + row counts
-git-agent init --graph        # one-shot full graph build (co-change + Event-Log + AST)
-git-agent graph impact        # co-change coupling for files (see below)
-git-agent graph callers       # symbols that call or reference a symbol (blast radius)
-git-agent graph callees       # symbols called or referenced by a symbol
-git-agent graph symbol        # a symbol's location, signature, caller/callee trail
-git-agent graph search        # FTS5 symbol search
-git-agent graph affected      # test files exercising the given files' symbols
-git-agent graph external-refs # call/field sites reaching into external packages
-```
-
-**External packages are not indexed.** The index only parses files in your
-repo, so symbols from imported packages (e.g. `github.com/spf13/pflag`) are
-never AST nodes. `callers`/`symbol` report this explicitly instead of failing
-with a bare "not found"; `graph external-refs` lists every call/field-read
-site that reaches into an external package:
-
-```bash
-git-agent graph callers pflag.Lookup
-# Error: symbol "pflag.Lookup" is exported by external package
-# "github.com/spf13/pflag", which is not indexed; run
-# `git-agent graph external-refs` to list call sites into it
-
-git-agent graph external-refs            # all external-package reference sites
-git-agent graph external-refs -o json
-```
-
-> **Build note:** AST commands (`callers`, `callees`, `symbol`, `search`,
-> `affected`, `index`) require a tree-sitter build
-> (`CGO_ENABLED=1 go build`). Release binaries are compiled with
-> `CGO_ENABLED=0` and stub these out; `external-refs` reads only unresolved
-> refs and works in either build. After upgrading the binary on a repo with an
-> existing `.git-agent/graph.db`, run `git-agent init --graph` (full rebuild of
-> all three layers) — or `git-agent graph index --reindex` (AST-only) — to pick
-> up struct-field nodes and receiver-resolved call edges on the old DB.
-
-#### Does `graph` help a model develop features?
-
-An A/B re-test (2026-06-27) ran a capable agent on three real Go repos
-(`spf13/cobra`, `go-yaml/yaml`, `urfave/cli`) — each feature implemented twice,
-once without `graph` (grep/Read only) and once with `graph` forensic commands.
-All six arms built and tested green; the graph did not flip any fail→pass. It
-**did** deliver measurable non-trivial value the no-graph arm lacked:
-
-- **Field disambiguation (cli):** `graph search Hide` returned empty (no such
-  field) while `graph search Hidden` returned the field node + its 19 readers
-  via `graph callers Hidden`. A bare `grep Hide` matches three separate fields
-  (`Hidden`, `HideHelp`, `HideHelpCommand`); the graph prevented a wrong-field
-  accessor.
-- **Receiver disambiguation (yaml):** `graph symbol alias` showed both
-  `parser.alias` and `decoder.alias` source + signatures in one call,
-  revealing that `decoder.alias` only dereferences already-parsed alias nodes
-  — the real anchor-capture site is `parser.anchor`. Both arms landed on the
-  right site, but the graph made it one structured call vs. a 30-line noise grep.
-- **Test fidelity to the spec (yaml):** the with-graph arm's test covered
-  cross-`Decode` persistence (4 sub-cases) the no-graph arm's single-case test
-  did not — even though both implementations were identical.
-- **Cross-file consumer safety (cobra):** `graph callers mergePersistentFlags`
-  surfaced cross-file consumers in `flag_groups.go` and `completions.go`,
-  confirming a new read-only accessor wouldn't disturb them.
-
-The graph's value is investigation depth, test/invariant fidelity, and
-cross-file safety — not enabling the impossible. It shines most on unfamiliar
-codebases where grep noise is high and receiver/field disambiguation matters.
-
-### `git-agent graph impact`
+### `git-agent related`
 
 Show the files that historically change together with the given seeds
-(co-change coupling). Seeds are file paths, a directory, or — with no
-arguments — your current working-tree changes. A file coupled to several seeds
-ranks highest. The first run auto-indexes git history; queries are offline (no
-LLM, no API key).
+(co-change coupling), mined from git history. Seeds are file paths, a
+directory, or — with no arguments — your current working-tree changes
+("what else usually changes with my edits?"). A file coupled to several seeds
+ranks highest.
 
-For symbol-level structural blast radius — which symbols call or reference a
-function — use `git-agent graph callers <symbol> --depth N` instead.
+In JSON output, each related file carries a `commits` array of
+`{sha, subject, ts}` — the commits that link it to a seed, i.e. the evidence
+for *why* the two files are coupled. Use `--tests` to keep only related test
+files, a fast "which tests should I run after this change?".
+
+Language-agnostic (it reads git history, not source parsing), offline (no LLM,
+no API key), and auto-indexed on first run. For forensic queries over the agent
+Event Log, see [`git-agent audit`](#git-agent-audit).
 
 ```bash
-git-agent graph impact                                     # "what else changes with my edits?"
-git-agent graph impact application/commit_service.go       # co-change from a specific file
-git-agent graph impact src/                                # co-change from a directory
-git-agent graph impact application/commit_service.go -o json
+git-agent related                                        # "what else changes with my edits?"
+git-agent related application/commit_service.go          # co-change from a specific file
+git-agent related src/                                   # co-change from a directory
+git-agent related application/commit_service.go --tests  # related test files only
+git-agent related application/commit_service.go -o json  # adds the linking `commits` array
 ```
 
 | Flag | Default | Description |
@@ -275,8 +194,21 @@ git-agent graph impact application/commit_service.go -o json
 | `--depth` | 1 | Transitive co-change depth |
 | `--top` | 20 | Max results |
 | `--min-count` | 3 | Minimum co-change count to include |
+| `--tests` | false | Keep only related test files |
 | `--reindex` | false | Force a full re-index before querying |
 | `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |
+
+### `git-agent status`
+
+Report code-graph index health and row counts: commits, files, authors,
+co-change pairs, sessions, actions, the last indexed commit, and database size.
+Auto-syncs projections before reading. Offline (no LLM, no API key).
+
+```bash
+git-agent status              # index health + row counts
+git-agent status -o json      # structured output
+git-agent init --graph        # one-shot cold build (commit-history co-change + Event-Log projections)
+```
 
 ### `git-agent audit`
 
@@ -410,7 +342,7 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | 0 | Success |
 | 1 | General error — no changes, API failure, missing config |
 | 2 | Hook blocked — pre-commit hook returned non-zero after retries |
-| 3 | Graph not indexed — a `graph` read ran before the index was built (run `git-agent init --graph`, or let the next `commit` build it) |
+| 3 | Retired/unused (no longer emitted) |
 | 4 | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
 
 ## Changelog

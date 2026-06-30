@@ -1,21 +1,18 @@
-Feature: init --graph builds the full three-layer code graph
+Feature: init --graph builds the full code graph
 
-  `init --graph` is the explicit cold-start entry for the code graph. Unlike
-  `graph index` (which only replayed the Event Log + AST), it builds ALL three
-  layers in one shot: the commit-history + co-change index (L2), the Event-Log
-  projections (L3), and the AST symbol/call-graph index (L1). It is opt-in —
-  the default `init` wizard does not build the graph (the first `commit` does,
-  via graph_autobuild).
+  `init --graph` is the explicit cold-start entry for the code graph. It builds
+  both layers in one shot: the commit-history + co-change index (L2) and the
+  Event-Log projections (L3). It is opt-in — the default `init` wizard does not
+  build the graph (the first `commit` does, via graph_autobuild).
 
   Background:
     Given a git repo with committed history and no graph database
 
-  Scenario: init --graph builds all three layers
+  Scenario: init --graph builds both layers
     When I run `git-agent init --graph`
     Then `.git-agent/graph.db` exists
-    And `graph status` shows commit_count > 0
-    And `graph status` shows co_changed_count > 0
-    And the AST index has nodes > 0
+    And `status` shows commit_count > 0
+    And `status` shows co_changed_count > 0
 
   Scenario: --graph composes with other init steps
     When I run `git-agent init --scope --graph`

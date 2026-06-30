@@ -8,6 +8,11 @@ type ImpactRequest struct {
 	Depth    int // transitive co-change depth, default 1
 	Top      int // max results, default 20
 	MinCount int // minimum co-change count, default 3
+	// IncludeCommits attaches, to each result entry, the commits that link it to
+	// the seeds (the "why are these related?" evidence). Off by default so callers
+	// that only need the coupled paths (e.g. diagnose's relevant-set expansion)
+	// don't pay for the extra per-entry lookups.
+	IncludeCommits bool
 }
 
 // ImpactResult is the output of an impact query.
@@ -27,6 +32,18 @@ type ImpactEntry struct {
 	SeedMatches      int      `json:"seed_matches"`      // how many seed files this file co-changes with
 	RelatedTo        []string `json:"related_to,omitempty"`
 	Depth            int      `json:"depth,omitempty"`
+	// LinkingCommits carries the commits that bind this file to the seed(s) —
+	// the "why are these related?" evidence (subject + sha + timestamp). Only
+	// populated for top-ranked entries, most-recent first.
+	LinkingCommits []CommitRef `json:"commits,omitempty"`
+}
+
+// CommitRef is a lightweight reference to a commit that links a co-change pair:
+// its hash, the first line of its message (subject), and its timestamp.
+type CommitRef struct {
+	Hash      string `json:"sha"`
+	Subject   string `json:"subject"`
+	Timestamp int64  `json:"ts"`
 }
 
 // TimelineRequest is the input for a timeline query.

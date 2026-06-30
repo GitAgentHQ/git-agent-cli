@@ -5,7 +5,7 @@
 //	0  success
 //	1  general error (any plain error, or NewExitCodeError(1, ...))
 //	2  hook blocked the commit after retries (application.ErrHookBlocked)
-//	3  graph not indexed — a graph read ran before the index was built
+//	3  retired (formerly "graph not indexed"; co-change reads now auto-index)
 //	4  event-log chain integrity check failed
 package errors
 
@@ -31,11 +31,9 @@ func NewExitCodeError(code int, msg string) *ExitCodeError {
 }
 
 // Sentinel exit-code errors. See the package doc for the full taxonomy.
+// (Exit code 3 is retired: the AST reads that returned "graph not indexed" are
+// gone, and the co-change reads auto-index on first run.)
 var (
-	// ErrGraphNotIndexed (3) is returned by a graph read when no index exists
-	// yet (e.g. a repo with no commits). Build it with `git-agent init --graph`
-	// or by making a commit.
-	ErrGraphNotIndexed = NewExitCodeError(3, "error: graph not indexed; run `git-agent init --graph` or make a commit")
 	// ErrChainIntegrity (4) is returned when the Event Log hash chain fails
 	// verification (audit verify / diagnose).
 	ErrChainIntegrity = NewExitCodeError(4, "error: event chain integrity check failed")

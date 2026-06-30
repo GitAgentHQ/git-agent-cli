@@ -37,8 +37,16 @@ func TestCapture_HiddenFromHelp(t *testing.T) {
 	if strings.Contains(out, "capture") {
 		t.Errorf("capture must be hidden from --help\noutput: %s", out)
 	}
-	if !strings.Contains(out, "graph") {
-		t.Errorf("graph parent missing from --help\noutput: %s", out)
+	// The `graph` namespace is gone; the co-change query and index health are now
+	// top-level `related` and `status`.
+	if strings.Contains(out, "graph") {
+		t.Errorf("graph namespace must be gone from --help\noutput: %s", out)
+	}
+	if !strings.Contains(out, "related") {
+		t.Errorf("related command missing from --help\noutput: %s", out)
+	}
+	if !strings.Contains(out, "status") {
+		t.Errorf("status command missing from --help\noutput: %s", out)
 	}
 	// timeline and diagnose moved under `audit`; they must not appear at the
 	// top level, only under `git-agent audit --help`.
@@ -63,8 +71,8 @@ func TestCapture_HiddenFromHelp(t *testing.T) {
 // TestCapture_AppendsObservedPayload exercises the append-only hot path
 // end-to-end: a PostToolUse payload on stdin is appended verbatim as one Event,
 // the hook exits 0, and a second payload chains onto the first. Timeline is now
-// a cold projection (built by `graph index`, later task) and is intentionally
-// not asserted here.
+// a cold projection (synced automatically on read) and is intentionally not
+// asserted here.
 func TestCapture_AppendsObservedPayload(t *testing.T) {
 	dir := newGitRepo(t)
 
@@ -110,10 +118,11 @@ func TestCapture_AppendsObservedPayload(t *testing.T) {
 	}
 }
 
-// TestGraphStatus_ReportsProjectionCounts locks the read-only status contract:
-// after capturing two events and running `graph index`, `graph status` reports the session
-// and action counts that the projections now hold.
-func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
+// TestStatus_ReportsProjectionCounts locks the read-only status contract: after
+// capturing two events, `status` (which auto-syncs projections before reading)
+// reports the session and action counts the projections now hold — no manual
+// index/sync step needed.
+func TestStatus_ReportsProjectionCounts(t *testing.T) {
 	dir := newGitRepo(t)
 
 	payload1 := []byte(`{"session_id":"sess-1","hook_event_name":"PostToolUse",` +
@@ -126,17 +135,14 @@ func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 	if out, code := gitAgentStdin(t, dir, payload2, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture #2: exit %d\n%s", code, out)
 	}
-	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
-		t.Fatalf("graph index: exit %d\n%s", code, out)
-	}
 
-	out, code := gitAgent(t, dir, "graph", "status", "-o", "json")
+	out, code := gitAgent(t, dir, "status", "-o", "json")
 	if code != 0 {
-		t.Fatalf("graph status: exit %d\n%s", code, out)
+		t.Fatalf("status: exit %d\n%s", code, out)
 	}
 	var stats graph.GraphStats
 	if err := json.Unmarshal([]byte(out), &stats); err != nil {
-		t.Fatalf("graph status output not JSON: %v\n%s", err, out)
+		t.Fatalf("status output not JSON: %v\n%s", err, out)
 	}
 	if !stats.Exists {
 		t.Errorf("stats.Exists = false, want true")
@@ -150,9 +156,9 @@ func TestGraphStatus_ReportsProjectionCounts(t *testing.T) {
 }
 
 // TestCapture_RebuildReflectsTimeline restores the timeline coverage carried
-// forward from the append-only rewrite: capture two PostToolUse Events, run
-// `graph index` to replay the Event Log into the projections, then assert the
-// timeline reflects one session with both captured actions.
+// forward from the append-only rewrite: capture two PostToolUse Events, then
+// assert `audit timeline` (which auto-syncs the Event Log into the projections
+// on read) reflects one session with both captured actions.
 func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 	dir := newGitRepo(t)
 
@@ -165,10 +171,6 @@ func TestCapture_RebuildReflectsTimeline(t *testing.T) {
 		`"tool_name":"Write","tool_input":{"file_path":"src/b.go","content":"package main\n"}}`)
 	if out, code := gitAgentStdin(t, dir, payload2, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture #2: exit %d\n%s", code, out)
-	}
-
-	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
-		t.Fatalf("graph index: exit %d\n%s", code, out)
 	}
 
 	out, code := gitAgent(t, dir, "audit", "timeline", "-o", "json")
@@ -230,8 +232,8 @@ func TestCapture_EndSessionIsNonBlocking(t *testing.T) {
 
 // TestCapture_AbsolutePathNormalizedForFileFilter locks the path-normalization
 // contract: a PostToolUse payload carrying an ABSOLUTE file_path (as Claude Code
-// does) must be stored repo-relative so `graph timeline --file <relative>` and
-// `graph provenance <relative>` match it — and so captured rows join the same
+// does) must be stored repo-relative so `audit timeline --file <relative>` and
+// `audit provenance <relative>` match it — and so captured rows join the same
 // path key as out-of-band reconciled rows.
 func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 	dir := newGitRepo(t)
@@ -243,12 +245,9 @@ func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 	if out, code := gitAgentStdin(t, dir, payload, "capture", "--source", "claude-code"); code != 0 {
 		t.Fatalf("capture: exit %d\n%s", code, out)
 	}
-	if out, code := gitAgent(t, dir, "graph", "index"); code != 0 {
-		t.Fatalf("graph index: exit %d\n%s", code, out)
-	}
 
 	// Relative path filter must match the captured row despite the payload's
-	// absolute file_path.
+	// absolute file_path (audit timeline auto-syncs projections before reading).
 	out, code := gitAgent(t, dir, "audit", "timeline", "--file", "src/a.go", "-o", "json")
 	if code != 0 {
 		t.Fatalf("timeline --file: exit %d\n%s", code, out)
@@ -280,13 +279,13 @@ func TestCapture_AbsolutePathNormalizedForFileFilter(t *testing.T) {
 	}
 }
 
-// TestGraphStatus_UntracksAlreadyTrackedGraphDB locks the runtime defence:
-// when a repo was cloned from a fork that committed .git-agent/graph.db, the
-// first graph command (graph status, which opens the DB via openGraphDB) must
+// TestStatus_UntracksAlreadyTrackedGraphDB locks the runtime defence: when a
+// repo was cloned from a fork that committed .git-agent/graph.db, the first
+// graph-opening command (`status`, which opens the DB via openGraphDB) must
 // untrack it so the ignore rule can take effect — breaking the "infinite
 // recreation" loop without requiring `git-agent init`. The working-tree file
 // is preserved.
-func TestGraphStatus_UntracksAlreadyTrackedGraphDB(t *testing.T) {
+func TestStatus_UntracksAlreadyTrackedGraphDB(t *testing.T) {
 	dir := newGitRepo(t)
 	dbPath := filepath.Join(dir, ".git-agent", "graph.db")
 	writeFile(t, dbPath, "stale-tracked-graph-db")
@@ -298,11 +297,11 @@ func TestGraphStatus_UntracksAlreadyTrackedGraphDB(t *testing.T) {
 		t.Fatalf("precondition: graph.db should be tracked, got out=%q err=%v", string(out), err)
 	}
 
-	// `git-agent graph status` opens the DB via openGraphDB, which must untrack
+	// `git-agent status` opens the DB via openGraphDB, which must untrack
 	// graph.db before opening it. The committed file is bogus (not real SQLite),
 	// so the command may exit non-zero on schema validation — but the untrack
 	// runs before the Open, so the side-effect must hold regardless of exit code.
-	gitAgent(t, dir, "graph", "status")
+	gitAgent(t, dir, "status")
 
 	// No longer tracked.
 	out, err := exec.Command("git", "-C", dir, "ls-files", "--", ".git-agent/graph.db").Output()
@@ -310,7 +309,7 @@ func TestGraphStatus_UntracksAlreadyTrackedGraphDB(t *testing.T) {
 		t.Fatalf("git ls-files after: %v", err)
 	}
 	if strings.Contains(string(out), "graph.db") {
-		t.Errorf("graph.db should be untracked after graph status, got %q", string(out))
+		t.Errorf("graph.db should be untracked after status, got %q", string(out))
 	}
 	// Working-tree file preserved (untrack uses --cached).
 	if _, err := os.Stat(dbPath); err != nil {

@@ -487,6 +487,9 @@ func (r *coChangeFailRepo) GetStats(context.Context) (*graph.GraphStats, error) 
 func (r *coChangeFailRepo) Impact(context.Context, graph.ImpactRequest) (*graph.ImpactResult, error) {
 	return nil, nil
 }
+func (r *coChangeFailRepo) LinkingCommits(context.Context, string, string, int) ([]graph.CommitRef, error) {
+	return nil, nil
+}
 func (r *coChangeFailRepo) Timeline(context.Context, graph.TimelineRequest) (*graph.TimelineResult, error) {
 	return nil, nil
 }

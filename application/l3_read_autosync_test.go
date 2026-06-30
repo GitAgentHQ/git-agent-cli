@@ -11,7 +11,7 @@ import (
 // TestL3Read_AutoSyncShowsJustCapturedEvent asserts the CQRS read-side contract:
 // after capture appends an event (producer-only, no projection fold), the L3
 // read path's SyncIfStale folds it so timeline reflects it without a manual
-// `graph sync`.
+// sync step.
 func TestL3Read_AutoSyncShowsJustCapturedEvent(t *testing.T) {
 	ctx := context.Background()
 	repo := newProjectionTestRepo(t)

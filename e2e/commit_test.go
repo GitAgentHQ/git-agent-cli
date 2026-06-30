@@ -576,9 +576,9 @@ func TestCommitCmd_BootstrapsGraph(t *testing.T) {
 	}
 
 	// The new commit must be reflected in the co-change index.
-	out, code := gitAgent(t, dir, "graph", "status", "-o", "json")
+	out, code := gitAgent(t, dir, "status", "-o", "json")
 	if code != 0 {
-		t.Fatalf("graph status exit %d: %s", code, out)
+		t.Fatalf("status exit %d: %s", code, out)
 	}
 	if !strings.Contains(out, `"commit_count"`) || strings.Contains(out, `"commit_count": 0`) {
 		t.Errorf("expected commit_count > 0 after commit, got: %s", out)

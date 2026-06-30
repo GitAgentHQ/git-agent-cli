@@ -10,6 +10,27 @@ import (
 
 const maxCoChangeHints = 20
 
+// maxHintSubjects caps how many commit subjects accompany a single co-change
+// hint — enough to convey the semantic reason for the coupling without flooding
+// the planner prompt.
+const maxHintSubjects = 2
+
+// linkingSubjects projects up to n commit subjects from the linking commits,
+// skipping blanks.
+func linkingSubjects(commits []graph.CommitRef, n int) []string {
+	var out []string
+	for _, c := range commits {
+		if c.Subject == "" {
+			continue
+		}
+		out = append(out, c.Subject)
+		if len(out) >= n {
+			break
+		}
+	}
+	return out
+}
+
 // GraphCoChangeProvider queries co-change data from the graph repository
 // and returns hints for files that frequently change together.
 type GraphCoChangeProvider struct {
@@ -41,10 +62,11 @@ func (p *GraphCoChangeProvider) GetHintsForFiles(ctx context.Context, files []st
 
 	for _, f := range files {
 		result, err := p.repo.Impact(ctx, graph.ImpactRequest{
-			Paths:    []string{f},
-			Depth:    1,
-			Top:      5,
-			MinCount: 3,
+			Paths:          []string{f},
+			Depth:          1,
+			Top:            5,
+			MinCount:       3,
+			IncludeCommits: true,
 		})
 		if err != nil {
 			return nil, err
@@ -67,6 +89,7 @@ func (p *GraphCoChangeProvider) GetHintsForFiles(ctx context.Context, files []st
 				FileA:    a,
 				FileB:    b,
 				Strength: entry.CouplingStrength,
+				Subjects: linkingSubjects(entry.LinkingCommits, maxHintSubjects),
 			})
 		}
 	}

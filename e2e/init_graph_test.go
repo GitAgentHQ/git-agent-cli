@@ -7,15 +7,14 @@ import (
 	"testing"
 )
 
-// TestInitCmd_GraphFlag_BuildsAllThreeLayers asserts `init --graph` is the
-// one-shot cold start for the code graph: it builds the commit-history +
-// co-change index (L2, the step `graph index` never did), the Event-Log
-// projections (L3), and the AST symbol index (L1) — all without an LLM.
-func TestInitCmd_GraphFlag_BuildsAllThreeLayers(t *testing.T) {
+// TestInitCmd_GraphFlag_BuildsGraph asserts `init --graph` is the one-shot cold
+// start for the code graph: it builds the commit-history + co-change index (L2)
+// and the Event-Log projections (L3) — all without an LLM. The result is
+// queryable via `status` and `related`.
+func TestInitCmd_GraphFlag_BuildsGraph(t *testing.T) {
 	dir := newGitRepo(t)
 
-	// Two Go files that call each other, committed together twice so co-change
-	// has a pair to record and AST has caller/callee edges.
+	// Two files committed together twice so co-change has a pair to record.
 	writeFile(t, filepath.Join(dir, "a.go"), "package main\n\nfunc A() { B() }\n")
 	writeFile(t, filepath.Join(dir, "b.go"), "package main\n\nfunc B() {}\n")
 	runGit(t, dir, "add", "a.go", "b.go")
@@ -36,10 +35,10 @@ func TestInitCmd_GraphFlag_BuildsAllThreeLayers(t *testing.T) {
 		t.Fatalf("graph.db not created: %v", err)
 	}
 
-	// L2: commit-history + co-change populated.
-	status, code := gitAgent(t, dir, "graph", "status", "-o", "json")
+	// L2: commit-history + co-change populated, reported by the top-level status.
+	status, code := gitAgent(t, dir, "status", "-o", "json")
 	if code != 0 {
-		t.Fatalf("graph status: exit %d\noutput: %s", code, status)
+		t.Fatalf("status: exit %d\noutput: %s", code, status)
 	}
 	if !strings.Contains(status, `"commit_count": 2`) {
 		t.Errorf("expected commit_count 2, got: %s", status)
@@ -48,13 +47,13 @@ func TestInitCmd_GraphFlag_BuildsAllThreeLayers(t *testing.T) {
 		t.Errorf("expected co_changed_count > 0 (a.go/b.go co-change), got: %s", status)
 	}
 
-	// L1: AST index populated — callers of B must resolve to A.
-	callers, code := gitAgent(t, dir, "graph", "callers", "B", "-o", "json")
+	// Co-change is queryable: a.go's related set includes b.go.
+	related, code := gitAgent(t, dir, "related", "a.go", "-o", "json", "--min-count", "2")
 	if code != 0 {
-		t.Fatalf("graph callers B: exit %d\noutput: %s", code, callers)
+		t.Fatalf("related a.go: exit %d\noutput: %s", code, related)
 	}
-	if !strings.Contains(callers, `"A"`) {
-		t.Errorf("expected caller A of B in AST index, got: %s", callers)
+	if !strings.Contains(related, "b.go") {
+		t.Errorf("expected b.go in a.go's related set, got: %s", related)
 	}
 }
 

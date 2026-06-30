@@ -318,7 +318,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	// git-first graph generation (continued): the commit(s) have landed and the
 	// output is printed, so now bootstrap the graph if none existed and fold the
 	// new commit into the co-change index — the graph grows as a byproduct of
-	// committing, never needing a separate manual `graph index`. Running here,
+	// committing, never needing a separate manual index step. Running here,
 	// after the commit, keeps the gitignore/dir bootstrap from dirtying the
 	// committed tree. Disabled by graph_autobuild=false. Strictly best-effort:
 	// the commit is already done, so failures only surface under --verbose.

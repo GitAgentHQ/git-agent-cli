@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion is the schema version written by this git-agent build.
 // A database with a higher stored version was produced by a newer binary and
 // cannot be read safely.
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 // GraphDBRelPath is the repo-relative path to the SQLite graph database. It is
 // the single source of truth shared by every command that opens the DB and by
@@ -157,19 +157,15 @@ func (c *SQLiteClient) setSchemaVersion(ctx context.Context) error {
 }
 
 // migrations are idempotent column additions for pre-existing databases that
-// predate the column. CREATE TABLE IF NOT EXISTS won't add columns to an
-// already-created table, so each migration checks pragma table_info first.
+// predate the column. Empty now that the AST layer is gone; kept as the seam
+// for future co-change/audit column additions.
 var migrations = []struct {
 	table string
 	col   string
 	decl  string
-}{
-	{"ast_unresolved_refs", "var_call_hint", "TEXT DEFAULT ''"},
-	{"ast_edges", "metadata", "TEXT"},
-}
+}{}
 
 func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
-	ranMigration := false
 	for _, m := range migrations {
 		exists, err := c.columnExists(ctx, m.table, m.col)
 		if err != nil {
@@ -182,32 +178,9 @@ func (c *SQLiteClient) applyMigrations(ctx context.Context) error {
 		if _, err := c.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate add %s.%s: %w", m.table, m.col, err)
 		}
-		ranMigration = true
 	}
-	actionProducesMigrated, err := c.migrateActionProduces(ctx)
-	if err != nil {
+	if _, err := c.migrateActionProduces(ctx); err != nil {
 		return err
-	}
-	ranMigration = ranMigration || actionProducesMigrated
-
-	// Rebuild the FTS index if a migration just changed the schema, or if the
-	// FTS table exists but is empty (e.g. triggers were absent when ast_nodes
-	// rows were first inserted). Skipped on the steady-state open path so we
-	// don't pay an O(n) reindex every invocation.
-	if ranMigration {
-		if _, err := c.db.ExecContext(ctx, `INSERT INTO ast_nodes_fts(ast_nodes_fts) VALUES('rebuild')`); err != nil {
-			return fmt.Errorf("rebuild ast_nodes_fts after migration: %w", err)
-		}
-		return nil
-	}
-	empty, err := c.ftsTableEmpty(ctx)
-	if err != nil {
-		return err
-	}
-	if empty {
-		if _, err := c.db.ExecContext(ctx, `INSERT INTO ast_nodes_fts(ast_nodes_fts) VALUES('rebuild')`); err != nil {
-			return fmt.Errorf("rebuild empty ast_nodes_fts: %w", err)
-		}
 	}
 	return nil
 }
@@ -290,22 +263,6 @@ func (c *SQLiteClient) actionProducesNeedsRebuild(ctx context.Context) (bool, bo
 	}
 	needsRebuild := pk["action_id"] != 1 || pk["commit_hash"] != 2 || pk["file_path"] != 3
 	return needsRebuild, hasFilePath, nil
-}
-
-// ftsTableEmpty reports whether the FTS index has zero rows but ast_nodes has
-// rows — the signal that the FTS table needs backfilling.
-func (c *SQLiteClient) ftsTableEmpty(ctx context.Context) (bool, error) {
-	var ftsCount, nodeCount int
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM ast_nodes_fts`).Scan(&ftsCount); err != nil {
-		return false, fmt.Errorf("count ast_nodes_fts: %w", err)
-	}
-	if ftsCount > 0 {
-		return false, nil
-	}
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM ast_nodes`).Scan(&nodeCount); err != nil {
-		return false, fmt.Errorf("count ast_nodes: %w", err)
-	}
-	return nodeCount > 0, nil
 }
 
 func (c *SQLiteClient) columnExists(ctx context.Context, table, col string) (bool, error) {
@@ -496,97 +453,14 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_renames_old ON renames(old_path)`,
 	`CREATE INDEX IF NOT EXISTS idx_renames_new ON renames(new_path)`,
 
-	// AST layer
-	`CREATE TABLE IF NOT EXISTS ast_nodes (
-		id TEXT PRIMARY KEY,
-		kind TEXT NOT NULL,
-		name TEXT NOT NULL,
-		qualified_name TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		language TEXT NOT NULL,
-		start_line INTEGER NOT NULL,
-		end_line INTEGER NOT NULL,
-		start_column INTEGER NOT NULL DEFAULT 0,
-		end_column INTEGER NOT NULL DEFAULT 0,
-		signature TEXT,
-		visibility TEXT,
-		is_exported INTEGER DEFAULT 0,
-		is_async INTEGER DEFAULT 0,
-		is_static INTEGER DEFAULT 0,
-		is_abstract INTEGER DEFAULT 0,
-		return_type TEXT,
-		updated_at INTEGER NOT NULL
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS ast_edges (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		source TEXT NOT NULL,
-		target TEXT NOT NULL,
-		kind TEXT NOT NULL,
-		line INTEGER,
-		column INTEGER DEFAULT 0,
-		provenance TEXT DEFAULT 'tree-sitter',
-		metadata TEXT
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS ast_unresolved_refs (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		from_node_id TEXT NOT NULL,
-		reference_name TEXT NOT NULL,
-		reference_kind TEXT NOT NULL,
-		line INTEGER,
-		column INTEGER DEFAULT 0,
-		file_path TEXT,
-		language TEXT,
-		var_call_hint TEXT DEFAULT ''
-	)`,
-
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_kind ON ast_nodes(kind)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_name ON ast_nodes(name)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_qualified_name ON ast_nodes(qualified_name)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_file_path ON ast_nodes(file_path)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_language ON ast_nodes(language)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_nodes_lower_name ON ast_nodes(lower(name))`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_edges_source_kind ON ast_edges(source, kind)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_edges_target_kind ON ast_edges(target, kind)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_edges_kind ON ast_edges(kind)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_unresolved_from_node ON ast_unresolved_refs(from_node_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_ast_unresolved_name ON ast_unresolved_refs(reference_name)`,
-
-	// Prevent duplicate edges on re-index (same source→target→kind).
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_ast_edges_unique ON ast_edges(source, target, kind)`,
-
-	// Prevent duplicate unresolved refs on re-index.
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_ast_unresolved_unique ON ast_unresolved_refs(from_node_id, reference_name, line)`,
-
-	// FTS5 full-text index over ast_nodes for ranked symbol search across
-	// name, qualified_name, and signature. The external-content pattern points
-	// at ast_nodes so inserts/updates/deletes are mirrored by triggers and the
-	// FTS rowid matches the ast_nodes.rowid. The 'rebuild' backfill is run
-	// conditionally in applyMigrations (only when a migration ran or the FTS
-	// table is empty), to avoid re-indexing the whole table on every open.
-	`CREATE VIRTUAL TABLE IF NOT EXISTS ast_nodes_fts USING fts5(
-		name,
-		qualified_name,
-		signature,
-		content='ast_nodes',
-		content_rowid='rowid'
-	)`,
-
-	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_ai AFTER INSERT ON ast_nodes BEGIN
-		INSERT INTO ast_nodes_fts(rowid, name, qualified_name, signature)
-		VALUES (new.rowid, new.name, new.qualified_name, new.signature);
-	END`,
-
-	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_ad AFTER DELETE ON ast_nodes BEGIN
-		INSERT INTO ast_nodes_fts(ast_nodes_fts, rowid, name, qualified_name, signature)
-		VALUES('delete', old.rowid, old.name, old.qualified_name, old.signature);
-	END`,
-
-	`CREATE TRIGGER IF NOT EXISTS ast_nodes_fts_au AFTER UPDATE ON ast_nodes BEGIN
-		INSERT INTO ast_nodes_fts(ast_nodes_fts, rowid, name, qualified_name, signature)
-		VALUES('delete', old.rowid, old.name, old.qualified_name, old.signature);
-		INSERT INTO ast_nodes_fts(rowid, name, qualified_name, signature)
-		VALUES (new.rowid, new.name, new.qualified_name, new.signature);
-	END`,
+	// Retired AST layer (schema v3): drop on open so a database built before
+	// the co-change-only refactor sheds these tables without a full rebuild.
+	// Idempotent — a no-op once the tables are gone (and on a fresh DB).
+	`DROP TRIGGER IF EXISTS ast_nodes_fts_ai`,
+	`DROP TRIGGER IF EXISTS ast_nodes_fts_ad`,
+	`DROP TRIGGER IF EXISTS ast_nodes_fts_au`,
+	`DROP TABLE IF EXISTS ast_nodes_fts`,
+	`DROP TABLE IF EXISTS ast_nodes`,
+	`DROP TABLE IF EXISTS ast_edges`,
+	`DROP TABLE IF EXISTS ast_unresolved_refs`,
 }

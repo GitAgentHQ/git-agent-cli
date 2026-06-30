@@ -38,7 +38,7 @@ git-agent uses a typed exit-code taxonomy across all commands:
 | `0` | Success |
 | `1` | General error (no API key, git error, no changes, etc.) |
 | `2` | Commit blocked by a hook after retries |
-| `3` | Graph not indexed — a `graph` read ran before the index was built (run `git-agent init --graph`, or let the next `commit` build it) |
+| `3` | Retired / unused (co-change reads auto-index on first run) |
 | `4` | Event Log chain integrity broken (`audit verify` / `audit diagnose`) |
 
 ---
@@ -51,7 +51,7 @@ Every read command takes a single `-o, --output` flag:
 -o, --output {auto,json,text}
 ```
 
-- `auto` (the default for `graph` and `audit` reads): JSON when stdout is piped, text on a TTY.
+- `auto` (the default for `related`, `status`, and `audit` reads): JSON when stdout is piped, text on a TTY.
 - `json`: force machine-readable JSON.
 - `text`: force human-readable text.
 
@@ -329,50 +329,25 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ---
 
-## git-agent graph
+## git-agent related
 
 ```
-git-agent graph [command]
-```
-
-Query the deterministic code graph: the AST (symbols and their call structure)
-and the commit-history co-change index (which files change together). Both are
-re-derivable from the current repository state; all queries are read-only,
-offline, and need no API key.
-
-| Subcommand | Purpose |
-|---|---|
-| `search <query>` | FTS5 symbol search |
-| `symbol <name>` | A symbol's location, signature, source, and one-hop trail |
-| `callers <symbol>` | Symbols that call or reference a symbol (incoming edges; blast radius) |
-| `callees <symbol>` | Symbols a symbol calls or references (outgoing edges) |
-| `external-refs` | Call/field sites into external packages |
-| `affected [files...]` | Test files affected by changed files |
-| `impact [path...]` | Co-change coupling for the given files |
-| `status` | Index health and row counts |
-
-For forensic queries over the agent Event Log (action history, regression
-tracing, file provenance, chain-integrity audit) use `git-agent audit`.
-
----
-
-## git-agent graph impact
-
-```
-git-agent graph impact [path...]
+git-agent related [path...]
 ```
 
 Show the files that historically change together with the given seeds
-(co-change coupling). Seeds are one or more files, a directory (expands to its
-tracked files), or — with **no arguments** — the current working-tree changes
-("given what I've edited, what else usually moves?"). Co-change neighbours are
-aggregated across all seeds, so a file coupled to several seeds ranks above one
-coupled to a single seed. The first run auto-indexes git history; queries are
-offline (no LLM / API key). Tooling directories (`.git-agent/`, `.claude/`) are
-never used as seeds.
+(co-change coupling), mined from git history. Seeds are one or more files, a
+directory (expands to its tracked files), or — with **no arguments** — the
+current working-tree changes ("given what I've edited, what else usually
+moves?"). Co-change neighbours are aggregated across all seeds, so a file
+coupled to several seeds ranks above one coupled to a single seed. The query is
+**language-agnostic** (it reads commit history, not source code), offline (no
+LLM / API key), and the first run auto-indexes git history. Tooling directories
+(`.git-agent/`, `.claude/`) are never used as seeds.
 
-For symbol-level structural blast radius — which symbols call or reference a
-function — use `git-agent graph callers <symbol> --depth N` instead.
+In JSON, each related file also carries a `commits` array — the actual commits
+that linked it to a seed (`{sha, subject, ts}`) — so you can read *why* two
+files are coupled, not just that they are.
 
 ### Flags
 
@@ -382,6 +357,7 @@ function — use `git-agent graph callers <symbol> --depth N` instead.
 | `--top N` | 20 | Max results |
 | `--min-count N` | 3 | Minimum co-change count to include (index floor is 2; values below 2 cannot surface more) |
 | `--reindex` | false | Force a full re-index before querying |
+| `--tests` | false | Keep only related test files — "which tests should I run for this change?" |
 | `-o, --output` | auto | Output format: `auto`, `json`, or `text` (JSON when piped, text on a TTY) |
 
 ### Output
@@ -389,144 +365,32 @@ function — use `git-agent graph callers <symbol> --depth N` instead.
 Text shows `path  strength%  (N co-changes)`, with `[M/T seeds: ...]` when more
 than one seed. JSON fields per entry: `path`, `coupling_count`,
 `coupling_strength`, `score` (sum of strengths over matched seeds — the rank
-key), `seed_matches`, `related_to` (which seeds), `depth`. Top-level: `targets`,
-`co_changed`, `total_found`, `query_ms`.
+key), `seed_matches`, `related_to` (which seeds), `depth`, and `commits`
+(`[{sha, subject, ts}]` — the commits that link this file to a seed). Top-level:
+`targets`, `co_changed`, `total_found`, `query_ms`.
 
 ```bash
-git-agent graph impact application/commit_service.go cmd/commit.go -o json
-git-agent graph impact internal/auth                                  # a whole module
-git-agent graph impact                                                # seeds = my current edits
+git-agent related application/commit_service.go cmd/commit.go -o json
+git-agent related internal/auth                                  # a whole module
+git-agent related                                                # seeds = my current edits
+git-agent related --tests                                        # which tests to run for my edits
 ```
 
-## git-agent graph callers
+## git-agent status
 
 ```
-git-agent graph callers <symbol> [--depth N] [--reindex] [-o <format>]
+git-agent status [-o <format>]
 ```
 
-AST nodes that call or reference the given symbol (incoming edges), traversed
-up to `--depth`. The inverse of `callees`, and the way to get a symbol's blast
-radius — raise `--depth` to widen the transitive set of dependents.
-Auto-indexes the AST on first run.
-
-### Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--depth N` | 1 | Transitive traversal depth |
-| `--reindex` | false | Force a full AST re-index before query |
-| `-o, --output` | auto | Output format: `auto`, `json`, or `text` |
-
-### Fields
-
-`symbol`, `direction`, `depth`, `results[]` (`{node, edge, depth}`), `total`.
-
-## git-agent graph callees
-
-```
-git-agent graph callees <symbol> [--depth N] [--reindex] [-o <format>]
-```
-
-AST nodes the given symbol calls or references (outgoing edges), traversed up to
-`--depth`. The inverse of `callers`. Same flags and output shape as `callers`
-(with `direction: "callees"`).
-
-## git-agent graph symbol
-
-```
-git-agent graph symbol <name> [--reindex] [-o <format>]
-```
-
-Look up AST symbols by name and print each one's kind, file, line range, and
-signature, plus a source snippet read from the working tree and the one-hop
-caller/callee trails. Returns an object `{"matches": [...]}` with one entry per
-matching symbol (names can be ambiguous). Auto-indexes the AST on first run.
-
-### Fields (per `matches[]` entry)
-
-`node` (full `ASTNode`), `source` (snippet, omit if unavailable), `callers[]`,
-`callees[]` (`{node, edge, depth}`).
-
-## git-agent graph search
-
-```
-git-agent graph search <query> [--kind <k>] [--reindex] [-o <format>]
-```
-
-FTS5 **prefix** search over indexed symbols: matches the `name`,
-`qualified_name`, or `signature` columns (e.g. `process` matches
-`processData`; `data` does not — it is not a name prefix). `bm25`-ranked.
-Filter by node kind with `--kind` (e.g. `function`, `method`, `type`).
-
-### Fields
-
-`query`, `results[]` (`{Node, Score}`), `total`.
-
-## git-agent graph external-refs
-
-```
-git-agent graph external-refs [--reindex] [-o <format>]
-```
-
-List every call or field-read site where this repo reaches into an external
-(non-indexed) package. The AST index only parses git-tracked files in this
-repo, so symbols from imported packages (`github.com/spf13/pflag`, `fmt`,
-`os`, …) are never indexed as nodes; this surfaces where the code references
-them instead of leaving those edges silently unresolved — the answer
-`callers`/`search` cannot give, since they only walk the resolved AST edge
-graph. Use it when `graph callers` reports a symbol is "exported by external
-package". Read-only.
-
-### Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--reindex` | false | Force a full AST re-index before listing |
-| `-o, --output` | auto | Output format: `auto`, `json`, or `text` |
-
-Results group by external package; each entry shows the referencing symbol, the
-file and line, and the qualified reference name.
-
-## git-agent graph affected
-
-```
-git-agent graph affected [files...] [--depth N] [--reindex] [-o <format>]
-```
-
-Trace transitive dependents of the symbols declared in the changed files and
-filter them to test files (Go: `*_test.go`). The inverse question of `impact`:
-given what I changed, which tests should I run? With no file args and stdin
-piped, reads `git diff --name-only` from stdin; with no args and a TTY, uses
-the working-tree changes.
-
-### Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--depth N` | 2 | Transitive caller traversal depth |
-| `--reindex` | false | Force a full AST re-index before tracing |
-| `-o, --output` | auto | Output format: `auto`, `json`, or `text` |
-
-### Fields
-
-`changed_files[]`, `tests[]` (`{test_file, symbol, kind, line, depth, via}`),
-`total`.
-
-## git-agent graph status
-
-```
-git-agent graph status [-o <format>]
-```
-
-Snapshot of graph index health: whether the index exists, the last indexed
-commit, and row counts. Read-only. The first `graph impact` run auto-indexes
-git history, so `commit_count`/`file_count`/`author_count`/`co_changed_count`
-stay 0 until then.
+Snapshot of index health: whether the index exists, the last indexed commit,
+and row counts. Read-only; auto-syncs projections before reading. The first
+`related` run auto-indexes git history, so
+`commit_count`/`file_count`/`author_count`/`co_changed_count` stay 0 until then.
 
 ### Fields
 
 `exists`, `last_indexed_commit` (omitempty — absent until git history is
-indexed by the first `graph impact`), `commit_count`, `file_count`,
+indexed by the first `related`), `commit_count`, `file_count`,
 `author_count`, `co_changed_count`, `session_count`, `action_count`,
 `db_size_bytes` (SQLite page_count × page_size).
 
@@ -536,50 +400,17 @@ indexed by the first `graph impact`), `commit_count`, `file_count`,
 git-agent init --graph
 ```
 
-One-shot cold start that builds ALL three graph layers in a single pass — no
-LLM needed:
-1. Commit-history + co-change index (L2): `EnsureIndex` with Force reads git
-   history and recomputes `co_changed` — the layer `graph index` never built.
-2. Event-Log projections (L3): `SyncEventLog` replays the Event Log into
+One-shot cold start that builds both graph layers in a single pass — no LLM
+needed:
+1. Commit-history + co-change index: `EnsureIndex` with Force reads git history
+   and recomputes `co_changed` (the data `related` reads).
+2. Event-Log projections: `SyncEventLog` replays the Event Log into
    sessions/actions/event_files, reconciling out-of-band working-tree changes.
-3. AST index (L1): a full symbol/call-graph index (the index `callers` /
-   `callees` / `symbol` / `search` / `affected` read); skipped on a repo with
-   no commits yet.
 
 This is opt-in: the default `init` wizard does NOT build the graph. The graph
 builds automatically instead — the first `git-agent commit` bootstraps and
-maintains it (via `graph_autobuild`), and every graph read syncs projections
-before reading. Run `init --graph` only for an explicit full cold start.
-
-## git-agent graph index (hidden alias)
-
-```
-git-agent graph index [--reindex]
-```
-
-Hidden from `--help`. Rebuilds the Event-Log projections (sessions, actions,
-event_files) and ensures the AST index (`--reindex` forces a full AST re-index).
-It does NOT rebuild the commit-history co-change layer. For a full build of all
-three layers, use `git-agent init --graph`. Kept as a compatibility alias for
-scripts; building is otherwise automatic.
-
-## git-agent graph sync (hidden alias)
-
-```
-git-agent graph sync [-o <format>]
-```
-
-Hidden from `--help`. Brings the Event-Log projections up to date by
-incrementally replaying only the new events (no-op when already current;
-`max_projected_seq >= max_event_seq`). This is now automatic — every graph and
-audit read (`impact`/`timeline`/`provenance`/`diagnose`) syncs before reading,
-and `commit` keeps projections fresh. Kept as a compatibility alias for scripted
-cold reads.
-
-### Fields
-
-`max_event_seq`, `max_projected_seq` (pre-sync), `up_to_date` (was already
-current / no-op), `replayed` (an incremental replay ran), `out_of_band_appended`.
+maintains it (via `graph_autobuild`), and every read syncs projections before
+reading. Run `init --graph` only for an explicit full cold start.
 
 ---
 
@@ -600,8 +431,8 @@ need no API key.
 | `provenance <file>` | Rename-aware change history for one file |
 | `verify` | Check the Event Log hash chain for tampering (exits 4 on break) |
 
-For structural queries over the current code (callers, symbol lookup,
-co-change) use `git-agent graph`.
+For co-change relations over the current code (which files historically change
+together) use `git-agent related`.
 
 ---
 
@@ -623,7 +454,7 @@ git-agent audit diagnose [symptom] [--file <source>] [--llm] [--top N] [--force]
 Trace a regression to the agent action that most likely introduced it. Verifies
 the Event Log, derives the Suspect Window between the last passing and first
 failing test **Outcome Event**, expands the relevant file set via co-change
-`impact`, then ranks the suspect Events deterministically. Each Candidate
+`related`, then ranks the suspect Events deterministically. Each Candidate
 carries before/after File Blob Refs so the introducing diff can be
 reconstructed. Exits 4 on a chain integrity break unless `--force`.
 
@@ -646,7 +477,7 @@ to `Kind: "outcome"` with the test name and pass/fail. Without Outcome Events
 there is no green/red boundary, so diagnose returns no candidates. To use
 diagnose: capture the agent's test-run actions (the PostToolUse hook does this
 automatically for Bash), then `audit diagnose` (projections auto-sync before
-the read; no separate `graph index`/`sync` needed).
+the read; no separate index step needed).
 
 ### Flags
 
