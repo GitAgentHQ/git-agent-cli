@@ -86,3 +86,31 @@ func TestRelated_ReportsCoChangeWithLinkingCommits(t *testing.T) {
 		}
 	}
 }
+
+// TestRelated_NoSeeds_EmitsEmptyJSON guards the agent JSON contract on the
+// no-seeds branch: when every argument is filtered (here, a tooling path that
+// never carries co-change data), `-o json` must still emit a valid, parseable
+// empty result on stdout rather than nothing — so a pipe into jq never hits a
+// parse error. Exit code stays 0 (an empty answer is not an error).
+func TestRelated_NoSeeds_EmitsEmptyJSON(t *testing.T) {
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, "main.txt"), "hello\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+
+	// A tooling path is filtered out of the seed set, so seeds resolve to empty.
+	out, code := gitAgent(t, dir, "related", ".git-agent/graph.db", "-o", "json")
+	if code != 0 {
+		t.Fatalf("related no-seeds: exit %d\n%s", code, out)
+	}
+	if strings.TrimSpace(out) == "" {
+		t.Fatalf("no-seeds JSON must emit a result on stdout, got empty output")
+	}
+	var result graph.ImpactResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("no-seeds output not valid JSON: %v\n%s", err, out)
+	}
+	if len(result.CoChanged) != 0 {
+		t.Errorf("no-seeds result must be empty, got %d entries", len(result.CoChanged))
+	}
+}
