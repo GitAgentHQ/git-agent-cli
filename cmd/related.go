@@ -65,6 +65,12 @@ func runRelated(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(seeds) == 0 {
+		// Honor the agent JSON contract: emit a valid empty result on stdout
+		// (matching the shape of a legitimately empty query) instead of nothing,
+		// so a pipe into jq never hits a parse error on the no-seeds branch.
+		if outputFormat(cmd) == output.FormatJSON {
+			return output.EncodeJSON(cmd.OutOrStdout(), &graph.ImpactResult{Targets: args})
+		}
 		if len(args) == 0 {
 			fmt.Fprintln(cmd.ErrOrStderr(), "No working-tree changes to analyze. Pass one or more files or directories.")
 		} else {

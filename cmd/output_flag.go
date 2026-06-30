@@ -29,8 +29,8 @@ func (o *outputValue) Type() string { return "format" }
 
 // addOutputFlag registers the shared -o/--output flag defaulting to auto (JSON
 // when stdout is piped, text on a TTY). When persistent is true it is declared on
-// the command's persistent flag set so every child inherits it (used by the graph
-// and audit query parents); otherwise it is a local flag.
+// the command's persistent flag set so every child inherits it (used by the audit
+// query parent); otherwise it is a local flag.
 func addOutputFlag(cmd *cobra.Command, persistent bool) {
 	addOutputFlagWithDefault(cmd, persistent, "auto")
 }
