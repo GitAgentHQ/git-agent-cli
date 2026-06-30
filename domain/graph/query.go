@@ -45,37 +45,3 @@ type CommitRef struct {
 	Subject   string `json:"subject"`
 	Timestamp int64  `json:"ts"`
 }
-
-// TimelineRequest is the input for a timeline query.
-type TimelineRequest struct {
-	Since  int64  // unix timestamp, 0 = all
-	Source string // filter by source, empty = all
-	File   string // filter by file path, empty = all
-	Top    int    // max sessions, default 50
-}
-
-// TimelineResult is the output of a timeline query.
-type TimelineResult struct {
-	Sessions      []TimelineSession `json:"sessions"`
-	TotalSessions int               `json:"total_sessions"`
-	TotalActions  int               `json:"total_actions"`
-	QueryMs       int64             `json:"query_ms"`
-}
-
-// TimelineSession is a session with its actions in the timeline.
-type TimelineSession struct {
-	ID          string           `json:"id"`
-	Source      string           `json:"source"`
-	StartedAt   string           `json:"started_at"` // RFC 3339
-	EndedAt     string           `json:"ended_at,omitempty"`
-	ActionCount int              `json:"action_count"`
-	Actions     []TimelineAction `json:"actions,omitempty"`
-}
-
-// TimelineAction is a single action in the timeline.
-type TimelineAction struct {
-	ID        string   `json:"id"`
-	Tool      string   `json:"tool"`
-	Timestamp string   `json:"timestamp"` // RFC 3339
-	Files     []string `json:"files"`
-}
