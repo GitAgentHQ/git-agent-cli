@@ -185,13 +185,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 				graphRepo = repo
 				graphGit = infraGit.NewGraphClient(root)
 				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
-				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
-				// Sync projections and reconcile out-of-band edits before committing
-				// so captured actions are linkable and unexplained changes are
-				// recorded. Best-effort: a cold-path failure must never block commit.
-				if _, serr := application.SyncEventLog(cmd.Context(), graphRepo, graphGit); serr != nil && verbose {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: event log sync: %v\n", serr)
-				}
 			}
 		}
 	}

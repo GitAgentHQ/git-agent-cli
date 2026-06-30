@@ -32,9 +32,8 @@ With no flags, runs the full setup wizard:
   4. Writes .git-agent/config.yml with scopes and hook: [conventional]
 
 Use --scope or --gitignore to run individual steps.
-Use --graph to build the code graph (commit-history co-change + Event-Log
-projections) as a one-shot cold start; otherwise the graph is
-built automatically by the first commit.
+Use --graph to build the code graph (commit-history co-change) as a one-shot
+cold start; otherwise the graph is built automatically by the first commit.
 Use 'git-agent config set hook <value>' to reconfigure hooks.`,
 	RunE: runInit,
 }
@@ -43,7 +42,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	scopeChanged := cmd.Flags().Changed("scope")
 	gitignoreChanged := cmd.Flags().Changed("gitignore")
 	hookChanged := cmd.Flags().Changed("hook")
-	agentHookChanged := cmd.Flags().Changed("agent-hook")
 	graphChanged := cmd.Flags().Changed("graph")
 	localChanged := cmd.Flags().Changed("local")
 	userChanged := cmd.Flags().Changed("user")
@@ -52,7 +50,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	maxCommits, _ := cmd.Flags().GetInt("max-commits")
 	doGitignore, _ := cmd.Flags().GetBool("gitignore")
-	doAgentHook, _ := cmd.Flags().GetBool("agent-hook")
 	doGraph, _ := cmd.Flags().GetBool("graph")
 	hookValues, _ := cmd.Flags().GetStringArray("hook")
 
@@ -66,9 +63,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Default: no flags → full wizard. --graph is opt-in: the wizard does NOT
 	// build the graph (the first commit does, via graph_autobuild), so a plain
 	// `init` stays fast and free of an LLM-free but history-bound index pass.
-	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged && !agentHookChanged && !graphChanged
+	fullWizard := !scopeChanged && !gitignoreChanged && !hookChanged && !graphChanged
 	if fullWizard && localChanged {
-		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, --hook, --agent-hook, or --graph")
+		return fmt.Errorf("--local requires at least one action flag: --scope, --gitignore, --hook, or --graph")
 	}
 	if fullWizard && userChanged {
 		return fmt.Errorf("--user requires --hook")
@@ -76,7 +73,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if fullWizard {
 		doScope = true
 		doGitignore = true
-		doAgentHook = true
 	}
 
 	// Ensure we're in a git repo before doing anything else.
@@ -131,21 +127,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Install the Claude Code PostToolUse hook so agent edits are captured into
-	// the graph automatically. Independent of config.yml — only needs the repo.
-	if doAgentHook {
-		gitClient := infraGit.NewClient()
-		root, err := gitClient.RepoRoot(cmd.Context())
-		if err != nil {
-			return fmt.Errorf("repo root: %w", err)
-		}
-		path, err := installAgentHook(root)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Installed Claude Code capture hook: %s\n", path)
-	}
-
 	if doGraph {
 		if err := runInitGraph(cmd); err != nil {
 			return err
@@ -155,10 +136,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runInitGraph is the one-shot cold start for the code graph: it builds both
-// layers — commit-history + co-change (L2, via EnsureIndex with Force) and the
-// Event-Log projections (L3, via SyncEventLog). It reuses openGraphDB for
-// dir/gitignore/untrack/schema hygiene and needs no LLM provider.
+// runInitGraph is the one-shot cold start for the code graph: it builds the
+// commit-history + co-change layer (via EnsureIndex with Force). It reuses
+// openGraphDB for dir/gitignore/untrack/schema hygiene and needs no LLM
+// provider.
 func runInitGraph(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	root, err := infraGit.NewClient().RepoRoot(ctx)
@@ -193,12 +174,7 @@ func runInitGraph(cmd *cobra.Command) error {
 	fmt.Fprintf(out, "Indexed %d commits, %d files, %d co-change pairs\n",
 		ir.IndexedCommits, ir.Files, coChanged)
 
-	// L3: Event-Log projections (sessions/actions/event_files).
-	if _, err := application.SyncEventLog(ctx, repo, graphGit); err != nil {
-		return fmt.Errorf("replay event log: %w", err)
-	}
-
-	fmt.Fprintln(out, "Code graph built (commit-history + Event-Log projections)")
+	fmt.Fprintln(out, "Code graph built (commit-history co-change)")
 	return nil
 }
 
@@ -303,8 +279,7 @@ func ResetInitFlags() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
-	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
-	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change + Event-Log projections) as a one-shot cold start")
+	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change) as a one-shot cold start")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")
@@ -316,8 +291,7 @@ func init() {
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
 	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
 	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
-	initCmd.Flags().Bool("agent-hook", false, "install Claude Code PostToolUse hook for automatic action capture")
-	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change + Event-Log projections) as a one-shot cold start")
+	initCmd.Flags().Bool("graph", false, "build the code graph (commit-history co-change) as a one-shot cold start")
 	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
 	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")
