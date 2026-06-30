@@ -47,8 +47,8 @@ func gitAgent(t *testing.T, dir string, args ...string) (string, int) {
 }
 
 // gitAgentSeparated runs git-agent with stdout and stderr captured separately.
-// Used where a command's contract distinguishes the two streams (e.g. diagnose
-// writes its diagnosis report to stdout while errors go to stderr).
+// Used where a command's contract distinguishes the two streams (e.g. a read
+// command writes its result to stdout while errors and progress go to stderr).
 func gitAgentSeparated(t *testing.T, dir string, args ...string) (string, string, int) {
 	t.Helper()
 	c := exec.Command(agentBin, args...)
