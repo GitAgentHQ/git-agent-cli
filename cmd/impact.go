@@ -55,6 +55,9 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 	// Resolve the seed set: explicit paths/dirs, or — with no args — the files
 	// the user is currently changing ("what else moves with my edits?").
+	if err := rejectOutsideRepoArgs(root, cwd, args); err != nil {
+		return err
+	}
 	seeds, err := resolveSeeds(ctx, args, root, cwd, graphGit)
 	if err != nil {
 		return err
@@ -250,6 +253,21 @@ func summarizeTargets(targets []string) string {
 		return strings.Join(targets, ", ")
 	}
 	return fmt.Sprintf("%s +%d more (%d seeds)", strings.Join(targets[:3], ", "), len(targets)-3, len(targets))
+}
+
+// rejectOutsideRepoArgs fails fast (exit 1) when an explicit path argument
+// resolves outside the repository root. Such a path has no graph data and never
+// will; silently returning an empty result would be indistinguishable from a
+// legitimately empty answer. In-repo paths that do not exist on disk are still
+// accepted — they support querying the history of a since-deleted file.
+func rejectOutsideRepoArgs(root, cwd string, args []string) error {
+	for _, arg := range args {
+		rel := normalizeRepoPath(root, cwd, arg)
+		if filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return fmt.Errorf("path %q resolves outside the repository", arg)
+		}
+	}
+	return nil
 }
 
 // normalizeRepoPath converts a user-supplied path into the repo-relative form

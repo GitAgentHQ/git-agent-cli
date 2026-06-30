@@ -29,6 +29,7 @@ Feature: Impact Command Path Normalization
     When impact is run with an absolute path under the symlinked root
     Then symlinks on both sides are resolved and the target is repo-relative
 
-  Scenario: A path outside the repository is left untouched
+  Scenario: A path outside the repository is rejected
     When impact is run with a path that resolves outside the repository
-    Then the cleaned path is queried unchanged
+    Then the command exits 1 with a general error
+    And no query is run against the graph

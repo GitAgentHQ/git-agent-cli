@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,10 @@ func runGraphAffected(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("reindex")
 	ctx := cmd.Context()
 
+	if err := rejectOutsideRepoAffectedArgs(ctx, args); err != nil {
+		return err
+	}
+
 	files, err := resolveAffectedFiles(cmd, args)
 	if err != nil {
 		return err
@@ -56,6 +61,25 @@ func runGraphAffected(cmd *cobra.Command, args []string) error {
 	}
 	renderAffected(out, result)
 	return nil
+}
+
+// rejectOutsideRepoAffectedArgs mirrors impact's rejectOutsideRepoArgs for the
+// affected command: an explicit path that resolves outside the repository is a
+// hard error (exit 1), not a silently empty result. See impact.go for the rule.
+func rejectOutsideRepoAffectedArgs(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	gitClient := infraGit.NewClient()
+	root, err := gitClient.RepoRoot(ctx)
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	return rejectOutsideRepoArgs(root, cwd, args)
 }
 
 // resolveAffectedFiles picks the changed-file source: explicit args, else piped
