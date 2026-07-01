@@ -134,6 +134,17 @@ probably noise.
    ```
    Other supported providers: Cloudflare Workers AI, local Ollama.
 
+5. **On planner timeout** (`LLM planner timed out (model=..., after ...)`) — the
+   diff was too large, or the model too slow, to plan the commit groups in time.
+   `--request-timeout` is **not** a flag; raise the budget via the config key,
+   then retry:
+   ```
+   git-agent config set request_timeout 5m
+   ```
+   Or shrink what the planner has to reason about: sharpen `--intent`, cap the
+   diff with `--max-diff-lines <n>`, or switch to a more capable model via
+   `--model`.
+
 ### Structured output (`-o json`)
 
 When you need to read the result back programmatically (which commits were
