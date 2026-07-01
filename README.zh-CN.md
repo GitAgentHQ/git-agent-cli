@@ -189,6 +189,25 @@ git-agent related application/commit_service.go -o json
 | `--reindex` | false | 查询前强制重新索引 |
 | `-o`、`--output` | 自动 | 输出格式：`auto`、`json`、`text`（管道时为 JSON，TTY 时为文本） |
 
+#### 为什么它与 grep 互补（面向 coding agent）
+
+`related` 是代码搜索的**时间维补充**，而非替代。grep、Glob、编辑器的"查找
+引用"按**当前内容与符号**定位文件（空间维）；`related` 按**它们如何一起变更**
+定位（时间维）。许多真实耦合是符号搜索看不见的：
+
+- 在 `gin` 中，`context.go` 的 top 共变伙伴有过半（`tree.go`、`errors.go`、
+  `binding/*`、`render/*`）与 `Context` 符号无任何文本关联——grep 无法发现。
+- 在 `flask` 中，`app.py` 与 `CHANGES.rst`（85 次提交）、`docs/templating.rst`
+  共变；仅靠 grep 永远不会提醒你改 `app.py` 时还要更新 changelog 和文档。
+
+JSON 的 `commits` 数组还给出每条耦合背后的**意图**，这是静态搜索给不了的。
+实用流程：`related <file>`（改动爆炸半径 + 解释原因的提交）→ grep/读这些文件
+（精确代码）→ `related <file> --tests`（该跑哪些测试）。它离线、毫秒级响应，
+agent 可以在每次多文件改动时调用。
+
+共变是**聚合信号**：对一致耦合（实现与其测试）准确，对跨特性或大范围扫荡式
+提交较软。读 `commits` 的标题，即可区分真实耦合与偶发噪声。
+
 ### `git-agent status`
 
 显示图索引的健康度与行数：提交、文件、作者、共变对、最后索引的提交，

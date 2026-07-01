@@ -10,8 +10,7 @@ type ImpactRequest struct {
 	MinCount int // minimum co-change count, default 3
 	// IncludeCommits attaches, to each result entry, the commits that link it to
 	// the seeds (the "why are these related?" evidence). Off by default so callers
-	// that only need the coupled paths (e.g. diagnose's relevant-set expansion)
-	// don't pay for the extra per-entry lookups.
+	// that only need the coupled paths don't pay for the extra per-entry lookups.
 	IncludeCommits bool
 }
 

@@ -195,6 +195,31 @@ git-agent related application/commit_service.go -o json  # adds the linking `com
 | `--reindex` | false | Force a full re-index before querying |
 | `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |
 
+#### Why it complements grep (for coding agents)
+
+`related` is the temporal complement to a code-search tool, not a replacement.
+Grep, Glob, and editor "find references" locate files by their **current
+content and symbols** (spatial). `related` locates them by **how they have
+changed together** (temporal). Many real couplings are invisible to a symbol
+search:
+
+- In `gin`, over half of `context.go`'s top co-change partners (`tree.go`,
+  `errors.go`, `binding/*`, `render/*`) carry no textual link to the `Context`
+  symbol — grep cannot surface them.
+- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
+  `docs/templating.rst`; grep alone never tells you to update the changelog and
+  docs when you edit `app.py`.
+
+The JSON `commits` array adds the **intent** behind each coupling, which static
+search cannot. A practical loop: `related <file>` (blast radius + the commits
+explaining why) → grep/read those files (exact code) → `related <file> --tests`
+(which tests to run). It is offline and answers in milliseconds, so an agent
+can call it on every multi-file change.
+
+Co-change is an aggregate signal: accurate for consistent couplings (an
+implementation and its test), softer for feature-spanning or sweeping commits.
+Read the `commits` subjects to tell a real coupling from incidental noise.
+
 ### `git-agent status`
 
 Report code-graph index health and row counts: commits, files, authors,
