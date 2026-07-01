@@ -67,6 +67,50 @@ history scan.
 Use `related` proactively at the start of multi-file work and again before
 committing, so nothing coupled to the change is left behind.
 
+## Pair `related` with your own search tools (Grep / Glob / Explore)
+
+`related` does not replace your built-in code search — it covers a blind spot
+in it. Grep, Glob, and the Explore agent find files by their **current content
+and symbols** (spatial: "where is `X` referenced *now*?"). `related` finds
+files by **how they have changed together** (temporal: "what moves with `X`,
+and why?"). The two are complementary, so run both.
+
+End-to-end measurement on real repos makes the gap concrete. For a seed file,
+many of its strongest co-change partners carry **no textual link** a symbol
+search would catch:
+
+- In `gin`, of `context.go`'s top co-change partners, more than half are
+  grep-blind — `tree.go`, `errors.go`, `binding/*`, `render/*` — none mention
+  the `Context` symbol or the filename.
+- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
+  `docs/templating.rst`. A coding agent relying on grep alone would never learn
+  it must also update the changelog and the docs when it edits `app.py`.
+
+The `commits` array is the other thing static search cannot give you: it is the
+**intent** behind a coupling ("these two moved together in *fix
+subdomain_matching=False behavior*"), so you can judge whether the link is
+architectural or incidental.
+
+Recommended loop for a coding agent:
+
+1. `git-agent related <file>` — get the blast radius plus the commits that
+   explain *why* each file is coupled (context Grep can't give).
+2. Grep / Read / Explore those files — get exact symbol locations and code
+   (the spatial detail `related` can't give).
+3. `git-agent related <file> --tests` — get which tests to run before you stop.
+
+Because it is offline, zero-cost, and answers in milliseconds, call `related`
+freely — it is safe to run on every multi-file task.
+
+**Trust calibration.** Co-change is an *aggregate* signal. It is accurate for
+consistent couplings (an implementation and its test almost always move
+together) and softer for feature-spanning changes: a one-off feature that
+touched files across packages, or a sweeping commit like "support go1.18", will
+link files that are not really coupled. Don't treat the ranking as ground
+truth — read the `commits` subjects. A partner backed by focused, on-topic
+commits is a real coupling; one backed only by a single mass-refactor commit is
+probably noise.
+
 ## Commit workflow
 
 1. **Intent** — derive a one-sentence intent from the conversation. If no signal exists, run `git diff --stat` to understand what changed, then form the intent from that.
