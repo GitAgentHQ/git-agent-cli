@@ -76,6 +76,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	maxDiffLinesFlagChanged := cmd.Flags().Changed("max-diff-lines")
 	maxDiffBytesFlag, _ := cmd.Flags().GetInt("max-diff-bytes")
 	maxDiffBytesFlagChanged := cmd.Flags().Changed("max-diff-bytes")
+	maxPlanFilesFlag, _ := cmd.Flags().GetInt("max-plan-files")
+	maxPlanFilesFlagChanged := cmd.Flags().Changed("max-plan-files")
 	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -206,6 +208,17 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	maxPlanFiles := maxPlanFilesFlag
+	if !maxPlanFilesFlagChanged && projCfg != nil {
+		if projCfg.MaxPlanFiles > 0 {
+			maxPlanFiles = projCfg.MaxPlanFiles
+		} else if projCfg.MaxPlanFiles < 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"warning: max_plan_files %d in project config is non-positive; falling back to the built-in default\n",
+				projCfg.MaxPlanFiles)
+		}
+	}
+
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:            intent,
 		Trailers:          trailers,
@@ -215,6 +228,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Config:            projCfg,
 		MaxLines:          maxDiffLines,
 		MaxBytes:          maxDiffBytes,
+		MaxPlanFiles:      maxPlanFiles,
 		Verbose:           verbose,
 		LogWriter:         logWriter,
 		OutWriter:         outWriter,
@@ -355,7 +369,7 @@ func RenderCommitError(w io.Writer, err error) error {
 		fmt.Fprintf(w,
 			"error: LLM planner timed out (model=%s, after %s); "+
 				"try a more capable model, raise --request-timeout, "+
-				"narrow scope with --intent, or split with --max-diff-lines / smaller batches\n",
+				"narrow scope with --intent, or split with --max-diff-lines / --max-plan-files / smaller batches\n",
 			timeoutErr.Model, timeoutErr.Timeout)
 		return agentErrors.NewExitCodeError(1, "")
 	}
@@ -364,7 +378,7 @@ func RenderCommitError(w io.Writer, err error) error {
 		fmt.Fprintf(w,
 			"error: LLM kept producing oversized output (model=%s, ceiling=%d tokens); "+
 				"try a more capable model, narrow scope with --intent, or split with "+
-				"--max-diff-lines / smaller batches\n",
+				"--max-diff-lines / --max-plan-files / smaller batches\n",
 			budgetErr.Model, budgetErr.Ceiling)
 		return agentErrors.NewExitCodeError(1, "")
 	}
@@ -443,6 +457,7 @@ func init() {
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
 	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
+	commitCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
 	addOutputFlagWithDefault(commitCmd, false, "text")
 
