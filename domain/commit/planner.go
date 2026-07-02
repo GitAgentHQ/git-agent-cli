@@ -32,4 +32,5 @@ type PlanRequest struct {
 	Intent        string
 	Config        *project.Config
 	CoChangeHints []CoChangeHint
+	MaxPlanFiles  int // 0 = DefaultMaxPlanFiles; caps prompt file-list size, see SummarizeFileList
 }
