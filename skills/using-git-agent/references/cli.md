@@ -79,6 +79,7 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `--trailer` | stringArray | | Add an arbitrary git trailer, format `"Key: Value"` (repeatable) |
 | `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent <noreply@git-agent.dev>` trailer (`--no-git-agent` is a deprecated alias) |
 | `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no limit) |
+| `--max-plan-files` | int | 0 | Maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150) |
 | `-o`, `--output` | string | `text` | Output format: `text`, `json`, or `auto` (JSON when piped) |
 
 `--amend` and `--no-stage` are mutually exclusive (enforced at parse time by Cobra).
@@ -247,6 +248,7 @@ Set a configuration value in the specified scope. Keys accept both snake_case an
 | `api-key` | `api_key` |
 | `base-url` | `base_url` |
 | `max-diff-lines` | `max_diff_lines` |
+| `max-plan-files` | `max_plan_files` |
 | `no-git-agent-co-author` | `no_git_agent_co_author` |
 | `no-model-co-author` | `no_model_co_author` |
 

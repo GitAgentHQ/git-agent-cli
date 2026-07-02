@@ -73,6 +73,7 @@ type CommitRequest struct {
 	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
 	MaxLines          int
 	MaxBytes          int // 0 = DefaultMaxDiffBytes
+	MaxPlanFiles      int // 0 = commit.DefaultMaxPlanFiles; caps planner prompt file-list size
 	Verbose           bool
 	LogWriter         io.Writer // verbose-only output
 	OutWriter         io.Writer // always-visible output (hook block context, retries)
@@ -369,6 +370,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			Intent:        req.Intent,
 			Config:        req.Config,
 			CoChangeHints: coChangeHints,
+			MaxPlanFiles:  req.MaxPlanFiles,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("plan commits: %w", err)
@@ -407,6 +409,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					Intent:        req.Intent,
 					Config:        req.Config,
 					CoChangeHints: coChangeHints,
+					MaxPlanFiles:  req.MaxPlanFiles,
 				})
 				if err != nil {
 					return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
@@ -628,6 +631,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				Intent:        req.Intent,
 				Config:        req.Config,
 				CoChangeHints: coChangeHints,
+				MaxPlanFiles:  req.MaxPlanFiles,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)

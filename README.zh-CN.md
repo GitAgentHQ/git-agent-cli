@@ -120,6 +120,7 @@ git-agent config set --user api-key sk-xxx   # 写入用户作用域
 git-agent config set --project hook empty     # 写入项目作用域
 git-agent config set --local max-diff-lines 1000  # 写入本地作用域
 git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直连端点放宽到 512 KiB）
+git-agent config set --local max-plan-files 300     # 提高规划阶段文件列表上限（超出后按目录折叠）
 ```
 
 `config set` 和 `config get` 同时支持 snake_case 和 kebab-case 键名（如 `api-key` 和 `api_key` 等价）。
@@ -287,6 +288,7 @@ hook:
 | `--no-attribution` | 省略默认的 Git Agent co-author trailer |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制行数；字节上限始终生效） |
 | `--max-diff-bytes` | 发送给模型的最大 diff 字节数（默认：0，使用内置约 384 KiB 上限；传正值可覆盖） |
+| `--max-plan-files` | 规划提示中单独列出的最大文件路径数，超出后按目录折叠（默认：0，使用内置上限 150） |
 | `-o`、`--output` | 输出格式：`text`（默认）、`json` 或 `auto`（管道时为 JSON） |
 
 ### 全局

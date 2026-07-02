@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--max-plan-files` flag / `max_plan_files` config key: caps how many individual file paths the planner prompt lists before collapsing them into directory-level summaries (e.g. `vendor/lib/ (842 files)`), default 150. Fixes `commit` hanging or timing out when a changeset touches thousands of files (e.g. untracking a vendored dependency directory newly covered by `.gitignore`) — the file list, not just the diff content, could overwhelm the planner. Collapsing targets the largest offending directories first, leaving small groups listed individually, and the real file paths are recovered after the LLM responds so staging/committing is unaffected.
+
 ### Changed (BREAKING)
 - **Agent Event Log subsystem removed.** The append-only, hash-chained action log and all of its forensic machinery are gone — the graph is now a single data source (git commit-history co-change) and the LLM serves only `commit`/`init --scope`. Deleted the `audit` command tree (`timeline`/`diagnose`/`provenance`/`verify`), the hidden `capture` command, the `--agent-hook` PostToolUse installer, the CQRS projection/replay path, the out-of-band reconcile service, the SHA-256 hash chain, the `diagnose` LLM re-ranker, and the `redact` package (~4,100 lines).
 - **Exit code 4 retired.** It was "Event Log chain integrity"; with no Event Log to verify, it is no longer emitted. Codes 3 and 4 are both now retired.
