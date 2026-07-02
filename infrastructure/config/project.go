@@ -60,6 +60,7 @@ type rawProjectConfig struct {
 	HookTypeLegacy       string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
 	MaxDiffLines         *int       `yaml:"max_diff_lines,omitempty"`
 	MaxDiffBytes         *int       `yaml:"max_diff_bytes,omitempty"`
+	MaxPlanFiles         *int       `yaml:"max_plan_files,omitempty"`
 	PlanFallback         string     `yaml:"plan_fallback,omitempty"`
 	NoGitAgentCoAuthor   *bool      `yaml:"no_git_agent_co_author,omitempty"`
 	NoModelCoAuthor      *bool      `yaml:"no_model_co_author,omitempty"`
@@ -122,6 +123,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.MaxDiffBytes != nil {
 		merged.MaxDiffBytes = local.MaxDiffBytes
 	}
+	if local.MaxPlanFiles != nil {
+		merged.MaxPlanFiles = local.MaxPlanFiles
+	}
 	if local.PlanFallback != "" {
 		merged.PlanFallback = local.PlanFallback
 	}
@@ -142,7 +146,7 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
-		merged.MaxDiffBytes == nil && merged.PlanFallback == "" && merged.NoGitAgentCoAuthor == nil &&
+		merged.MaxDiffBytes == nil && merged.MaxPlanFiles == nil && merged.PlanFallback == "" && merged.NoGitAgentCoAuthor == nil &&
 		merged.NoModelCoAuthor == nil && merged.RequireModelCoAuthor == nil &&
 		len(merged.ModelCoAuthorDomains) == 0 && merged.GraphAutobuild == nil {
 		return nil
@@ -163,6 +167,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 	if merged.MaxDiffBytes != nil {
 		cfg.MaxDiffBytes = *merged.MaxDiffBytes
+	}
+	if merged.MaxPlanFiles != nil {
+		cfg.MaxPlanFiles = *merged.MaxPlanFiles
 	}
 	if merged.NoGitAgentCoAuthor != nil {
 		cfg.NoGitAgentCoAuthor = *merged.NoGitAgentCoAuthor
