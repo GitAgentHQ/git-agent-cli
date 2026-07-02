@@ -500,6 +500,139 @@ func TestClient_Plan_UnscopedEmptyPlanFailsWithoutRetry(t *testing.T) {
 	}
 }
 
+// A commit touching a vendored dependency directory can stage thousands of
+// files. Plan must collapse them to a directory-level summary before they
+// reach the LLM (keeping the prompt small) and expand the label the LLM
+// echoes back into the real file paths (so the caller never sees the
+// synthetic label as a "file").
+func TestClient_Plan_LargeFileListCollapsedAndExpanded(t *testing.T) {
+	files := make([]string, 2000)
+	for i := range files {
+		files[i] = fmt.Sprintf("vendor/lib/file_%04d.c", i)
+	}
+
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = planRequestMessages(t, r)
+		content := `{"groups": [{"files": ["vendor/lib/ (2000 files)"], "title": "chore: remove vendored lib", "bullets": ["Drop vendored copy"], "explanation": "No longer needed."}]}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, content))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	plan, err := c.Plan(context.Background(), commit.PlanRequest{
+		UnstagedDiff: &diff.StagedDiff{Files: files},
+		MaxPlanFiles: 150,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Count(user, "vendor/lib/file_") > 0 {
+		t.Errorf("prompt must not list individual files once collapsed, got: %q", user)
+	}
+	if !strings.Contains(user, "vendor/lib/ (2000 files)") {
+		t.Errorf("prompt must contain the collapsed summary label, got: %q", user)
+	}
+
+	if len(plan.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(plan.Groups))
+	}
+	got := plan.Groups[0].Files
+	if len(got) != 2000 {
+		t.Fatalf("expected the label expanded back to 2000 real files, got %d: %v", len(got), got[:min(5, len(got))])
+	}
+	want := make(map[string]bool, len(files))
+	for _, f := range files {
+		want[f] = true
+	}
+	for _, f := range got {
+		if !want[f] {
+			t.Errorf("unexpected file in expanded group: %q", f)
+		}
+	}
+}
+
+// Regression: staged and unstaged files are summarized independently, so
+// they can legitimately collapse to the identical label text (same
+// directory, same file count) while representing two disjoint sets of real
+// files. The merge into one expand map must not let one silently overwrite
+// the other — both groups must expand back to their own, correct files.
+func TestClient_Plan_StagedAndUnstagedCollapseToSameLabelText(t *testing.T) {
+	staged := make([]string, 300)
+	for i := range staged {
+		staged[i] = fmt.Sprintf("vendor/lib/staged_%04d.c", i)
+	}
+	unstaged := make([]string, 300)
+	for i := range unstaged {
+		unstaged[i] = fmt.Sprintf("vendor/lib/unstaged_%04d.c", i)
+	}
+
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = planRequestMessages(t, r)
+		// Echo back whatever two labels appeared in the prompt, one per group,
+		// exactly as an LLM copying the shown text would.
+		re := regexp.MustCompile(`vendor/lib/ \(300 files\)(?: \{\d+\})?`)
+		labels := re.FindAllString(user, -1)
+		if len(labels) != 2 {
+			t.Fatalf("expected 2 collapsed labels in prompt, got %d: %q", len(labels), user)
+		}
+		content := fmt.Sprintf(`{"groups": [
+			{"files": [%q], "title": "chore: staged vendor lib", "bullets": ["Drop staged copy"], "explanation": "No longer needed."},
+			{"files": [%q], "title": "chore: unstaged vendor lib", "bullets": ["Drop unstaged copy"], "explanation": "No longer needed."}
+		]}`, labels[0], labels[1])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, content))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+
+	plan, err := c.Plan(context.Background(), commit.PlanRequest{
+		StagedDiff:   &diff.StagedDiff{Files: staged},
+		UnstagedDiff: &diff.StagedDiff{Files: unstaged},
+		MaxPlanFiles: 150,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(plan.Groups))
+	}
+
+	wantStaged := make(map[string]bool, len(staged))
+	for _, f := range staged {
+		wantStaged[f] = true
+	}
+	wantUnstaged := make(map[string]bool, len(unstaged))
+	for _, f := range unstaged {
+		wantUnstaged[f] = true
+	}
+
+	var gotStagedCount, gotUnstagedCount int
+	for _, g := range plan.Groups {
+		for _, f := range g.Files {
+			switch {
+			case wantStaged[f]:
+				gotStagedCount++
+			case wantUnstaged[f]:
+				gotUnstagedCount++
+			default:
+				t.Errorf("file %q in plan does not belong to either input set", f)
+			}
+		}
+	}
+	if gotStagedCount != 300 {
+		t.Errorf("expected all 300 staged files recovered, got %d", gotStagedCount)
+	}
+	if gotUnstagedCount != 300 {
+		t.Errorf("expected all 300 unstaged files recovered, got %d", gotUnstagedCount)
+	}
+}
+
 // A fresh repository with no history or tracked files legitimately yields no
 // scopes. GenerateScopes must return the empty list without error so that
 // `git agent init --scope` succeeds instead of bailing out.
