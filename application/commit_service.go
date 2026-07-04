@@ -54,6 +54,7 @@ type CommitGitClient interface {
 	StagedDiffNumStat(ctx context.Context) (string, error)
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	AllChangedFiles(ctx context.Context) ([]string, error)
+	DetectRenames(ctx context.Context) ([]diff.Rename, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) (string, error)
@@ -359,6 +360,17 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		}
 	}
 
+	// Detect file moves before the per-group loop mutates the index. Each
+	// rename's two paths are forced into the same commit group after planning
+	// so a move commits atomically instead of splitting the deletion and the
+	// addition across separate commits.
+	renames, rerr := s.git.DetectRenames(ctx)
+	if rerr != nil {
+		s.vlog(req, "rename detection failed (non-fatal): %v", rerr)
+	} else if len(renames) > 0 {
+		s.vlog(req, "detected %d rename(s)", len(renames))
+	}
+
 	if len(allFiles) == 1 {
 		s.vlog(req, "single file — skipping planning phase")
 		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
@@ -386,6 +398,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
 		appendPassthroughFiles(plan, allowed)
+		coLocateRenames(plan, renames, allowed)
 
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
@@ -425,6 +438,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					plan.Groups = plan.Groups[:maxCommitGroups]
 				}
 				appendPassthroughFiles(plan, allowed)
+				coLocateRenames(plan, renames, allowed)
 			}
 		}
 	}
@@ -650,6 +664,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				newPlan.Groups = newPlan.Groups[:maxCommitGroups]
 			}
 			appendPassthroughFiles(newPlan, rePlanAllowed)
+			coLocateRenames(newPlan, renames, rePlanAllowed)
 			remaining = newPlan.Groups
 			continue
 		}
@@ -775,7 +790,6 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 // drops groups with no remaining files. Returns the number of dropped files.
 func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
 	filtered := 0
-	kept := plan.Groups[:0]
 	for i := range plan.Groups {
 		var valid []string
 		for _, f := range plan.Groups[i].Files {
@@ -786,12 +800,21 @@ func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
 			}
 		}
 		plan.Groups[i].Files = valid
-		if len(valid) > 0 {
+	}
+	dropEmptyGroups(plan)
+	return filtered
+}
+
+// dropEmptyGroups removes commit groups left with no files, compacting the
+// slice in place.
+func dropEmptyGroups(plan *commit.CommitPlan) {
+	kept := plan.Groups[:0]
+	for i := range plan.Groups {
+		if len(plan.Groups[i].Files) > 0 {
 			kept = append(kept, plan.Groups[i])
 		}
 	}
 	plan.Groups = kept
-	return filtered
 }
 
 // appendPassthroughFiles adds any file present in allowed but absent from every
@@ -819,6 +842,57 @@ func appendPassthroughFiles(plan *commit.CommitPlan, allowed map[string]bool) {
 	}
 	sort.Strings(passthrough)
 	plan.Groups[0].Files = append(plan.Groups[0].Files, passthrough...)
+}
+
+// coLocateRenames forces both paths of each detected rename into the same
+// commit group. A move whose deletion lands in one commit and whose addition
+// lands in another leaves an intermediate commit where the file exists in
+// neither or both locations, and git can no longer render it as a rename — the
+// exact "one move, two commits" split this guards against. The old path is
+// moved into the group that holds the new path, because the new path's content
+// is what the per-group message describes; a group emptied by the move is
+// dropped. Pairs with either side outside allowed (e.g. already committed on a
+// hook re-plan) are skipped so committed files are never disturbed.
+func coLocateRenames(plan *commit.CommitPlan, renames []diff.Rename, allowed map[string]bool) {
+	if len(plan.Groups) == 0 || len(renames) == 0 {
+		return
+	}
+	groupOf := make(map[string]int)
+	for gi := range plan.Groups {
+		for _, f := range plan.Groups[gi].Files {
+			groupOf[f] = gi
+		}
+	}
+	// The caller always runs appendPassthroughFiles first, so both paths of an
+	// allowed rename are already in some group — the ,ok lookups still guard
+	// the map's zero-value (a missing key reads as group 0), so a pair that is
+	// only partially grouped is safely skipped rather than mis-placed.
+	for _, r := range renames {
+		if !allowed[r.Old] || !allowed[r.New] {
+			continue
+		}
+		newGi, newOK := groupOf[r.New]
+		oldGi, oldOK := groupOf[r.Old]
+		if newOK && oldOK && newGi != oldGi {
+			plan.Groups[oldGi].Files = removeString(plan.Groups[oldGi].Files, r.Old)
+			plan.Groups[newGi].Files = append(plan.Groups[newGi].Files, r.Old)
+			groupOf[r.Old] = newGi
+		}
+	}
+	dropEmptyGroups(plan)
+}
+
+// removeString returns files with v removed, reusing the backing array (the
+// caller owns the slice). A group's file list has no duplicates, so removing
+// every match is equivalent to removing the one occurrence.
+func removeString(files []string, v string) []string {
+	out := files[:0]
+	for _, f := range files {
+		if f != v {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // hasUnscopedGroups reports whether any commit group title lacks a scope,

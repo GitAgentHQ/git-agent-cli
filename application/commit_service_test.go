@@ -51,6 +51,8 @@ type mockCommitGitClient struct {
 	allChangedFiles       []string
 	allChangedFilesErr    error
 	allChangedFilesCalled bool
+	renames               []diff.Rename
+	renamesErr            error
 	commitCalled          bool
 	commitCount           int
 	commitMessage         string
@@ -101,6 +103,10 @@ func (m *mockCommitGitClient) UnstagedDiff(_ context.Context) (*diff.StagedDiff,
 func (m *mockCommitGitClient) AllChangedFiles(_ context.Context) ([]string, error) {
 	m.allChangedFilesCalled = true
 	return m.allChangedFiles, m.allChangedFilesErr
+}
+
+func (m *mockCommitGitClient) DetectRenames(_ context.Context) ([]diff.Rename, error) {
+	return m.renames, m.renamesErr
 }
 
 func (m *mockCommitGitClient) Commit(_ context.Context, message string) (string, error) {
@@ -529,6 +535,52 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	}
 	if len(result.Commits) != 2 {
 		t.Errorf("expected 2 commits, got %d", len(result.Commits))
+	}
+}
+
+// A file move surfaces as an old-path deletion and a new-path addition. When
+// the planner splits them into separate groups, coLocateRenames must merge them
+// into one commit so the move is atomic instead of "one move, two commits".
+func TestCommitService_CoLocatesRenameIntoOneCommit(t *testing.T) {
+	const oldPath = "skills/artifacts/SKILL.md"
+	const newPath = "skills/using-open-artifacts/SKILL.md"
+
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiffSeq: []*diff.StagedDiff{
+			{}, // nothing pre-staged
+			// After co-location there is a single group holding both paths.
+			{Files: []string{newPath, oldPath}, Content: "+n-o", Lines: 2},
+		},
+		allChangedFiles: []string{newPath, oldPath},
+		renames:         []diff.Rename{{Old: oldPath, New: newPath}},
+	}
+	// The planner splits the move: the addition and the deletion land in
+	// separate groups (exactly the behavior that produced two commits).
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{
+		Groups: []commit.CommitGroup{
+			{Files: []string{newPath}, Message: commit.CommitMessage{Title: "feat(cli): add skill"}},
+			{Files: []string{oldPath}, Message: commit.CommitMessage{Title: "chore(cli): remove skill"}},
+		},
+	}}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+	result, err := svc.Commit(context.Background(), application.CommitRequest{Config: &project.Config{}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Commits) != 1 {
+		t.Fatalf("expected the move to collapse into 1 commit, got %d: %+v", len(result.Commits), result.Commits)
+	}
+	if len(git.stagedFiles) != 1 {
+		t.Fatalf("expected StageFiles called once, got %d calls: %v", len(git.stagedFiles), git.stagedFiles)
+	}
+	staged := map[string]bool{}
+	for _, f := range git.stagedFiles[0] {
+		staged[f] = true
+	}
+	if !staged[oldPath] || !staged[newPath] {
+		t.Errorf("expected the single commit to stage both %q and %q, got %v", oldPath, newPath, git.stagedFiles[0])
 	}
 }
 
