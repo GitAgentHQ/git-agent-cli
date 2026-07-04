@@ -243,25 +243,33 @@ func capFiles(files []string) []string {
 
 // AllChangedFiles returns all changed file names (staged, unstaged, and
 // untracked-but-not-gitignored) without modifying the git index.
+//
+// The staged and unstaged diffs use --name-status (parsed via parseNameStatus)
+// rather than --name-only so that both sides of a rename are captured: git
+// collapses a staged rename to a single R line, and --name-only would report
+// only the new path, dropping the old-path deletion entirely. That silently
+// left the deletion out of the plan, so it was committed by itself on the next
+// run — splitting a move across two commits.
 func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	type src struct {
 		label string
 		out   []byte
 		err   error
+		parse func([]byte) []string
 	}
-	staged := src{label: "git diff --staged"}
-	unstaged := src{label: "git diff"}
-	untracked := src{label: "git ls-files --others"}
+	staged := src{label: "git diff --staged", parse: parseNameStatus}
+	unstaged := src{label: "git diff", parse: parseNameStatus}
+	untracked := src{label: "git ls-files --others", parse: splitUnquoted}
 
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		staged.out, staged.err = gitCmd(ctx, "diff", "--staged", "--name-only").Output()
+		staged.out, staged.err = gitCmd(ctx, "diff", "--staged", "--name-status").Output()
 	}()
 	go func() {
 		defer wg.Done()
-		unstaged.out, unstaged.err = gitCmd(ctx, "diff", "--name-only").Output()
+		unstaged.out, unstaged.err = gitCmd(ctx, "diff", "--name-status").Output()
 	}()
 	go func() {
 		defer wg.Done()
@@ -284,8 +292,7 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	var files []string
 	for _, s := range []src{staged, unstaged, untracked} {
-		for _, f := range splitNonEmpty(string(s.out)) {
-			f = gitUnquote(f)
+		for _, f := range s.parse(s.out) {
 			if !seen[f] {
 				seen[f] = true
 				files = append(files, f)
@@ -293,6 +300,121 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// splitUnquoted splits git output into non-empty lines and removes git's
+// C-style path quoting from each. Used for `ls-files` output, which is a plain
+// path per line (no status prefix, so parseNameStatus does not apply).
+func splitUnquoted(out []byte) []string {
+	lines := splitNonEmpty(string(out))
+	for i, f := range lines {
+		lines[i] = gitUnquote(f)
+	}
+	return lines
+}
+
+// DetectRenames returns the file moves among the current changes: for each,
+// the content tracked at Old was removed and reappears at New. Both paths of a
+// move must be committed together, so the caller keeps each pair in one group.
+//
+// Pairing is done two ways, covering every staging state:
+//   - git's own rename detection (`git diff HEAD --raw -M`) reports staged or
+//     tracked moves directly as R lines;
+//   - a worktree move leaves the new file untracked, which is invisible to
+//     git's rename detection, so its content blob sha is matched against the
+//     deleted files' pre-image shas.
+//
+// A sha pairing is only trusted when exactly one deletion and one addition
+// share it, so duplicate-content files are never mis-paired into a move.
+func (c *Client) DetectRenames(ctx context.Context) ([]diff.Rename, error) {
+	// --no-abbrev emits full 40-char object shas so they compare equal to
+	// hash-object output when pairing worktree moves by content.
+	out, err := gitCmd(ctx, "diff", "HEAD", "--raw", "--no-abbrev", "-M").Output()
+	if err != nil {
+		// Fails on an unborn branch (no HEAD, nothing tracked yet) and on any
+		// other git error. Rename detection is a best-effort grouping aid, so
+		// degrade to "no renames" rather than failing the whole commit.
+		return nil, nil
+	}
+
+	var renames []diff.Rename
+	delByHash := make(map[string][]string) // pre-image sha -> deleted paths
+	addByHash := make(map[string][]string) // blob sha -> added (tracked) paths
+
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		// Raw format: ":<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>"
+		// with a second tab-separated path for R/C. The meta chunk before the
+		// first tab is space-separated.
+		parts := strings.Split(line, "\t")
+		meta := strings.Fields(parts[0])
+		if len(meta) < 5 || len(parts) < 2 {
+			continue
+		}
+		status, srcSHA, dstSHA := meta[4], meta[2], meta[3]
+		switch {
+		case strings.HasPrefix(status, "R") && len(parts) >= 3:
+			renames = append(renames, diff.Rename{Old: gitUnquote(parts[1]), New: gitUnquote(parts[2])})
+		case status == "D":
+			delByHash[srcSHA] = append(delByHash[srcSHA], gitUnquote(parts[1]))
+		case status == "A":
+			addByHash[dstSHA] = append(addByHash[dstSHA], gitUnquote(parts[1]))
+		}
+	}
+
+	// Only worktree moves (deleted tracked file -> still-untracked new file)
+	// remain unpaired above. Hash untracked files only when there is at least
+	// one deletion to match, so ordinary commits skip the extra work.
+	if len(delByHash) > 0 {
+		shas, paths, herr := c.hashUntracked(ctx)
+		if herr == nil {
+			for i, sha := range shas {
+				addByHash[sha] = append(addByHash[sha], paths[i])
+			}
+		}
+	}
+
+	for sha, dels := range delByHash {
+		if adds := addByHash[sha]; len(dels) == 1 && len(adds) == 1 {
+			renames = append(renames, diff.Rename{Old: dels[0], New: adds[0]})
+		}
+	}
+	return renames, nil
+}
+
+// hashUntracked lists untracked (non-ignored) files and returns their content
+// blob shas alongside the matching paths, in the same order. Paths are
+// repo-root relative, so hashing runs from the root to resolve them.
+func (c *Client) hashUntracked(ctx context.Context) (shas, paths []string, err error) {
+	listOut, err := gitCmd(ctx, "ls-files", "--others", "--exclude-standard", "--full-name").Output()
+	if err != nil {
+		return nil, nil, err
+	}
+	paths = splitNonEmpty(string(listOut))
+	if len(paths) == 0 {
+		return nil, nil, nil
+	}
+
+	root, rootErr := c.RepoRoot(ctx)
+	h := gitCmd(ctx, "hash-object", "--stdin-paths")
+	if rootErr == nil {
+		h.Dir = root
+	}
+	h.Stdin = bytes.NewReader(listOut)
+	hashOut, err := h.Output()
+	if err != nil {
+		return nil, nil, err
+	}
+	shas = splitNonEmpty(string(hashOut))
+	if len(shas) != len(paths) {
+		return nil, nil, fmt.Errorf("hash-object returned %d shas for %d paths", len(shas), len(paths))
+	}
+	for i := range paths {
+		paths[i] = gitUnquote(paths[i])
+	}
+	return shas, paths, nil
 }
 
 func (c *Client) IsGitRepo(ctx context.Context) bool {

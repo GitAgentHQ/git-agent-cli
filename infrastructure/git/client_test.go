@@ -224,6 +224,111 @@ func TestClient_AllChangedFiles_NonASCIIPath(t *testing.T) {
 	}
 }
 
+// A staged rename is reported by git as a single R line; --name-only would
+// show only the new path, dropping the old-path deletion. AllChangedFiles must
+// return BOTH so the deletion is planned and committed with the addition rather
+// than left behind for a later commit.
+func TestClient_AllChangedFiles_StagedRenameCapturesBothPaths(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "old.md"), []byte("keep this content\n"), 0o644); err != nil {
+		t.Fatalf("write old.md: %v", err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+	// Stage the move as a rename (git detects R because content is identical).
+	runGit(t, dir, "mv", "old.md", "new.md")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	files, err := NewClient().AllChangedFiles(context.Background())
+	if err != nil {
+		t.Fatalf("AllChangedFiles: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[f] = true
+	}
+	if !seen["old.md"] || !seen["new.md"] {
+		t.Errorf("expected both old.md and new.md, got %v", files)
+	}
+}
+
+func TestClient_DetectRenames_StagedMove(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "old.md"), []byte("some stable content\n"), 0o644); err != nil {
+		t.Fatalf("write old.md: %v", err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+	runGit(t, dir, "mv", "old.md", "new.md")
+
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	renames, err := NewClient().DetectRenames(context.Background())
+	if err != nil {
+		t.Fatalf("DetectRenames: %v", err)
+	}
+	if len(renames) != 1 || renames[0].Old != "old.md" || renames[0].New != "new.md" {
+		t.Fatalf("expected [{old.md new.md}], got %+v", renames)
+	}
+}
+
+// A worktree move leaves the new file untracked, so git's own rename detection
+// cannot see it; DetectRenames must pair it by content hash instead.
+func TestClient_DetectRenames_WorktreeMove(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatalf("mkdir a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a", "doc.md"), []byte("moved verbatim\n"), 0o644); err != nil {
+		t.Fatalf("write a/doc.md: %v", err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+
+	// Move on disk without staging: old path is a deletion, new path untracked.
+	if err := os.MkdirAll(filepath.Join(dir, "b"), 0o755); err != nil {
+		t.Fatalf("mkdir b: %v", err)
+	}
+	if err := os.Rename(filepath.Join(dir, "a", "doc.md"), filepath.Join(dir, "b", "doc.md")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	renames, err := NewClient().DetectRenames(context.Background())
+	if err != nil {
+		t.Fatalf("DetectRenames: %v", err)
+	}
+	if len(renames) != 1 || renames[0].Old != "a/doc.md" || renames[0].New != "b/doc.md" {
+		t.Fatalf("expected [{a/doc.md b/doc.md}], got %+v", renames)
+	}
+}
+
 func TestClient_Commit_NothingToCommit(t *testing.T) {
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q")
