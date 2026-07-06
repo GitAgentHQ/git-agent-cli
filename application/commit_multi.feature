@@ -41,6 +41,13 @@ Feature: Multi-Commit Service
     And the result contains one SingleCommitResult per planned group
     And result.DryRun is true
 
+  Scenario: A file move is committed atomically, not split in two
+    Given a file was moved from an old path to a new path
+    And the planner puts the deletion and the addition in separate groups
+    When CommitService.Commit is called
+    Then both paths are placed in the same commit group
+    And exactly one commit records the move as a rename
+
   Scenario: Auto-scope when project.yml is missing
     Given no project.yml exists
     And a ScopeService is configured

@@ -1,6 +1,6 @@
 ---
 name: using-git-agent
-description: Operates the git-agent CLI — atomic commits, init/config, and the code graph (event log + AST + co-change). Use it whenever the user wants to commit or set up git-agent; when you are about to modify a feature and need the files that move with it (graph impact); when you are changing a function and want its callers/callees (graph callers/callees); when you need a symbol's location or source (graph node/query); when deciding which tests to run after a change (graph affected); when a test broke and you want to trace the action that introduced it (graph diagnose); or when you need action history (graph timeline) or a file's rename-aware provenance (graph provenance). All graph queries are read-only and offline (no LLM, no API key); only commit and init --scope need a provider.
+description: Operates the git-agent CLI — atomic AI commits plus co-change relations for agents, all-language, offline, no API key. Use it whenever the user wants to commit or set up git-agent; when you are about to modify a feature and need the files that historically move with it, with the commits that explain the coupling (related); when deciding which tests to run after a change (related --tests); or when checking the co-change index health (status). All related and status queries are read-only and offline (no LLM, no API key); only commit and init --scope need a provider.
 ---
 
 # Git Agent CLI
@@ -15,83 +15,101 @@ Reach for git-agent at these moments. Each situation maps to one command:
 
 | Situation | Command |
 |---|---|
-| About to start multi-file work / modify a feature — find what else changes | `git-agent graph impact [files...]` |
-| Changing a specific function/type — want its callers (who depends on it) | `git-agent graph impact --symbol <name>` or `git-agent graph callers <symbol>` |
-| Changing a function — want what it calls | `git-agent graph callees <symbol>` |
-| Locate a symbol, see its source + one-hop neighbors | `git-agent graph node <name>` or `git-agent graph query <search>` |
-| Deciding which tests to run after a change | `git-agent graph affected [files...]` |
-| A test/regression broke — find the agent action that introduced it | `git-agent graph diagnose [symptom] --file <source>` |
-| "What did the agent (or a human) change recently" / audit a session | `git-agent graph timeline` (`--file`/`--source`/`--since`) |
-| Full history of one file, rename-aware, with out-of-band edits flagged | `git-agent graph provenance <file>` |
-| Graph queries return nothing or look stale | `git-agent graph status` → `git-agent graph sync` (or `git-agent graph index` for a full rebuild) |
-| Suspect the Event Log was tampered with | `git-agent graph verify` |
+| About to start multi-file work / modify a feature — find what else changes | `git-agent related [files...]` |
+| Deciding which tests to run after a change | `git-agent related <files...> --tests` |
+| Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; if a full rebuild is needed, `git-agent init --graph`) |
 | Ready to commit staged changes | `git-agent commit --intent "..."` |
-| New repo, or no scopes configured | `git-agent init` |
+| New repo, or no scopes configured | `git-agent init` (add `--graph` to also build the code graph now) |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
-If the situation isn't listed, run `git-agent --help` or `git-agent graph --help`.
-Every `graph` query is read-only and offline (no LLM, no API key); only `commit`
+If the situation isn't listed, run `git-agent --help`. Every `related` and
+`status` query is read-only and offline (no LLM, no API key); only `commit`
 and `init --scope` need a provider.
 
 ## Find related files before changing a feature
 
 When you are about to modify a feature — or are partway through editing it — ask
-the git graph which other files are related to the ones you are touching. Those
-are the files most likely to also need updating (tests, callers, sibling modules)
-and are easy to forget. Two analysis modes are available:
-
-### Co-change mode (default) — files that historically change together
+git-agent which other files historically change together with the ones you are
+touching. Those are the files most likely to also need updating (tests, sibling
+modules, config) and are easy to forget. `git-agent related` mines git history
+(not source parsing), so it is language-agnostic, offline, and needs no API key;
+the first run auto-indexes.
 
 ```
 # Given the files of a feature, rank the files that usually change with them:
-git-agent graph impact application/commit_service.go cmd/commit.go --json
+git-agent related application/commit_service.go cmd/commit.go -o json
 
 # Given a directory (a whole module/feature area):
-git-agent graph impact infrastructure/hook --json
+git-agent related infrastructure/hook -o json
 
-# No arguments: use your CURRENT uncommitted edits as the seeds —
+# No arguments: use your CURRENT working-tree changes as the seeds —
 # "given what I've already changed, what else usually moves with it?"
-git-agent graph impact --json
+git-agent related -o json
+
+# Keep only related test files — "which tests should I run for this change?"
+git-agent related application/commit_service.go --tests
 ```
 
-Read the JSON to prioritise: each entry has `seed_matches` (how many of the seed
-files it co-changes with — higher means more central to the feature),
-`related_to` (which seeds), `coupling_strength`, and `score` (the ranking).
-A file with `seed_matches` equal to the number of seeds is coupled to the whole
-feature; open it before you finish. The first run auto-indexes git history;
-queries are offline and need no LLM or API key.
+Read the JSON to prioritise: each related file has `seed_matches` (how many of
+the seed files it co-changes with — higher means more central to the feature),
+`related_to` (which seeds), `coupling_strength`, `score` (the ranking), and a
+`commits` array of `{sha, subject, ts}` — the actual commits that changed the
+files together, i.e. the evidence for *why* they are related. Read those
+subjects to judge whether a coupling is real or incidental. A file with
+`seed_matches` equal to the number of seeds is coupled to the whole feature;
+open it before you finish.
 
-### Structural mode — symbols that call or reference a given symbol
+Useful flags: `--depth` and `--top` shape how far and how many results come
+back, `--min-count` filters out weak couplings, `--tests` narrows the result to
+related test files ("which tests to run"), and `--reindex` forces a fresh
+history scan.
 
-When you know the function, struct, or type you're changing, structural mode
-walks the AST to find direct callers and references (incoming edges — who
-depends on it) — no history needed. Pass `--symbol <name>` (mode defaults to
-`structural`):
-
-```
-# Find all symbols structurally linked to CommitService:
-git-agent graph impact --symbol CommitService --json
-
-# Combine both signals — co-change AND structural — for the richest view:
-git-agent graph impact --symbol CommitService --mode combined --json
-```
-
-The JSON shape is different from co-change: a `seed_node` object (the symbol
-with its `kind`, `qualified_name`, `file_path`, lines, columns, `is_exported`,
-`return_type`) and an `impacted` array of structurally connected symbols. Use
-this when modifying a specific function or type and you want to see what
-directly depends on it.
-
-### When to use which mode
-
-| Question | Mode |
-|---|---|
-| "I'm editing these files — what else usually moves?" | `cochange` (default) |
-| "I'm changing this function — what calls or references it?" | `--symbol <name>` (structural) |
-| "Give me everything — history and AST" | `--symbol <name> --mode combined` |
-
-Use impact proactively at the start of multi-file work and again before
+Use `related` proactively at the start of multi-file work and again before
 committing, so nothing coupled to the change is left behind.
+
+## Pair `related` with your own search tools (Grep / Glob / Explore)
+
+`related` does not replace your built-in code search — it covers a blind spot
+in it. Grep, Glob, and the Explore agent find files by their **current content
+and symbols** (spatial: "where is `X` referenced *now*?"). `related` finds
+files by **how they have changed together** (temporal: "what moves with `X`,
+and why?"). The two are complementary, so run both.
+
+End-to-end measurement on real repos makes the gap concrete. For a seed file,
+many of its strongest co-change partners carry **no textual link** a symbol
+search would catch:
+
+- In `gin`, of `context.go`'s top co-change partners, more than half are
+  grep-blind — `tree.go`, `errors.go`, `binding/*`, `render/*` — none mention
+  the `Context` symbol or the filename.
+- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
+  `docs/templating.rst`. A coding agent relying on grep alone would never learn
+  it must also update the changelog and the docs when it edits `app.py`.
+
+The `commits` array is the other thing static search cannot give you: it is the
+**intent** behind a coupling ("these two moved together in *fix
+subdomain_matching=False behavior*"), so you can judge whether the link is
+architectural or incidental.
+
+Recommended loop for a coding agent:
+
+1. `git-agent related <file>` — get the blast radius plus the commits that
+   explain *why* each file is coupled (context Grep can't give).
+2. Grep / Read / Explore those files — get exact symbol locations and code
+   (the spatial detail `related` can't give).
+3. `git-agent related <file> --tests` — get which tests to run before you stop.
+
+Because it is offline, zero-cost, and answers in milliseconds, call `related`
+freely — it is safe to run on every multi-file task.
+
+**Trust calibration.** Co-change is an *aggregate* signal. It is accurate for
+consistent couplings (an implementation and its test almost always move
+together) and softer for feature-spanning changes: a one-off feature that
+touched files across packages, or a sweeping commit like "support go1.18", will
+link files that are not really coupled. Don't treat the ranking as ground
+truth — read the `commits` subjects. A partner backed by focused, on-topic
+commits is a real coupling; one backed only by a single mass-refactor commit is
+probably noise.
 
 ## Commit workflow
 
@@ -115,6 +133,44 @@ committing, so nothing coupled to the change is left behind.
    model: gpt-4o
    ```
    Other supported providers: Cloudflare Workers AI, local Ollama.
+
+5. **On planner timeout** (`LLM planner timed out (model=..., after ...)`) — the
+   diff was too large, or the model too slow, to plan the commit groups in time.
+   `--request-timeout` is **not** a flag; raise the budget via the config key,
+   then retry:
+   ```
+   git-agent config set request_timeout 5m
+   ```
+   Or shrink what the planner has to reason about: sharpen `--intent`, cap the
+   diff with `--max-diff-lines <n>`, or switch to a more capable model via
+   `--model`.
+
+### Structured output (`-o json`)
+
+When you need to read the result back programmatically (which commits were
+created, their SHAs, whether a hook ran), add `-o json`:
+
+```
+git-agent commit --intent "..." -o json
+```
+
+It prints a single object:
+
+```json
+{
+  "dry_run": false,
+  "commits": [
+    {"title": "...", "message": "...", "files": ["..."], "sha": "...", "hook_outcome": "passed"}
+  ],
+  "committed_count": 1,
+  "final_sha": "..."
+}
+```
+
+`hook_outcome` is `passed` (a hook ran and accepted the commit) or `skipped`
+(no validating hook). On `--dry-run`, `committed_count` is `0` and the `sha`
+fields are empty. `commit` defaults to human-readable text; pass `-o json` only
+when scripting.
 
 ## Do not track `.git-agent/graph.db`
 
@@ -156,6 +212,7 @@ planner cannot stage a pure deletion).
 | `--trailer "Key: Value"` | Add an arbitrary git trailer (repeatable) |
 | `--no-attribution` | Omit the default `Co-Authored-By: Git Agent` trailer |
 | `--max-diff-lines N` | Cap diff size sent to the model (0 = no limit) |
+| `-o json` | Emit machine-readable commit results (titles, SHAs, hook outcomes) for scripting; defaults to text |
 
 `--amend` and `--no-stage` are mutually exclusive.
 
@@ -185,7 +242,19 @@ If the commit is blocked (exit code `2`), retry with a more specific `--intent`:
 git-agent commit --intent "update module path"
 ```
 
-Hook exit codes: `0` = allow, non-zero = block.
+Hook exit codes (the hook script's own contract): `0` = allow, non-zero = block.
+
+## Exit codes
+
+`git-agent` itself uses a typed exit-code taxonomy across all commands:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | General error (no API key, git error, no changes, etc.) |
+| `2` | Commit blocked by a hook after retries |
+| `3` | Retired / unused — formerly "graph not indexed"; no longer emitted (co-change reads auto-index on first run) |
+| `4` | Retired / unused — formerly "Event Log chain integrity"; the Event Log subsystem has been removed and this code is no longer emitted |
 
 ## Commit format
 
@@ -209,23 +278,10 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 
 | Command | What it does |
 |---|---|
-| `git-agent graph impact [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes). Finds the other files a feature change is likely to need. JSON via `--json` |
-| `git-agent graph impact --symbol <name>` | AST-structural impact: symbols that call or reference the given symbol (incoming edges — who depends on it). `--mode combined` returns co-change + structural as separate fields |
-| `git-agent graph timeline` | Show recent agent/human action history (sessions, tools, files); filter with `--file`, `--source`, `--since` |
-| `git-agent graph diagnose [symptom] --file <source>` | Trace a failing symptom to the agent action that most likely introduced it (suspect window + co-change + ranking). `--file <source>` seeds the relevant file set (effectively required for candidates); `[symptom]` is optional context. Add `--llm` to re-rank candidates via the configured diagnose LLM |
-| `git-agent graph provenance <file>` | Rename-aware change history for one file: every captured change plus out-of-band changes, folding in pre-rename identities |
-| `git-agent graph status` | Show graph index health and row counts (commits, files, authors, co-change pairs, sessions, actions) |
-| `git-agent graph verify` | Walk the hash-chained Event Log and verify it has not been tampered with. Exits 4 on a break |
-| `git-agent graph index` | Build/refresh all derived indexes: replay the Event Log into projections (sessions, actions, co-change) and ensure the AST index. `--reindex` forces a full AST re-index |
-| `git-agent graph sync` | Bring projections up to date with the Event Log (no-op when already current; otherwise incrementally replays only the new events) |
-| `git-agent graph callers <symbol>` | AST nodes that call or reference a symbol (incoming edges), up to `--depth` |
-| `git-agent graph callees <symbol>` | AST nodes a symbol calls or references (outgoing edges), up to `--depth` |
-| `git-agent graph node <name>` | Symbols matching the name: each one's location, signature, source snippet, and one-hop caller/callee trail. Returns an array (one entry per match) |
-| `git-agent graph query <search>` | FTS5 prefix search over symbol name, qualified name, or signature (e.g. `process` matches `processData`); filter with `--kind` |
-| `git-agent graph affected [files...]` | Test files transitively affected by changes to the given files (stdin: `git diff --name-only`) |
-| `git-agent capture` | Record an agent action into the graph. Designed to run as a Claude Code PostToolUse hook (installed via `init --agent-hook`). Hidden from `--help` |
+| `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json` |
+| `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, last indexed commit, db size) |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
-| `git-agent init --agent-hook` | Install the Claude Code PostToolUse hook so agent edits are auto-captured into the graph |
+| `git-agent init --graph` | One-shot cold start: build the code graph (commit-history co-change). No LLM needed. Otherwise the first `commit` builds it automatically |
 | `git-agent init --scope` | Regenerate scopes only |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |

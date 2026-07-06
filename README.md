@@ -6,7 +6,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs.
+AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs. It also surfaces co-change relations for agents — which files habitually change together, plus the commits that explain why — all-language, offline, and with no API key.
 
 ## Installation
 
@@ -55,7 +55,6 @@ git-agent init --gitignore              # generate .gitignore only
 git-agent init --hook conventional      # install conventional commit validator
 git-agent init --hook empty             # install empty placeholder hook
 git-agent init --hook /path/to/script   # install a custom hook script
-git-agent init --agent-hook             # install capture hook for Claude Code PostToolUse
 git-agent init --force                  # overwrite existing config/hook/.gitignore
 git-agent init --max-commits 50         # limit commits analyzed for scope generation
 git-agent init --local --scope          # write scopes to .git-agent/config.local.yml
@@ -66,11 +65,29 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 | `--scope` | Generate scopes via AI |
 | `--gitignore` | Generate `.gitignore` via AI |
 | `--hook` | Hook to configure: `conventional`, `empty`, or a file path (repeatable) |
-| `--agent-hook` | Install a `PostToolUse` capture hook for Claude Code |
 | `--force` | Overwrite existing config/.gitignore |
 | `--max-commits` | Max commits to analyze for scope generation (default: 200) |
 | `--local` | Write config to `.git-agent/config.local.yml` (requires an action flag) |
 | `--user` | Write config to `~/.config/git-agent/config.yml` (requires an action flag) |
+
+#### `.git-agent/graph.db` is never tracked
+
+The graph database (`.git-agent/graph.db`) is generated at runtime by `commit`,
+`related`, and `status` commands. It must never be committed — if it is, every
+run re-modifies it and produces a stream of `chore: update graph database file`
+commits (the "infinite recreation" loop).
+
+git-agent defends this invariant automatically, with no `init` required:
+
+- **`git-agent init`** writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal` and `.git-agent/config.local.yml`) into the committed `.gitignore`, and runs `git rm --cached` on any already-tracked `graph.db` so the rule can take effect.
+- **Runtime defence**: every command that opens the graph DB (`commit`, `related`, `status`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
+
+Verify when in doubt:
+
+```bash
+git ls-files .git-agent/graph.db        # must print nothing (untracked)
+git check-ignore .git-agent/graph.db    # prints the path, exit 0 (ignored)
+```
 
 ### `git-agent commit`
 
@@ -85,7 +102,13 @@ git-agent commit --intent "fix auth bug"      # provide a context hint to the LL
 git-agent commit --co-author "Name <email>"  # add a co-author trailer
 git-agent commit --trailer "Fixes: #123"     # add an arbitrary git trailer
 git-agent commit --no-attribution             # omit the default Git Agent trailer
+git-agent commit -o json                      # structured result (titles, SHAs, hook outcome)
 ```
+
+With `-o json`, commit prints a single object: `dry_run`, `commits[]` (each
+`{title, message, files, sha, hook_outcome}`), `committed_count`, and
+`final_sha`. `hook_outcome` is `passed` or `skipped`. Otherwise output is
+human-readable text.
 
 ### `git-agent config`
 
@@ -99,6 +122,7 @@ git-agent config set --user api-key sk-xxx   # write to user scope
 git-agent config set --project hook empty     # write to project scope
 git-agent config set --local max-diff-lines 1000  # write to local scope
 git-agent config set --local max-diff-bytes 524288 # raise the byte cap (e.g., 512 KiB for direct endpoints)
+git-agent config set --local max-plan-files 300     # raise the planner file-list cap before it collapses to directory summaries
 ```
 
 `config set` and `config get` accept both snake_case and kebab-case keys (e.g., `api-key` and `api_key` are equivalent).
@@ -139,136 +163,75 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 
 Print the build version.
 
-### `git-agent impact`
+### `git-agent related`
 
-Find files or symbols likely to change alongside the given seeds. Three modes:
+Show the files that historically change together with the given seeds
+(co-change coupling), mined from git history. Seeds are file paths, a
+directory, or — with no arguments — your current working-tree changes
+("what else usually changes with my edits?"). A file coupled to several seeds
+ranks highest.
 
-| Mode | Trigger | What it returns |
-|------|---------|-----------------|
-| `cochange` (default) | Seeds are file paths (or none = working-tree changes) | Files that historically change with the seeds |
-| `structural` | `--symbol <name>` | AST symbols that call, are called by, or reference the seed symbol |
-| `combined` | `--symbol <name> --mode combined` | Union of co-change and structural results |
+In JSON output, each related file carries a `commits` array of
+`{sha, subject, ts}` — the commits that link it to a seed, i.e. the evidence
+for *why* the two files are coupled. Use `--tests` to keep only related test
+files, a fast "which tests should I run after this change?".
 
-With no arguments, seeds default to your current working-tree changes. The first run auto-indexes git history; queries are offline (no LLM, no API key).
+Language-agnostic (it reads git history, not source parsing), offline (no LLM,
+no API key), and auto-indexed on first run.
 
 ```bash
-git-agent impact                                     # "what else changes with my edits?"
-git-agent impact application/commit_service.go       # co-change from a specific file
-git-agent impact src/                                # co-change from a directory
-git-agent impact --symbol CommitService --json       # structural impact
-git-agent impact --symbol CommitService --mode combined  # both signals
+git-agent related                                        # "what else changes with my edits?"
+git-agent related application/commit_service.go          # co-change from a specific file
+git-agent related src/                                   # co-change from a directory
+git-agent related application/commit_service.go --tests  # related test files only
+git-agent related application/commit_service.go -o json  # adds the linking `commits` array
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--symbol` | | Query structural impact by symbol name |
-| `--mode` | `cochange` | Impact mode: `cochange`, `structural`, or `combined` |
 | `--depth` | 1 | Transitive co-change depth |
 | `--top` | 20 | Max results |
 | `--min-count` | 3 | Minimum co-change count to include |
+| `--tests` | false | Keep only related test files |
 | `--reindex` | false | Force a full re-index before querying |
-| `--json` / `--text` | auto | Force output format (JSON when piped, text on a TTY) |
+| `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |
 
-### `git-agent timeline`
+#### Why it complements grep (for coding agents)
 
-Show recent agent and human action history grouped into sessions, with the tool and files for each action. Populated by `git-agent capture`. Offline.
+`related` is the temporal complement to a code-search tool, not a replacement.
+Grep, Glob, and editor "find references" locate files by their **current
+content and symbols** (spatial). `related` locates them by **how they have
+changed together** (temporal). Many real couplings are invisible to a symbol
+search:
 
-```bash
-git-agent timeline                        # all recorded actions
-git-agent timeline --since 2h             # last 2 hours
-git-agent timeline --file src/auth.go     # actions touching a file
-git-agent timeline --source claude-code   # filter by source
-git-agent timeline --json                 # JSON output
-```
+- In `gin`, over half of `context.go`'s top co-change partners (`tree.go`,
+  `errors.go`, `binding/*`, `render/*`) carry no textual link to the `Context`
+  symbol — grep cannot surface them.
+- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
+  `docs/templating.rst`; grep alone never tells you to update the changelog and
+  docs when you edit `app.py`.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--since` | | Time window: `2h`, `7d`, or RFC 3339 timestamp |
-| `--source` | | Filter by action source (e.g. `claude-code`, `human`) |
-| `--file` | | Filter by file path |
-| `--top` | 50 | Max sessions to display |
-| `--json` / `--text` | auto | Force output format |
+The JSON `commits` array adds the **intent** behind each coupling, which static
+search cannot. A practical loop: `related <file>` (blast radius + the commits
+explaining why) → grep/read those files (exact code) → `related <file> --tests`
+(which tests to run). It is offline and answers in milliseconds, so an agent
+can call it on every multi-file change.
 
-### `git-agent graph`
+Co-change is an aggregate signal: accurate for consistent couplings (an
+implementation and its test), softer for feature-spanning or sweeping commits.
+Read the `commits` subjects to tell a real coupling from incidental noise.
 
-Query and audit the agent Event Log and its derived AST + co-change indexes.
-The AST index parses git-tracked Go files in your repo and records functions,
-methods, structs/interfaces, **struct fields**, type aliases, imports, calls,
-and field-read `references` edges. Offline (no LLM, no API key).
+### `git-agent status`
 
-**Symbol syntax** for `callers` / `callees` / `node` — accepts a bare name, a
-receiver-qualified `Type.Method`, or a fully-qualified `file::Type.Method`:
-
-```bash
-git-agent graph callers Flag                  # all callers of any Flag method
-git-agent graph callers decoder.alias         # narrow to one receiver type
-git-agent graph callers "decode.go::decoder.alias"  # fully-qualified
-git-agent graph callers HideHelpCommand       # struct field reads surface here
-git-agent graph node Commit.Run               # signature + one-hop trails
-git-agent graph affected command.go           # tests exercising the file's symbols
-git-agent graph query --kind method Connect   # FTS5 symbol search
-```
+Report code-graph index health and row counts: commits, files, authors,
+co-change pairs, the last indexed commit, and database size. Offline (no LLM,
+no API key).
 
 ```bash
-git-agent graph status      # index health + row counts
-git-agent graph index      # build/refresh all derived indexes
-git-agent graph verify     # Event Log chain integrity
-git-agent graph timeline   # action history
-git-agent graph impact     # co-change / structural impact (see above)
+git-agent status              # index health + row counts
+git-agent status -o json      # structured output
+git-agent init --graph        # one-shot cold build (commit-history co-change)
 ```
-
-**External packages are not indexed.** The index only parses files in your
-repo, so symbols from imported packages (e.g. `github.com/spf13/pflag`) are
-never AST nodes. `callers`/`node` report this explicitly instead of failing
-with a bare "not found"; `graph external-refs` lists every call/field-read
-site that reaches into an external package:
-
-```bash
-git-agent graph callers pflag.Lookup
-# Error: symbol "pflag.Lookup" is exported by external package
-# "github.com/spf13/pflag", which is not indexed; run
-# `git-agent graph external-refs` to list call sites into it
-
-git-agent graph external-refs            # all external-package reference sites
-git-agent graph external-refs --json
-```
-
-> **Build note:** AST commands (`callers`, `callees`, `node`, `query`,
-> `affected`, `impact --symbol`, `index`) require a tree-sitter build
-> (`CGO_ENABLED=1 go build`). Release binaries are compiled with
-> `CGO_ENABLED=0` and stub these out; `external-refs` reads only unresolved
-> refs and works in either build. After upgrading the binary on a repo with an
-> existing `.git-agent/graph.db`, run `git-agent graph index --reindex` once to
-> pick up struct-field nodes and receiver-resolved call edges on the old DB.
-
-#### Does `graph` help a model develop features?
-
-An A/B re-test (2026-06-27) ran a capable agent on three real Go repos
-(`spf13/cobra`, `go-yaml/yaml`, `urfave/cli`) — each feature implemented twice,
-once without `graph` (grep/Read only) and once with `graph` forensic commands.
-All six arms built and tested green; the graph did not flip any fail→pass. It
-**did** deliver measurable non-trivial value the no-graph arm lacked:
-
-- **Field disambiguation (cli):** `graph query Hide` returned empty (no such
-  field) while `graph query Hidden` returned the field node + its 19 readers
-  via `graph callers Hidden`. A bare `grep Hide` matches three separate fields
-  (`Hidden`, `HideHelp`, `HideHelpCommand`); the graph prevented a wrong-field
-  accessor.
-- **Receiver disambiguation (yaml):** `graph node alias` showed both
-  `parser.alias` and `decoder.alias` source + signatures in one call,
-  revealing that `decoder.alias` only dereferences already-parsed alias nodes
-  — the real anchor-capture site is `parser.anchor`. Both arms landed on the
-  right site, but the graph made it one structured call vs. a 30-line noise grep.
-- **Test fidelity to the spec (yaml):** the with-graph arm's test covered
-  cross-`Decode` persistence (4 sub-cases) the no-graph arm's single-case test
-  did not — even though both implementations were identical.
-- **Cross-file consumer safety (cobra):** `graph callers mergePersistentFlags`
-  surfaced cross-file consumers in `flag_groups.go` and `completions.go`,
-  confirming a new read-only accessor wouldn't disturb them.
-
-The graph's value is investigation depth, test/invariant fidelity, and
-cross-file safety — not enabling the impossible. It shines most on unfamiliar
-codebases where grep noise is high and receiver/field disambiguation matters.
 
 ## Configuration
 
@@ -338,6 +301,8 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | `--no-attribution` | Omit the default Git Agent co-author trailer |
 | `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no line limit; a byte cap always applies) |
 | `--max-diff-bytes` | Maximum diff bytes sent to the model (default: 0, falls back to the built-in ~384 KiB cap; pass a positive value to override) |
+| `--max-plan-files` | Maximum file paths listed individually in the planner prompt before collapsing to directory summaries (default: 0, falls back to the built-in cap of 150) |
+| `-o`, `--output` | Output format: `text` (default), `json`, or `auto` (JSON when piped) |
 
 ### Global
 
@@ -356,6 +321,8 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | 0 | Success |
 | 1 | General error — no changes, API failure, missing config |
 | 2 | Hook blocked — pre-commit hook returned non-zero after retries |
+| 3 | Retired/unused (no longer emitted) |
+| 4 | Retired/unused — formerly Event Log chain integrity; the Event Log subsystem has been removed (no longer emitted) |
 
 ## Changelog
 

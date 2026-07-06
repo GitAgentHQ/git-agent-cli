@@ -8,6 +8,10 @@ type ImpactRequest struct {
 	Depth    int // transitive co-change depth, default 1
 	Top      int // max results, default 20
 	MinCount int // minimum co-change count, default 3
+	// IncludeCommits attaches, to each result entry, the commits that link it to
+	// the seeds (the "why are these related?" evidence). Off by default so callers
+	// that only need the coupled paths don't pay for the extra per-entry lookups.
+	IncludeCommits bool
 }
 
 // ImpactResult is the output of an impact query.
@@ -27,38 +31,16 @@ type ImpactEntry struct {
 	SeedMatches      int      `json:"seed_matches"`      // how many seed files this file co-changes with
 	RelatedTo        []string `json:"related_to,omitempty"`
 	Depth            int      `json:"depth,omitempty"`
+	// LinkingCommits carries the commits that bind this file to the seed(s) —
+	// the "why are these related?" evidence (subject + sha + timestamp). Only
+	// populated for top-ranked entries, most-recent first.
+	LinkingCommits []CommitRef `json:"commits,omitempty"`
 }
 
-// TimelineRequest is the input for a timeline query.
-type TimelineRequest struct {
-	Since  int64  // unix timestamp, 0 = all
-	Source string // filter by source, empty = all
-	File   string // filter by file path, empty = all
-	Top    int    // max sessions, default 50
-}
-
-// TimelineResult is the output of a timeline query.
-type TimelineResult struct {
-	Sessions      []TimelineSession `json:"sessions"`
-	TotalSessions int               `json:"total_sessions"`
-	TotalActions  int               `json:"total_actions"`
-	QueryMs       int64             `json:"query_ms"`
-}
-
-// TimelineSession is a session with its actions in the timeline.
-type TimelineSession struct {
-	ID          string           `json:"id"`
-	Source      string           `json:"source"`
-	StartedAt   string           `json:"started_at"` // RFC 3339
-	EndedAt     string           `json:"ended_at,omitempty"`
-	ActionCount int              `json:"action_count"`
-	Actions     []TimelineAction `json:"actions,omitempty"`
-}
-
-// TimelineAction is a single action in the timeline.
-type TimelineAction struct {
-	ID        string   `json:"id"`
-	Tool      string   `json:"tool"`
-	Timestamp string   `json:"timestamp"` // RFC 3339
-	Files     []string `json:"files"`
+// CommitRef is a lightweight reference to a commit that links a co-change pair:
+// its hash, the first line of its message (subject), and its timestamp.
+type CommitRef struct {
+	Hash      string `json:"sha"`
+	Subject   string `json:"subject"`
+	Timestamp int64  `json:"ts"`
 }

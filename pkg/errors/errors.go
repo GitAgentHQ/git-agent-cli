@@ -1,3 +1,13 @@
+// Package errors defines git-agent's typed exit codes and error carriers.
+//
+// Process exit-code taxonomy (mapped in cmd/root.go exitFromError):
+//
+//	0  success
+//	1  general error (any plain error, or NewExitCodeError(1, ...))
+//	2  hook blocked the commit after retries (application.ErrHookBlocked)
+//	3  retired (formerly "graph not indexed"; co-change reads now auto-index)
+//	4  retired (formerly "event-log chain integrity"; the Event Log subsystem
+//	   was removed — there is no hash-chained action log to verify)
 package errors
 
 import "errors"
@@ -21,14 +31,12 @@ func NewExitCodeError(code int, msg string) *ExitCodeError {
 	return &ExitCodeError{Code: code, Message: msg}
 }
 
-// Sentinel errors
-var (
-	ErrNoStagedChanges = NewExitCodeError(1, "error: no staged changes to commit")
-	ErrNotGitRepo      = NewExitCodeError(1, "error: not a git repository")
-	ErrGitNotFound     = NewExitCodeError(1, "error: git not found in PATH")
-	ErrGraphNotIndexed = NewExitCodeError(3, "error: graph not indexed")
-	ErrChainIntegrity  = NewExitCodeError(4, "error: event chain integrity check failed")
-)
+// Sentinel exit-code errors. See the package doc for the full taxonomy.
+// Exit code 2 (hook blocked) is carried by application.ErrHookBlocked; the
+// other codes have no dedicated sentinel. (Exit codes 3 and 4 are retired: 3
+// was "graph not indexed" — the co-change reads now auto-index on first run;
+// 4 was "event-log chain integrity" — the Event Log subsystem has been
+// removed.)
 
 // APIError represents an error returned by the LLM API (rate limit, auth failure, etc.).
 type APIError struct {

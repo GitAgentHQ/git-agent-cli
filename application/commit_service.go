@@ -30,18 +30,23 @@ func (e *HookBlockedError) Is(target error) bool {
 	return target == ErrHookBlocked
 }
 
-// SingleCommitResult holds the output of one committed group.
+// SingleCommitResult holds the output of one committed group. The JSON tags are
+// part of the agent-facing `commit -o json` contract; GitOutput and Explanation
+// drive only the human text rendering and are excluded from JSON.
 type SingleCommitResult struct {
-	Title       string
-	Explanation string
-	GitOutput   string
-	Files       []string
+	Title       string   `json:"title"`
+	Message     string   `json:"message"` // full message (title + body), without trailers
+	Explanation string   `json:"-"`       // closing paragraph; text output only
+	GitOutput   string   `json:"-"`       // raw `git commit` stdout; text output only
+	Files       []string `json:"files"`
+	SHA         string   `json:"sha,omitempty"`          // commit hash; empty on dry-run
+	HookOutcome string   `json:"hook_outcome,omitempty"` // passed | skipped
 }
 
 // CommitResult holds the output of a successful Commit call.
 type CommitResult struct {
-	Commits []SingleCommitResult
-	DryRun  bool
+	Commits []SingleCommitResult `json:"commits"`
+	DryRun  bool                 `json:"dry_run"`
 }
 
 type CommitGitClient interface {
@@ -49,6 +54,7 @@ type CommitGitClient interface {
 	StagedDiffNumStat(ctx context.Context) (string, error)
 	UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error)
 	AllChangedFiles(ctx context.Context) ([]string, error)
+	DetectRenames(ctx context.Context) ([]diff.Rename, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
 	Commit(ctx context.Context, message string) (string, error)
@@ -68,6 +74,7 @@ type CommitRequest struct {
 	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
 	MaxLines          int
 	MaxBytes          int // 0 = DefaultMaxDiffBytes
+	MaxPlanFiles      int // 0 = commit.DefaultMaxPlanFiles; caps planner prompt file-list size
 	Verbose           bool
 	LogWriter         io.Writer // verbose-only output
 	OutWriter         io.Writer // always-visible output (hook block context, retries)
@@ -84,7 +91,6 @@ type CommitService struct {
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
 	coChange         CoChangeProvider        // nil = skip co-change (graceful)
-	actionLinker     ActionLinker            // nil = skip action-to-commit linking (graceful)
 }
 
 func NewCommitService(
@@ -169,11 +175,6 @@ func plannerFallbackReason(err error) string {
 	default:
 		return "error"
 	}
-}
-
-// SetActionLinker sets an optional action-to-commit linker.
-func (s *CommitService) SetActionLinker(linker ActionLinker) {
-	s.actionLinker = linker
 }
 
 // SetCoChangeProvider sets an optional co-change hint provider.
@@ -359,6 +360,17 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		}
 	}
 
+	// Detect file moves before the per-group loop mutates the index. Each
+	// rename's two paths are forced into the same commit group after planning
+	// so a move commits atomically instead of splitting the deletion and the
+	// addition across separate commits.
+	renames, rerr := s.git.DetectRenames(ctx)
+	if rerr != nil {
+		s.vlog(req, "rename detection failed (non-fatal): %v", rerr)
+	} else if len(renames) > 0 {
+		s.vlog(req, "detected %d rename(s)", len(renames))
+	}
+
 	if len(allFiles) == 1 {
 		s.vlog(req, "single file — skipping planning phase")
 		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
@@ -370,6 +382,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			Intent:        req.Intent,
 			Config:        req.Config,
 			CoChangeHints: coChangeHints,
+			MaxPlanFiles:  req.MaxPlanFiles,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("plan commits: %w", err)
@@ -385,6 +398,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			plan.Groups = plan.Groups[:maxCommitGroups]
 		}
 		appendPassthroughFiles(plan, allowed)
+		coLocateRenames(plan, renames, allowed)
 
 		// If any group has no scope and we can update scopes, do so and re-plan once.
 		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
@@ -408,6 +422,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					Intent:        req.Intent,
 					Config:        req.Config,
 					CoChangeHints: coChangeHints,
+					MaxPlanFiles:  req.MaxPlanFiles,
 				})
 				if err != nil {
 					return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
@@ -423,6 +438,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 					plan.Groups = plan.Groups[:maxCommitGroups]
 				}
 				appendPassthroughFiles(plan, allowed)
+				coLocateRenames(plan, renames, allowed)
 			}
 		}
 	}
@@ -534,6 +550,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		var assembled string
 		var msg *commit.CommitMessage
 		hookPassed := false
+		hookOutcome := ""
 		var previousMessage string
 		var preTrailer string // assembled before trailers — used for HookBlockedError
 
@@ -570,6 +587,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 
 			if len(req.Config.Hooks) == 0 && !req.Config.RequireModelCoAuthor {
 				hookPassed = true
+				hookOutcome = "skipped"
 				break
 			}
 
@@ -585,6 +603,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			}
 			if hookResult.ExitCode == 0 {
 				hookPassed = true
+				if hooksAreEffective(req.Config.Hooks) || req.Config.RequireModelCoAuthor {
+					hookOutcome = "passed"
+				} else {
+					hookOutcome = "skipped"
+				}
 				break
 			}
 
@@ -622,6 +645,7 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				Intent:        req.Intent,
 				Config:        req.Config,
 				CoChangeHints: coChangeHints,
+				MaxPlanFiles:  req.MaxPlanFiles,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("re-plan commits: %w", err)
@@ -640,14 +664,17 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 				newPlan.Groups = newPlan.Groups[:maxCommitGroups]
 			}
 			appendPassthroughFiles(newPlan, rePlanAllowed)
+			coLocateRenames(newPlan, renames, rePlanAllowed)
 			remaining = newPlan.Groups
 			continue
 		}
 
 		result := SingleCommitResult{
 			Title:       msg.Title,
+			Message:     preTrailer,
 			Explanation: msg.Explanation,
 			Files:       group.Files,
+			HookOutcome: hookOutcome,
 		}
 		if req.DryRun {
 			committed = append(committed, result)
@@ -665,16 +692,14 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, err
 		}
 		result.GitOutput = gitOut
+		// Promote the SHA to a first-class field (the raw git stdout in GitOutput
+		// is human-only) and reuse it for action linking below.
+		hash, hashErr := s.git.CommitHash(ctx)
+		if hashErr == nil {
+			result.SHA = hash
+		}
 		committed = append(committed, result)
 
-		// Link unlinked actions to this commit (graceful — never fails the commit)
-		if s.actionLinker != nil {
-			if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil && hash != "" {
-				if linkErr := s.actionLinker.LinkActionsToCommit(ctx, hash, group.Files); linkErr != nil {
-					s.vlog(req, "action-to-commit linking failed: %v", linkErr)
-				}
-			}
-		}
 		for _, f := range group.Files {
 			committedFiles[f] = true
 		}
@@ -732,6 +757,7 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 	if body := msg.Body(); body != "" {
 		assembled += "\n\n" + body
 	}
+	preTrailer := assembled
 	if len(req.Trailers) > 0 {
 		assembled, err = s.git.FormatTrailers(ctx, assembled, req.Trailers)
 		if err != nil {
@@ -741,8 +767,10 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 
 	result := SingleCommitResult{
 		Title:       msg.Title,
+		Message:     preTrailer,
 		Explanation: msg.Explanation,
 		Files:       amendDiff.Files,
+		HookOutcome: "skipped",
 	}
 	if req.DryRun {
 		return &CommitResult{Commits: []SingleCommitResult{result}, DryRun: true}, nil
@@ -752,6 +780,9 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 		return nil, err
 	}
 	result.GitOutput = gitOut
+	if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil {
+		result.SHA = hash
+	}
 	return &CommitResult{Commits: []SingleCommitResult{result}}, nil
 }
 
@@ -759,7 +790,6 @@ func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*Co
 // drops groups with no remaining files. Returns the number of dropped files.
 func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
 	filtered := 0
-	kept := plan.Groups[:0]
 	for i := range plan.Groups {
 		var valid []string
 		for _, f := range plan.Groups[i].Files {
@@ -770,12 +800,21 @@ func filterPlanFiles(plan *commit.CommitPlan, allowed map[string]bool) int {
 			}
 		}
 		plan.Groups[i].Files = valid
-		if len(valid) > 0 {
+	}
+	dropEmptyGroups(plan)
+	return filtered
+}
+
+// dropEmptyGroups removes commit groups left with no files, compacting the
+// slice in place.
+func dropEmptyGroups(plan *commit.CommitPlan) {
+	kept := plan.Groups[:0]
+	for i := range plan.Groups {
+		if len(plan.Groups[i].Files) > 0 {
 			kept = append(kept, plan.Groups[i])
 		}
 	}
 	plan.Groups = kept
-	return filtered
 }
 
 // appendPassthroughFiles adds any file present in allowed but absent from every
@@ -805,11 +844,75 @@ func appendPassthroughFiles(plan *commit.CommitPlan, allowed map[string]bool) {
 	plan.Groups[0].Files = append(plan.Groups[0].Files, passthrough...)
 }
 
+// coLocateRenames forces both paths of each detected rename into the same
+// commit group. A move whose deletion lands in one commit and whose addition
+// lands in another leaves an intermediate commit where the file exists in
+// neither or both locations, and git can no longer render it as a rename — the
+// exact "one move, two commits" split this guards against. The old path is
+// moved into the group that holds the new path, because the new path's content
+// is what the per-group message describes; a group emptied by the move is
+// dropped. Pairs with either side outside allowed (e.g. already committed on a
+// hook re-plan) are skipped so committed files are never disturbed.
+func coLocateRenames(plan *commit.CommitPlan, renames []diff.Rename, allowed map[string]bool) {
+	if len(plan.Groups) == 0 || len(renames) == 0 {
+		return
+	}
+	groupOf := make(map[string]int)
+	for gi := range plan.Groups {
+		for _, f := range plan.Groups[gi].Files {
+			groupOf[f] = gi
+		}
+	}
+	// The caller always runs appendPassthroughFiles first, so both paths of an
+	// allowed rename are already in some group — the ,ok lookups still guard
+	// the map's zero-value (a missing key reads as group 0), so a pair that is
+	// only partially grouped is safely skipped rather than mis-placed.
+	for _, r := range renames {
+		if !allowed[r.Old] || !allowed[r.New] {
+			continue
+		}
+		newGi, newOK := groupOf[r.New]
+		oldGi, oldOK := groupOf[r.Old]
+		if newOK && oldOK && newGi != oldGi {
+			plan.Groups[oldGi].Files = removeString(plan.Groups[oldGi].Files, r.Old)
+			plan.Groups[newGi].Files = append(plan.Groups[newGi].Files, r.Old)
+			groupOf[r.Old] = newGi
+		}
+	}
+	dropEmptyGroups(plan)
+}
+
+// removeString returns files with v removed, reusing the backing array (the
+// caller owns the slice). A group's file list has no duplicates, so removing
+// every match is equivalent to removing the one occurrence.
+func removeString(files []string, v string) []string {
+	out := files[:0]
+	for _, f := range files {
+		if f != v {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // hasUnscopedGroups reports whether any commit group title lacks a scope,
 // i.e. matches "type: description" instead of "type(scope): description".
 func hasUnscopedGroups(plan *commit.CommitPlan) bool {
 	for _, g := range plan.Groups {
 		if !strings.Contains(g.Message.Title, "(") {
+			return true
+		}
+	}
+	return false
+}
+
+// hooksAreEffective reports whether any configured hook performs real validation
+// — i.e. is something other than the no-op "" / "empty" sentinels. Used to label
+// a commit's hook_outcome as "passed" (a real hook accepted it) vs "skipped"
+// (no validation ran).
+func hooksAreEffective(hooks []string) bool {
+	for _, h := range hooks {
+		if h != "" && h != "empty" {
 			return true
 		}
 	}

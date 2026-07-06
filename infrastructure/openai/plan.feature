@@ -25,3 +25,10 @@ Feature: Commit Planning via LLM
     And the LLM returns an empty groups array
     When Plan is called
     Then an "LLM returned empty plan" error is returned after one request
+
+  Scenario: Oversized file lists are collapsed before reaching the LLM and expanded back after
+    Given 2000 unstaged files under "vendor/lib/" and a small MaxPlanFiles budget
+    When Plan is called
+    Then the prompt sent to the LLM contains a single "vendor/lib/ (2000 files)" summary line, not 2000 individual paths
+    And the LLM echoes that summary label back as the group's only file
+    Then the returned plan's group contains all 2000 real file paths, not the label

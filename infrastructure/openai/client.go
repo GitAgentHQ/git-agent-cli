@@ -38,10 +38,6 @@ const (
 	generateMaxTokensCeiling = 16384
 	scopesMaxTokensCeiling   = 16384
 	detectMaxTokensCeiling   = 4096
-	// rerankMaxTokensCeiling bounds the graph diagnose --llm re-rank response.
-	// The LLM returns a short JSON ordering of seq numbers, so the budget is
-	// modest; callLLM doubles on finish_reason=length up to this ceiling.
-	rerankMaxTokensCeiling = 8192
 )
 
 type Client struct {
@@ -50,10 +46,6 @@ type Client struct {
 	requestTimeout    time.Duration
 	heartbeatInterval time.Duration
 	out               io.Writer
-
-	// call is the test seam for the re-rank path: it defaults to callLLM but can
-	// be swapped per-client so unit tests run offline. Set in NewClient.
-	call func(ctx context.Context, system, user string, maxTokens, ceiling int) (string, error)
 }
 
 func NewClient(
@@ -79,7 +71,6 @@ func NewClient(
 		heartbeatInterval: heartbeatInterval,
 		out:               out,
 	}
-	c.call = c.callLLM
 	return c
 }
 
@@ -208,6 +199,7 @@ If a PRIMARY DIRECTIVE is given, it is the most important constraint: only inclu
 If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
 Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.) — infer the nature of each change from the file path, name, and directory structure.
 Each group should be a cohesive unit of change.
+Some entries look like "path/to/dir/ (N files)" instead of a real file path — this means N files under that directory were too numerous to list individually. Treat it as one inseparable unit: copy the label into "files" EXACTLY as shown, on its own, in whichever group that directory belongs to. Never split it apart or invent individual file names for it.
 
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
@@ -223,6 +215,7 @@ If a PRIMARY DIRECTIVE is given, it is the most important constraint: only inclu
 If there are staged files and no PRIMARY DIRECTIVE, they MUST be group 0 (respect user intent).
 Split remaining changes by logical concern (feature, bug fix, refactor, test, docs, etc.) — infer the nature of each change from the file path, name, and directory structure.
 Each group should be a cohesive unit of change.
+Some entries look like "path/to/dir/ (N files)" instead of a real file path — this means N files under that directory were too numerous to list individually. Treat it as one inseparable unit: copy the label into "files" EXACTLY as shown, on its own, in whichever group that directory belongs to. Never split it apart or invent individual file names for it.
 
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
@@ -495,19 +488,6 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 	return nil, lastErr
 }
 
-// RerankDiagnose sends a chat completion to the configured model and returns the
-// raw text response. It is the LLM bridge for the graph diagnose --llm re-ranker:
-// the caller (a DiagnoseReranker adapter) builds the prompt and parses the
-// returned JSON ordering. maxTokens is the initial completion budget; ceiling is
-// the upper bound callLLM will grow to on a length-truncated retry.
-//
-// Routed through the package-internal `call` seam so unit tests can run offline
-// by swapping it; production callers reuse the existing retry/heartbeat/timeout
-// and per-endpoint budget machinery.
-func (c *Client) RerankDiagnose(ctx context.Context, system, user string, maxTokens, ceiling int) (string, error) {
-	return c.call(ctx, system, user, maxTokens, ceiling)
-}
-
 func (c *Client) Plan(ctx context.Context, req commit.PlanRequest) (*commit.CommitPlan, error) {
 	hasScopes := req.Config != nil && len(req.Config.Scopes) > 0
 
@@ -561,6 +541,12 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 		systemPrompt = planSystemPromptScoped
 	}
 
+	maxPlanFiles := req.MaxPlanFiles
+	if maxPlanFiles <= 0 {
+		maxPlanFiles = commit.DefaultMaxPlanFiles
+	}
+	expand := map[string][]string{}
+
 	var planParts []string
 	if req.Intent != "" {
 		planParts = append(planParts, "PRIMARY DIRECTIVE — focus only on this: "+req.Intent)
@@ -569,19 +555,29 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 		planParts = append(planParts, "REQUIRED scopes (match by description, not name):\n- "+req.Config.FormatScopesForLLM())
 	}
 	if req.StagedDiff != nil && len(req.StagedDiff.Files) > 0 {
+		summary := commit.SummarizeFileList(req.StagedDiff.Files, maxPlanFiles)
+		labels := mergeFileListExpansion(expand, summary)
 		planParts = append(planParts, fmt.Sprintf("Staged files (already staged by user — keep as group 0):\n%s",
-			strings.Join(req.StagedDiff.Files, "\n"),
+			strings.Join(labels, "\n"),
 		))
 	}
 	if req.UnstagedDiff != nil && len(req.UnstagedDiff.Files) > 0 {
+		summary := commit.SummarizeFileList(req.UnstagedDiff.Files, maxPlanFiles)
+		labels := mergeFileListExpansion(expand, summary)
 		planParts = append(planParts, fmt.Sprintf("Unstaged files:\n%s",
-			strings.Join(req.UnstagedDiff.Files, "\n"),
+			strings.Join(labels, "\n"),
 		))
 	}
 	if len(req.CoChangeHints) > 0 {
 		var lines []string
 		for _, h := range req.CoChangeHints {
-			lines = append(lines, fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100))
+			line := fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100)
+			if len(h.Subjects) > 0 {
+				// Surface the reason they coupled, e.g. once committed together as
+				// "feat(auth): add token refresh" — semantic signal, not just a count.
+				line += fmt.Sprintf(" — once committed together as: %q", strings.Join(h.Subjects, "; "))
+			}
+			lines = append(lines, line)
 		}
 		planParts = append(planParts, "Historical co-change — these file pairs are usually committed together. Keep each pair in the SAME commit group unless their diffs are clearly unrelated:\n"+strings.Join(lines, "\n"))
 	}
@@ -598,7 +594,76 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 	if err := unmarshalLLMJSON(raw, "groups", &result); err != nil {
 		return nil, "", err
 	}
+	if len(expand) > 0 {
+		for i := range result.Groups {
+			result.Groups[i].Files = expandPlanFiles(result.Groups[i].Files, expand)
+		}
+	}
 	return result.Groups, raw, nil
+}
+
+// expandPlanFiles replaces any "path/ (N files)" summary label the LLM
+// echoed back with the real file paths it stands in for. Files the LLM
+// returned verbatim (not a label) pass through unchanged. A label the LLM
+// mangled or dropped simply has no match here — those files are not lost:
+// commit_service's passthrough step sweeps any real file absent from every
+// plan group into group 0.
+func expandPlanFiles(files []string, expand map[string][]string) []string {
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if real, ok := expand[f]; ok {
+			out = append(out, real...)
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// mergeFileListExpansion folds summary's label->files mapping into the
+// shared expand map used across a whole planOnce call, and returns summary's
+// labels for prompt rendering (possibly renamed — see below).
+//
+// SummarizeFileList guarantees unique labels *within* one call, but planOnce
+// calls it twice (staged, then unstaged) and merges both results into one
+// map. Two independent calls can legitimately produce the identical label
+// text for two different sets of real files — e.g. staged and unstaged both
+// happen to touch exactly 300 files under "vendor/lib/". Inserting blindly
+// would let the second call's entry silently overwrite the first's in
+// expand, and expandPlanFiles would then always resolve that label to the
+// wrong file set. On collision, suffix the incoming label until it is
+// unique, and reflect that renamed label back into what's rendered into the
+// prompt so the LLM echoes the same string the caller can later resolve.
+func mergeFileListExpansion(expand map[string][]string, summary commit.FileListSummary) []string {
+	if len(summary.Expand) == 0 {
+		return summary.Labels
+	}
+	rename := make(map[string]string, len(summary.Expand))
+	for label, files := range summary.Expand {
+		unique := label
+		for n := 2; ; n++ {
+			if _, taken := expand[unique]; !taken {
+				break
+			}
+			unique = fmt.Sprintf("%s {%d}", label, n)
+		}
+		expand[unique] = files
+		if unique != label {
+			rename[label] = unique
+		}
+	}
+	if len(rename) == 0 {
+		return summary.Labels
+	}
+	labels := make([]string, len(summary.Labels))
+	for i, l := range summary.Labels {
+		if r, ok := rename[l]; ok {
+			labels[i] = r
+		} else {
+			labels[i] = l
+		}
+	}
+	return labels
 }
 
 func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.DetectRequest) ([]string, error) {

@@ -37,7 +37,7 @@ cmd → application → domain ← infrastructure
 - **`application/`** — orchestration services (`CommitService`, `InitService`, `ScopeService`, `GitignoreService`)
 - **`infrastructure/`** — adapters: git CLI wrappers, OpenAI client, config resolver, Toptal API client
 - **`cmd/`** — Cobra wiring only, no business logic
-- **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit)
+- **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 and 4 = retired/unused)
 - **`e2e/`** — full binary tests via subprocess
 
 ## Key Design Decisions
@@ -60,31 +60,33 @@ The CLI is a Cobra tree. Every command lives in exactly one of three namespaces;
 
 ### Namespaces
 
-- **Action** (top-level): `init`, `commit`, `capture` (hidden). These mutate the repo or the graph. `capture` is a hook target — invoked by `git-agent capture --source claude-code` from the Claude Code PostToolUse hook, never by a human — and stays `Hidden: true`.
+- **Action** (top-level): `init`, `commit`. These mutate the repo or the graph. (The hidden `capture` hook target and the `audit` forensic tree were removed when the agent Event Log subsystem was cut — the graph is now commit-history co-change only.)
 - **Meta** (top-level): `config`, `version`, `completion`. Configuration and tooling, not repo mutation.
-- **`graph`** (parent): every command that reads or audits the agent Event Log or its derived indexes (co-change, AST). Children: `status`, `verify`, `index`, `sync`, `impact`, `timeline`, `diagnose`, `provenance`, `callers`, `callees`, `node`, `query`, `affected`. **No graph read/audit command lives at the top level.** A new forensic/query command over the graph goes under `graph`.
+- **Reads** (top-level): `related` and `status`. `related <files...>` is the co-change query — the files that habitually change with the given files, enriched with the commits that link them (subject + sha + date); language-agnostic (git history, not parsing), offline, no API key. `status` reports index health and row counts. A new co-change read goes at the top level here.
+
+**There is no query namespace parent.** The graph is a single data source (git-history co-change); there is no append-only Event Log and no separate forensic trust model. Reads are top-level `related`/`status`.
 
 ### Registration
 
-Each command registers itself exactly once in its own `init()` via `<parent>Cmd.AddCommand(xCmd)`. `graphCmd` is a package var (`cmd/graph.go`); package vars are initialized before any `init()`, so child files may reference `graphCmd` without ordering concerns. Never register a command twice, and never prefix a child's `Use` with the parent name — Cobra composes the path from `Use` verbatim.
+Each command registers itself exactly once in its own `init()` via `rootCmd.AddCommand(xCmd)`. Never register a command twice, and never prefix a child's `Use` with the parent name — Cobra composes the path from `Use` verbatim.
 
 ### Output format
 
-Every `graph` query command (`impact`, `timeline`, `diagnose`, `verify`, `provenance`) exposes both `--json` and `--text`, declared `MarkFlagsMutuallyExclusive("json", "text")`. When neither is set, the command auto-detects: **JSON when stdout is piped, text when stdout is a TTY.** Format selection goes through `pkg/output.Decide`; JSON encoding through `pkg/output.EncodeJSON`. Do not hand-roll `if jsonFlag { json.NewEncoder... }` in a new command — route through `pkg/output`. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating and stays out of `pkg/output`.)
+Every read command takes a single `-o, --output {auto,json,text}` flag, registered via `addOutputFlag` (local on `related`/`status`/`commit`/`version`). `auto` (the query default) emits **JSON when stdout is piped, text on a TTY**; `commit`/`version` default to `text` so piping a human-facing action does not silently switch it to JSON. Resolve the format with `outputFormat(cmd)` (wraps `pkg/output.Decide`), encode with `pkg/output.EncodeJSON`, and emit error envelopes with `pkg/output.EncodeError`. Wrap a read command's `RunE` in `jsonAwareRunE` so failures render as `{"error":{"code","message"}}` on stderr in JSON mode. Do not hand-roll `--json`/`--text` or `json.NewEncoder` in a new command. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating.)
 
 ### Flag policy
 
-Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--llm`, `--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--symbol`, `--depth`, `--top`, `--mode`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are config keys (`git-agent config set <key> <value>`), never flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver. Example: `diagnose`'s re-rank model/base-url/api-key/timeout are `git-agent.diagnose-*` keys; only `--llm` (the toggle) remains on the command.
+Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--depth`, `--top`, `--kind`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are config keys (`git-agent config set <key> <value>`), never flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver.
 
 ### Short descriptions
 
-- A parent `Short` describes the group, not a single action. A parent without `RunE` must not claim to "Show" anything — it prints help. Use a group verb: `Manage …`, `Query and audit …`.
+- A parent `Short` describes the group, not a single action. A parent without `RunE` must not claim to "Show" anything — it prints help. Use a group verb: `Manage …`.
 - A child `Short` is verb-leading and ≤ ~60 characters.
 - `Short` must match what the command does; update it when the command moves namespace.
 
 ### Hidden commands
 
-Hook-target commands stay `Hidden: true` and are excluded from the skill command table. The only current example is `capture`.
+There are currently no hidden commands (the `capture` hook target was removed with the Event Log). Graph building is automatic (via `commit` / `init --graph` and read-path auto-sync), so there are no manual index/sync commands.
 
 ## Commit Conventions
 

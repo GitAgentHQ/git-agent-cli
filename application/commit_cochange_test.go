@@ -50,7 +50,7 @@ func seedCoChanged(t *testing.T, repo graph.GraphRepository) {
 	// Create commits where a.go and b.go change together, and b.go and c.go change together.
 	for i := 0; i < 5; i++ {
 		hash := "abc" + string(rune('0'+i))
-		if err := repo.UpsertCommit(ctx, graph.CommitNode{Hash: hash, Message: "test"}); err != nil {
+		if err := repo.UpsertCommit(ctx, graph.CommitNode{Hash: hash, Message: "feat: wire a and b", Timestamp: int64(i + 1)}); err != nil {
 			t.Fatalf("upsert commit: %v", err)
 		}
 		if err := repo.CreateModifies(ctx, graph.ModifiesEdge{CommitHash: hash, FilePath: "a.go"}); err != nil {
@@ -62,7 +62,7 @@ func seedCoChanged(t *testing.T, repo graph.GraphRepository) {
 	}
 	for i := 0; i < 4; i++ {
 		hash := "bcd" + string(rune('0'+i))
-		if err := repo.UpsertCommit(ctx, graph.CommitNode{Hash: hash, Message: "test"}); err != nil {
+		if err := repo.UpsertCommit(ctx, graph.CommitNode{Hash: hash, Message: "fix: adjust b and c", Timestamp: int64(i + 1)}); err != nil {
 			t.Fatalf("upsert commit: %v", err)
 		}
 		if err := repo.CreateModifies(ctx, graph.ModifiesEdge{CommitHash: hash, FilePath: "b.go"}); err != nil {
@@ -115,7 +115,24 @@ func TestGraphCoChangeProvider_GetHintsForFiles(t *testing.T) {
 				i, hints[i].Strength, hints[i-1].Strength)
 		}
 	}
+
+	// Every hint must carry the commit subjects that prove the coupling — the
+	// semantic signal the planner prompt surfaces. They are sourced from the
+	// linking commits, which only populate when the provider runs IncludeCommits
+	// enrichment through ImpactService (regression guard for that wiring).
+	for _, h := range hints {
+		if len(h.Subjects) == 0 {
+			t.Errorf("hint %s <-> %s has no linking-commit subjects", h.FileA, h.FileB)
+		}
+		if len(h.Subjects) > maxHintSubjectsForTest {
+			t.Errorf("hint %s <-> %s carries %d subjects, want at most %d",
+				h.FileA, h.FileB, len(h.Subjects), maxHintSubjectsForTest)
+		}
+	}
 }
+
+// maxHintSubjectsForTest mirrors the provider's maxHintSubjects cap.
+const maxHintSubjectsForTest = 2
 
 func TestGraphCoChangeProvider_NoPairs(t *testing.T) {
 	repo, cleanup := setupGraphDB(t)

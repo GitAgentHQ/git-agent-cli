@@ -6,7 +6,7 @@
 
 [English](README.md) | **简体中文**
 
-AI 驱动的 Git 命令行工具，分析暂存和未暂存的变更，将其拆分为原子提交，并通过 LLM 生成规范的提交信息。
+面向 agent 的 Git 命令行工具：原子化 AI 提交 + 共变关系——全语言、离线、无需 API key。它分析暂存和未暂存的变更，将其拆分为原子提交并通过 LLM 生成规范的提交信息；共变查询则挖掘 git 历史，找出习惯性一起变更的文件，并附上解释这种耦合的提交信息。
 
 ## 安装
 
@@ -55,7 +55,6 @@ git-agent init --gitignore              # 仅生成 .gitignore
 git-agent init --hook conventional      # 安装 Conventional Commits 验证器
 git-agent init --hook empty             # 安装空占位钩子
 git-agent init --hook /path/to/script   # 安装自定义钩子脚本
-git-agent init --agent-hook             # 安装 Claude Code PostToolUse 捕获钩子
 git-agent init --force                  # 覆盖已有配置/钩子/.gitignore
 git-agent init --max-commits 50         # 限制用于作用域生成的提交分析数量
 git-agent init --local --scope          # 将作用域写入 .git-agent/config.local.yml
@@ -66,11 +65,28 @@ git-agent init --local --scope          # 将作用域写入 .git-agent/config.l
 | `--scope` | 通过 AI 生成作用域 |
 | `--gitignore` | 通过 AI 生成 `.gitignore` |
 | `--hook` | 配置钩子：`conventional`、`empty` 或文件路径（可重复） |
-| `--agent-hook` | 安装 Claude Code PostToolUse 捕获钩子 |
 | `--force` | 覆盖已有配置/.gitignore |
 | `--max-commits` | 用于作用域生成的最大提交分析数量（默认：200） |
 | `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
 | `--user` | 将配置写入 `~/.config/git-agent/config.yml`（需要至少一个操作参数） |
+
+#### `.git-agent/graph.db` 永不追踪
+
+图数据库（`.git-agent/graph.db`）由 `commit`、`related`、`status` 等命令在运行时生成。
+它绝不能被提交——一旦被追踪，每次运行都会再次修改它，产生一连串
+`chore: update graph database file` 提交（即"无限重建"循环）。
+
+git-agent 自动守护这一不变量，无需 `init`：
+
+- **`git-agent init`**：把 `.git-agent/graph.db`（及 `*.db-shm`/`*.db-wal`/`*.db-journal`、`.git-agent/config.local.yml`）写入提交版 `.gitignore`，并对已追踪的 `graph.db` 执行 `git rm --cached`，使忽略规则生效。
+- **运行时防护**：每个打开图库的命令（`commit`、`related`、`status`）都会把强制忽略规则写入 `.git/info/exclude`（本地、未追踪、`git diff` 不可见），并在 `graph.db` 已被追踪时自动 untrack——例如从已提交该文件的 fork 克隆下来的仓库。即便未运行 `init`，也能阻断循环。
+
+存疑时验证：
+
+```bash
+git ls-files .git-agent/graph.db        # 应无输出（未追踪）
+git check-ignore .git-agent/graph.db    # 输出路径，exit 0（已忽略）
+```
 
 ### `git-agent commit`
 
@@ -85,7 +101,12 @@ git-agent commit --intent "fix auth bug"      # 向 LLM 提供上下文提示
 git-agent commit --co-author "Name <email>"  # 添加 co-author trailer
 git-agent commit --trailer "Fixes: #123"     # 添加任意 git trailer
 git-agent commit --no-attribution             # 省略默认的 Git Agent trailer
+git-agent commit -o json                      # 结构化结果（标题、SHA、钩子结果）
 ```
+
+使用 `-o json` 时，commit 打印单个对象：`dry_run`、`commits[]`（每项
+`{title, message, files, sha, hook_outcome}`）、`committed_count` 和
+`final_sha`。`hook_outcome` 为 `passed` 或 `skipped`。否则输出为人类可读文本。
 
 ### `git-agent config`
 
@@ -99,6 +120,7 @@ git-agent config set --user api-key sk-xxx   # 写入用户作用域
 git-agent config set --project hook empty     # 写入项目作用域
 git-agent config set --local max-diff-lines 1000  # 写入本地作用域
 git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直连端点放宽到 512 KiB）
+git-agent config set --local max-plan-files 300     # 提高规划阶段文件列表上限（超出后按目录折叠）
 ```
 
 `config set` 和 `config get` 同时支持 snake_case 和 kebab-case 键名（如 `api-key` 和 `api_key` 等价）。
@@ -139,130 +161,64 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 
 打印构建版本。
 
-### `git-agent impact`
+### `git-agent related`
 
-查找与给定种子相关的文件或符号。三种模式：
+挖掘 git 历史，找出历史上与给定文件一起变更的文件（共变耦合）。种子可以是
+文件路径、目录，或不带参数时取当前工作区的变更（"我的改动通常还会涉及哪些
+文件？"）。与多个种子都耦合的文件排名最高。
 
-| 模式 | 触发条件 | 返回内容 |
-|------|----------|----------|
-| `cochange`（默认） | 种子为文件路径（或无参数 = 工作区变更） | 历史上与种子一起变更的文件 |
-| `structural` | `--symbol <name>` | 调用、被调用或引用种子符号的 AST 符号 |
-| `combined` | `--symbol <name> --mode combined` | co-change 和 structural 结果的并集 |
+它**全语言**——只读取 git 历史，不解析源码——离线运行，无需 API key，首次
+运行自动索引。
 
-不带参数时，种子默认为当前工作区变更。首次运行自动索引 git 历史；查询为离线操作（无需 LLM，无需 API key）。
+使用 `-o json` 时，每个相关文件都附带一个 `commits` 数组（每项
+`{sha, subject, ts}`）——把这些文件联系起来的提交，即"它们为什么相关？"的证据。
 
 ```bash
-git-agent impact                                     # "我的改动通常还会涉及哪些文件？"
-git-agent impact application/commit_service.go       # 从特定文件查 co-change
-git-agent impact src/                                # 从目录查 co-change
-git-agent impact --symbol CommitService --json       # structural 影响分析
-git-agent impact --symbol CommitService --mode combined  # 两种信号合并
+git-agent related                                     # "我的改动通常还会涉及哪些文件？"
+git-agent related application/commit_service.go       # 从特定文件查共变
+git-agent related src/                                # 从目录查共变
+git-agent related --tests                             # 只保留相关的测试文件（"该跑哪些测试？"）
+git-agent related application/commit_service.go -o json
 ```
 
 | 参数 | 默认值 | 描述 |
 |------|--------|------|
-| `--symbol` | | 按符号名查询 structural 影响 |
-| `--mode` | `cochange` | 影响模式：`cochange`、`structural` 或 `combined` |
-| `--depth` | 1 | 传递性 co-change 深度 |
+| `--depth` | 1 | 传递性共变深度 |
 | `--top` | 20 | 最大结果数 |
-| `--min-count` | 3 | 最小 co-change 次数阈值 |
+| `--min-count` | 3 | 最小共变次数阈值 |
+| `--tests` | false | 只保留相关的测试文件（决定改动后该跑哪些测试） |
 | `--reindex` | false | 查询前强制重新索引 |
-| `--json` / `--text` | 自动 | 强制输出格式（管道时为 JSON，TTY 时为文本） |
+| `-o`、`--output` | 自动 | 输出格式：`auto`、`json`、`text`（管道时为 JSON，TTY 时为文本） |
 
-### `git-agent timeline`
+#### 为什么它与 grep 互补（面向 coding agent）
 
-显示最近的 agent 和人类操作历史，按会话分组，包含每次操作的工具和文件信息。由 `git-agent capture` 写入数据。离线操作。
+`related` 是代码搜索的**时间维补充**，而非替代。grep、Glob、编辑器的"查找
+引用"按**当前内容与符号**定位文件（空间维）；`related` 按**它们如何一起变更**
+定位（时间维）。许多真实耦合是符号搜索看不见的：
 
-```bash
-git-agent timeline                        # 所有已记录的操作
-git-agent timeline --since 2h             # 最近 2 小时
-git-agent timeline --file src/auth.go     # 按文件过滤
-git-agent timeline --source claude-code   # 按来源过滤
-git-agent timeline --json                 # JSON 输出
-```
+- 在 `gin` 中，`context.go` 的 top 共变伙伴有过半（`tree.go`、`errors.go`、
+  `binding/*`、`render/*`）与 `Context` 符号无任何文本关联——grep 无法发现。
+- 在 `flask` 中，`app.py` 与 `CHANGES.rst`（85 次提交）、`docs/templating.rst`
+  共变；仅靠 grep 永远不会提醒你改 `app.py` 时还要更新 changelog 和文档。
 
-| 参数 | 默认值 | 描述 |
-|------|--------|------|
-| `--since` | | 时间窗口：`2h`、`7d` 或 RFC 3339 时间戳 |
-| `--source` | | 按操作来源过滤（如 `claude-code`、`human`） |
-| `--file` | | 按文件路径过滤 |
-| `--top` | 50 | 最大显示会话数 |
-| `--json` / `--text` | 自动 | 强制输出格式 |
+JSON 的 `commits` 数组还给出每条耦合背后的**意图**，这是静态搜索给不了的。
+实用流程：`related <file>`（改动爆炸半径 + 解释原因的提交）→ grep/读这些文件
+（精确代码）→ `related <file> --tests`（该跑哪些测试）。它离线、毫秒级响应，
+agent 可以在每次多文件改动时调用。
 
-### `git-agent graph`
+共变是**聚合信号**：对一致耦合（实现与其测试）准确，对跨特性或大范围扫荡式
+提交较软。读 `commits` 的标题，即可区分真实耦合与偶发噪声。
 
-查询并审计 agent Event Log 及其派生的 AST + 共变索引。AST 索引解析本仓库
-git 跟踪的 Go 文件，记录函数、方法、结构体/接口、**结构体字段**、类型别名、
-import、调用，以及字段读取的 `references` 边。离线运行（无需 LLM、无需 API key）。
+### `git-agent status`
 
-`callers` / `callees` / `node` 的**符号语法**：支持裸名、receiver 限定的
-`Type.Method`，或全限定 `file::Type.Method`：
+显示图索引的健康度与行数：提交、文件、作者、共变对、最后索引的提交，
+以及数据库大小。离线操作（无需 LLM，无需 API key）。
 
 ```bash
-git-agent graph callers Flag                  # 任意 Flag 方法的所有调用者
-git-agent graph callers decoder.alias         # 限定到某个 receiver 类型
-git-agent graph callers "decode.go::decoder.alias"  # 全限定
-git-agent graph callers HideHelpCommand       # 结构体字段的读取在此呈现
-git-agent graph node Command.Run              # 签名 + 一跳调用链
-git-agent graph affected command.go           # 覆盖该文件符号的测试
-git-agent graph query --kind method Connect   # FTS5 符号搜索
+git-agent status            # 索引健康度 + 行数
+git-agent status -o json    # JSON 输出
+git-agent init --graph      # 一次性全量建图（提交历史共变）
 ```
-
-```bash
-git-agent graph status      # 索引健康度 + 行数
-git-agent graph index      # 构建/刷新所有派生索引
-git-agent graph verify     # Event Log 链完整性
-git-agent graph timeline   # 操作历史
-git-agent graph impact     # 共变 / structural 影响（见上）
-```
-
-**外部包不索引。** 索引只解析本仓库的文件，因此来自导入包的符号（如
-`github.com/spf13/pflag`）不会成为 AST 节点。`callers`/`node` 会明确提示这一
-点，而不是报一个干瘪的 "not found"；`graph external-refs` 列出所有指向外部
-包的调用/字段读取点：
-
-```bash
-git-agent graph callers pflag.Lookup
-# Error: symbol "pflag.Lookup" is exported by external package
-# "github.com/spf13/pflag", which is not indexed; run
-# `git-agent graph external-refs` to list call sites into it
-
-git-agent graph external-refs            # 所有外部包引用点
-git-agent graph external-refs --json
-```
-
-> **构建说明：** AST 命令（`callers`、`callees`、`node`、`query`、
-> `affected`、`impact --symbol`、`index`）需要 tree-sitter 构建
-> （`CGO_ENABLED=1 go build`）。发布二进制以 `CGO_ENABLED=0` 编译并禁用这些
-> 命令；`external-refs` 只读取未解析引用，两种构建下均可使用。在已有
-> `.git-agent/graph.db` 的仓库升级二进制后，运行一次
-> `git-agent graph index --reindex`，让旧 DB 补上结构体字段节点与
-> receiver 解析后的调用边。
-
-#### `graph` 能否帮助模型开发功能？
-
-一次 A/B 复测（2026-06-27）在三个真实 Go 仓库（`spf13/cobra`、
-`go-yaml/yaml`、`urfave/cli`）上用 capable agent 跑了对照：每个功能实现两遍，
-一遍**不用** `graph`（仅 grep/Read），一遍**用** `graph` 取证命令。六组全部
-build+test 通过；graph 没有把任何 fail 翻成 pass，但带来了无 graph 一侧所没有
-的、可测量的非平凡价值：
-
-- **字段消歧（cli）：** `graph query Hide` 返回空（无此字段），而
-  `graph query Hidden` 返回字段节点 + `graph callers Hidden` 的 19 个读取者。
-  裸 `grep Hide` 会命中三个独立字段（`Hidden`、`HideHelp`、`HideHelpCommand`）；
-  graph 避免了写错字段的 accessor。
-- **receiver 消歧（yaml）：** `graph node alias` 一次调用同时展示
-  `parser.alias` 与 `decoder.alias` 的源码+签名，揭示 `decoder.alias` 只解引用
-  已解析的 alias 节点——真正的 anchor 捕获点是 `parser.anchor`。两臂都落对了
-  位置，但 graph 把 30 行噪声 grep 变成一次结构化调用。
-- **测试对规格的忠实度（yaml）：** 用 graph 的一侧测试覆盖了跨多次 `Decode`
-  的持久化（4 个子用例），而另一侧的单用例测试没有——尽管两边的实现完全相同。
-- **跨文件消费者安全（cobra）：** `graph callers mergePersistentFlags` 暴露了
-  `flag_groups.go` 与 `completions.go` 中的跨文件消费者，确认新增的只读
-  accessor 不会扰动它们。
-
-graph 的价值在于调查深度、测试/不变量忠实度、跨文件安全性——不是把不可能
-变可能。在 grep 噪声大、receiver/字段消歧更关键的陌生代码库上，它的作用更明显。
 
 ## 配置
 
@@ -332,6 +288,8 @@ hook:
 | `--no-attribution` | 省略默认的 Git Agent co-author trailer |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制行数；字节上限始终生效） |
 | `--max-diff-bytes` | 发送给模型的最大 diff 字节数（默认：0，使用内置约 384 KiB 上限；传正值可覆盖） |
+| `--max-plan-files` | 规划提示中单独列出的最大文件路径数，超出后按目录折叠（默认：0，使用内置上限 150） |
+| `-o`、`--output` | 输出格式：`text`（默认）、`json` 或 `auto`（管道时为 JSON） |
 
 ### 全局
 
@@ -350,6 +308,8 @@ hook:
 | 0 | 成功 |
 | 1 | 一般错误 — 无变更、API 失败、配置缺失 |
 | 2 | 钩子阻止 — pre-commit 钩子在重试后仍返回非零 |
+| 3 | 已弃用（未使用）— 旧版用于读取前图未索引的情形；共变读取会在首次运行时自动索引，此码不再使用 |
+| 4 | 已弃用（未使用）— 旧版用于 Event Log 链完整性；Event Log 子系统已移除，此码不再使用 |
 
 ## 更新日志
 

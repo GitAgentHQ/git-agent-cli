@@ -13,6 +13,7 @@ import (
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/graph"
 	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
@@ -21,7 +22,18 @@ import (
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
+	"github.com/gitagenthq/git-agent/pkg/output"
 )
+
+// commitJSONResult is the agent-facing envelope for `commit -o json`: the
+// per-commit results plus the aggregate fields an agent needs to verify the
+// outcome without parsing human text.
+type commitJSONResult struct {
+	DryRun         bool                             `json:"dry_run"`
+	Commits        []application.SingleCommitResult `json:"commits"`
+	CommittedCount int                              `json:"committed_count"`
+	FinalSHA       string                           `json:"final_sha,omitempty"`
+}
 
 // stderrIsTerminal reports whether os.Stderr is connected to an interactive
 // terminal. Agents, pipes, and CI runners get false and therefore receive no
@@ -30,6 +42,12 @@ import (
 var stderrIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stderr.Fd()))
 }
+
+// commitGraphBackfillMaxCommits bounds the one-time co-change backfill the first
+// commit performs when bootstrapping the graph, so a deep history cannot turn
+// the first commit into a long index. Recency-weighting fades older commits, so
+// a bounded recent window carries nearly all the co-change signal anyway.
+const commitGraphBackfillMaxCommits = 1000
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
@@ -58,6 +76,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	maxDiffLinesFlagChanged := cmd.Flags().Changed("max-diff-lines")
 	maxDiffBytesFlag, _ := cmd.Flags().GetInt("max-diff-bytes")
 	maxDiffBytesFlagChanged := cmd.Flags().Changed("max-diff-bytes")
+	maxPlanFilesFlag, _ := cmd.Flags().GetInt("max-plan-files")
+	maxPlanFilesFlagChanged := cmd.Flags().Changed("max-plan-files")
 	providerCfg, err := resolveProviderConfig(cmd)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -149,25 +169,21 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
 
-	// Wire graph-backed co-change hints and action linking only when an index
-	// already exists; commit never forces indexing.
+	// git-first graph generation: commit is the primary write path for the code
+	// graph. Before committing, engage an EXISTING graph only — no bootstrap, so
+	// nothing dirties the working tree being committed — to feed co-change hints
+	// into planning and link captured actions to the commit. The graph is
+	// bootstrapped and maintained AFTER the commit lands (see end of runCommit).
+	graphAutobuild := projCfg == nil || projCfg.GraphAutobuild == nil || *projCfg.GraphAutobuild
 	graphDBPath := infraGraph.DBPath(root)
-	if _, err := os.Stat(graphDBPath); err == nil {
-		graphClient := infraGraph.NewSQLiteClient(graphDBPath)
-		graphRepo := infraGraph.NewSQLiteRepository(graphClient)
-		if err := graphRepo.Open(cmd.Context()); err == nil {
-			defer graphRepo.Close()
-			if err := graphClient.ValidateSchemaVersion(cmd.Context()); err == nil {
-				svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
-				svc.SetActionLinker(application.NewGraphActionLinker(graphRepo))
-				// Sync projections and reconcile out-of-band edits before committing
-				// so captured actions are linkable and unexplained changes are
-				// recorded. Best-effort: a cold-path failure must never block commit.
-				graphGit := infraGit.NewGraphClient(root)
-				if _, err := application.SyncEventLog(cmd.Context(), graphRepo, graphGit); err != nil && verbose {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: event log sync: %v\n", err)
-				}
-			}
+	var graphRepo *infraGraph.SQLiteRepository
+	var graphGit *infraGit.GraphClient
+	if _, statErr := os.Stat(graphDBPath); statErr == nil {
+		if graphClient, err := openGraphDBConn(cmd.Context(), graphDBPath); err == nil {
+			defer graphClient.Close()
+			graphRepo = infraGraph.NewSQLiteRepository(graphClient)
+			graphGit = infraGit.NewGraphClient(root)
+			svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
 		}
 	}
 
@@ -192,6 +208,17 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	maxPlanFiles := maxPlanFilesFlag
+	if !maxPlanFilesFlagChanged && projCfg != nil {
+		if projCfg.MaxPlanFiles > 0 {
+			maxPlanFiles = projCfg.MaxPlanFiles
+		} else if projCfg.MaxPlanFiles < 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"warning: max_plan_files %d in project config is non-positive; falling back to the built-in default\n",
+				projCfg.MaxPlanFiles)
+		}
+	}
+
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
 		Intent:            intent,
 		Trailers:          trailers,
@@ -201,6 +228,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Config:            projCfg,
 		MaxLines:          maxDiffLines,
 		MaxBytes:          maxDiffBytes,
+		MaxPlanFiles:      maxPlanFiles,
 		Verbose:           verbose,
 		LogWriter:         logWriter,
 		OutWriter:         outWriter,
@@ -213,29 +241,117 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		// cmd.Context().Err() too because net/http surfaces signal-driven
 		// cancellation as an opaque signal sentinel (not context.Canceled),
 		// so errors.Is alone misses the SIGINT case.
+		jsonOut := outputFormat(cmd) == output.FormatJSON
+		if jsonOut {
+			// We emit the JSON error envelope ourselves; stop cobra from also
+			// printing its "Error:" line so stderr stays valid JSON for agents.
+			cmd.SilenceErrors = true
+		}
 		if errors.Is(err, context.Canceled) || cmd.Context().Err() != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+			if jsonOut {
+				_ = output.EncodeError(cmd.ErrOrStderr(), 1, "cancelled")
+			} else {
+				fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+			}
 			return agentErrors.NewExitCodeError(1, "")
+		}
+		if jsonOut {
+			// Reuse RenderCommitError to classify the exit code, but discard its
+			// human text and emit the uniform JSON error envelope instead.
+			mapped := RenderCommitError(io.Discard, err)
+			code := 1
+			msg := mapped.Error()
+			var ece *agentErrors.ExitCodeError
+			if errors.As(mapped, &ece) {
+				code = ece.Code
+				if ece.Message != "" {
+					msg = ece.Message
+				}
+			}
+			// Planner timeout/budget map to an empty ExitCodeError message (their
+			// human text went to io.Discard); fall back to the underlying error so
+			// the JSON envelope is never blank.
+			if msg == "" {
+				msg = err.Error()
+			}
+			_ = output.EncodeError(cmd.ErrOrStderr(), code, msg)
+			return mapped
 		}
 		return RenderCommitError(cmd.ErrOrStderr(), err)
 	}
 
 	out := cmd.OutOrStdout()
 
-	if result.DryRun {
+	if outputFormat(cmd) == output.FormatJSON {
+		committedCount := 0
+		if !result.DryRun {
+			committedCount = len(result.Commits)
+		}
+		finalSHA := ""
+		if n := len(result.Commits); n > 0 {
+			finalSHA = result.Commits[n-1].SHA
+		}
+		if err := output.EncodeJSON(out, commitJSONResult{
+			DryRun:         result.DryRun,
+			Commits:        result.Commits,
+			CommittedCount: committedCount,
+			FinalSHA:       finalSHA,
+		}); err != nil {
+			return err
+		}
+		// Fall through: graph autobuild below is gated on !DryRun and writes only
+		// to a TTY/verbose stderr writer, so it never pollutes the JSON on stdout.
+	} else if result.DryRun {
 		for i, c := range result.Commits {
 			fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
 		}
 		return nil
+	} else {
+		for _, c := range result.Commits {
+			fmt.Fprintln(out)
+			if c.GitOutput != "" {
+				fmt.Fprintln(out, c.GitOutput)
+			}
+			if c.Explanation != "" {
+				fmt.Fprintln(out, c.Explanation)
+			}
+		}
 	}
 
-	for _, c := range result.Commits {
-		fmt.Fprintln(out)
-		if c.GitOutput != "" {
-			fmt.Fprintln(out, c.GitOutput)
+	// git-first graph generation (continued): the commit(s) have landed and the
+	// output is printed, so now bootstrap the graph if none existed and fold the
+	// new commit into the co-change index — the graph grows as a byproduct of
+	// committing, never needing a separate manual index step. Running here,
+	// after the commit, keeps the gitignore/dir bootstrap from dirtying the
+	// committed tree. Disabled by graph_autobuild=false. Strictly best-effort:
+	// the commit is already done, so failures only surface under --verbose.
+	if graphAutobuild && !result.DryRun {
+		if graphRepo == nil {
+			// First-time bootstrap does a one-time, bounded history backfill that
+			// can take a moment. Announce it (only on a TTY / --verbose, like the
+			// other commit phase lines) so the user isn't left at a silent prompt
+			// after the commit hash already printed. Subsequent commits index
+			// incrementally and print nothing.
+			if outWriter != nil {
+				fmt.Fprintln(outWriter, "Building code graph (first run)...")
+			}
+			if _, graphClient, err := openGraphDB(cmd.Context(), root); err == nil {
+				defer graphClient.Close()
+				graphRepo = infraGraph.NewSQLiteRepository(graphClient)
+				graphGit = infraGit.NewGraphClient(root)
+			} else if verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph bootstrap: %v\n", err)
+			}
 		}
-		if c.Explanation != "" {
-			fmt.Fprintln(out, c.Explanation)
+		if graphRepo != nil {
+			idxSvc := application.NewIndexService(graphRepo, graphGit)
+			ensure := application.NewEnsureIndexService(idxSvc, graphRepo, graphGit, graphDBPath)
+			if _, err := ensure.EnsureIndex(cmd.Context(), graph.IndexRequest{
+				MaxCommits:        commitGraphBackfillMaxCommits,
+				MaxFilesPerCommit: 50,
+			}); err != nil && verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph co-change update: %v\n", err)
+			}
 		}
 	}
 
@@ -253,7 +369,7 @@ func RenderCommitError(w io.Writer, err error) error {
 		fmt.Fprintf(w,
 			"error: LLM planner timed out (model=%s, after %s); "+
 				"try a more capable model, raise --request-timeout, "+
-				"narrow scope with --intent, or split with --max-diff-lines / smaller batches\n",
+				"narrow scope with --intent, or split with --max-diff-lines / --max-plan-files / smaller batches\n",
 			timeoutErr.Model, timeoutErr.Timeout)
 		return agentErrors.NewExitCodeError(1, "")
 	}
@@ -262,7 +378,7 @@ func RenderCommitError(w io.Writer, err error) error {
 		fmt.Fprintf(w,
 			"error: LLM kept producing oversized output (model=%s, ceiling=%d tokens); "+
 				"try a more capable model, narrow scope with --intent, or split with "+
-				"--max-diff-lines / smaller batches\n",
+				"--max-diff-lines / --max-plan-files / smaller batches\n",
 			budgetErr.Model, budgetErr.Ceiling)
 		return agentErrors.NewExitCodeError(1, "")
 	}
@@ -341,7 +457,9 @@ func init() {
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
 	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
+	commitCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
+	addOutputFlagWithDefault(commitCmd, false, "text")
 
 	rootCmd.AddCommand(commitCmd)
 }
