@@ -7,44 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-07
+
 ### Added
+- `related` co-change query: ranks the files that habitually change with the seed(s) — a file coupled to several seeds ranks highest — and attaches the linking commits (`{sha, subject, ts}`) that prove each coupling. With no arguments it uses the current working-tree changes. `--tests` keeps only the related test files (which tests to run after a change).
+- `status` top-level read: graph index health and row counts.
+- `commit -o json` structured output: a single object with `dry_run`, `commits[]` (each `{title, message, files, sha, hook_outcome}`), `committed_count`, and `final_sha`. Read commands emit a uniform `{"error":{"code","message"}}` envelope on stderr on failure in JSON mode.
+- `init --graph` flag: one-shot cold start that builds the commit-history co-change index without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`.
+- `graph_autobuild` config key (project/local): set `false` to stop `commit` from building and maintaining the co-change graph.
 - `--max-plan-files` flag / `max_plan_files` config key: caps how many individual file paths the planner prompt lists before collapsing them into directory-level summaries (e.g. `vendor/lib/ (842 files)`), default 150. Fixes `commit` hanging or timing out when a changeset touches thousands of files (e.g. untracking a vendored dependency directory newly covered by `.gitignore`) — the file list, not just the diff content, could overwhelm the planner. Collapsing targets the largest offending directories first, leaving small groups listed individually, and the real file paths are recovered after the LLM responds so staging/committing is unaffected.
-
-### Changed (BREAKING)
-- **Agent Event Log subsystem removed.** The append-only, hash-chained action log and all of its forensic machinery are gone — the graph is now a single data source (git commit-history co-change) and the LLM serves only `commit`/`init --scope`. Deleted the `audit` command tree (`timeline`/`diagnose`/`provenance`/`verify`), the hidden `capture` command, the `--agent-hook` PostToolUse installer, the CQRS projection/replay path, the out-of-band reconcile service, the SHA-256 hash chain, the `diagnose` LLM re-ranker, and the `redact` package (~4,100 lines).
-- **Exit code 4 retired.** It was "Event Log chain integrity"; with no Event Log to verify, it is no longer emitted. Codes 3 and 4 are both now retired.
-- **Schema bumped to v4.** The `events`/`event_files`/`sessions`/`actions`/`action_modifies`/`action_produces` tables are dropped on open (idempotent), so existing v3 databases shed them without a full rebuild.
-- **`git-agent status`** no longer reports `sessions`/`actions` counts (those tables no longer exist); it shows commits, files, authors, co-change pairs, last indexed commit, and db size.
-- **`git-agent init --graph`** builds the commit-history co-change index only (the L3 Event-Log projection step is gone). The `--agent-hook` flag is removed.
-- **`git-agent commit`** no longer syncs the Event Log or links captured actions to the commit (there is no Event Log); the co-change hint provider and post-commit autobuild are unchanged.
-
-## [0.7.0] - 2026-06-30
 
 ### Changed (BREAKING)
 - **Co-change-only graph — all AST/static-analysis machinery removed.** The graph is now built purely from git co-change history: language-agnostic, offline, no API key, no cgo. Deleted the AST extractors, symbol index, reference resolver, and every AST-backed read (~3,000 lines).
 - **Command-surface refactor — clean break, no compatibility aliases.** The whole `graph` namespace and the `impact` family are removed and replaced:
   - `git-agent impact <files…>` → top-level **`git-agent related <files…>`** — the co-change query, enriched with the commits that prove each coupling (subject + sha + date); `--tests` narrows to related test files.
   - `git-agent graph status` → top-level **`git-agent status`** — index health + row counts.
-  - The forensic Event Log commands move under a new **`audit`** parent: `git-agent graph {timeline,diagnose,provenance,verify}` → `git-agent audit {timeline,diagnose,provenance,verify}`.
   - Removed with no replacement: `graph index`, `graph sync`, `graph query`, `graph node`, `graph callers`, `graph callees`, `graph external-refs`, `graph affected`, and `graph impact`. Graph building is automatic (via `commit` / `init --graph` and read-path auto-sync), so there are no manual index/sync commands.
 - **Unified output flag.** The per-command `--json` / `--text` pair is replaced by a single `-o, --output {auto,json,text}` flag on every read command (`auto` = JSON when stdout is piped, text on a TTY). `commit` and `version` also accept `-o` but default to `text`.
-- Exit code `3` ("graph not indexed") is **retired**: co-change reads auto-index on first run, so the condition no longer exists.
-
-### Added
-- `related` co-change query: ranks the files that habitually change with the seed(s) — a file coupled to several seeds ranks highest — and attaches the linking commits (`{sha, subject, ts}`) that prove each coupling. With no arguments it uses the current working-tree changes. `--tests` keeps only the related test files (which tests to run after a change).
-- `status` top-level read: graph index health and row counts.
-- `audit` namespace for read-only, hash-chained Event Log forensics: `timeline`, `diagnose`, `provenance`, `verify` (exits `4` when the chain is broken).
-- `commit -o json` structured output: a single object with `dry_run`, `commits[]` (each `{title, message, files, sha, hook_outcome}`), `committed_count`, and `final_sha`. Read commands emit a uniform `{"error":{"code","message"}}` envelope on stderr on failure in JSON mode.
-- `init --graph` flag: one-shot cold start that builds the graph (commit-history co-change + Event-Log projections) without an LLM. The default `init` wizard does not build the graph (opt-in) — the first `commit` does, via `graph_autobuild`.
-- `graph_autobuild` config key (project/local): set `false` to stop `commit` from building and maintaining the co-change graph.
-- Read-path auto-sync: `audit timeline`, `audit provenance`, and `audit diagnose` call `SyncIfStale` before reading, so they reflect just-captured events without a manual sync (CQRS read-side projection refresh).
-
-### Fixed
-- Projection staleness now tracks an explicit high-water mark (`max_projected_event_seq`) instead of the `event_files` row count. An Outcome event touches no files, so the row count could peg the projected seq below `MaxEventSeq` forever, making sync re-replay (and duplicate) the tail on every run.
-
-### Changed
-- Documented, authoritative exit-code taxonomy: `0` success, `1` general error, `2` hook blocked commit, `4` event-log chain integrity broken (`3` retired).
-- Schema v3: opening a pre-refactor database drops the retired AST tables idempotently, preserving co-change data without a full rebuild.
+- **Agent Event Log subsystem removed.** The append-only, hash-chained action log and all of its forensic machinery are gone — the graph is now a single data source (git commit-history co-change) and the LLM serves only `commit`/`init --scope`. Deleted the `audit` command tree (`timeline`/`diagnose`/`provenance`/`verify`), the hidden `capture` command, the `--agent-hook` PostToolUse installer, the CQRS projection/replay path, the out-of-band reconcile service, the SHA-256 hash chain, the `diagnose` LLM re-ranker, and the `redact` package (~4,100 lines).
+- **Exit codes 3 and 4 retired.** `3` was "graph not indexed" (co-change reads auto-index on first run, so the condition no longer exists); `4` was "Event Log chain integrity" (no Event Log to verify). Live exit codes are now `0` success, `1` general error, `2` hook blocked commit.
+- **Schema bumped to v4.** The `events`/`event_files`/`sessions`/`actions`/`action_modifies`/`action_produces` tables are dropped on open (idempotent), so existing v3 databases shed them without a full rebuild. Opening a pre-refactor database also drops the retired AST tables idempotently, preserving co-change data without a full rebuild.
+- **`git-agent status`** no longer reports `sessions`/`actions` counts (those tables no longer exist); it shows commits, files, authors, co-change pairs, last indexed commit, and db size.
+- **`git-agent init --graph`** builds the commit-history co-change index only (the L3 Event-Log projection step is gone). The `--agent-hook` flag is removed.
+- **`git-agent commit`** no longer syncs the Event Log or links captured actions to the commit (there is no Event Log); the co-change hint provider and post-commit autobuild are unchanged.
 
 ## [0.6.1] - 2026-06-28
 
