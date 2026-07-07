@@ -227,8 +227,8 @@ func init() {
 
 	configSetCmd.MarkFlagsMutuallyExclusive("user", "project", "local")
 
-	addOutputFlagWithDefault(configShowCmd, false, "text")
-	addOutputFlagWithDefault(configGetCmd, false, "text")
+	addOutputFlagWithDefault(configShowCmd, "text")
+	addOutputFlagWithDefault(configGetCmd, "text")
 
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)

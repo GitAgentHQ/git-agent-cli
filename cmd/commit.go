@@ -459,7 +459,7 @@ func init() {
 	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
 	commitCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
 	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
-	addOutputFlagWithDefault(commitCmd, false, "text")
+	addOutputFlagWithDefault(commitCmd, "text")
 
 	rootCmd.AddCommand(commitCmd)
 }
