@@ -28,24 +28,18 @@ func (o *outputValue) Set(v string) error {
 func (o *outputValue) Type() string { return "format" }
 
 // addOutputFlag registers the shared -o/--output flag defaulting to auto (JSON
-// when stdout is piped, text on a TTY). When persistent is true it is declared on
-// the command's persistent flag set so every child inherits it (used by the audit
-// query parent); otherwise it is a local flag.
-func addOutputFlag(cmd *cobra.Command, persistent bool) {
-	addOutputFlagWithDefault(cmd, persistent, "auto")
+// when stdout is piped, text on a TTY).
+func addOutputFlag(cmd *cobra.Command) {
+	addOutputFlagWithDefault(cmd, "auto")
 }
 
 // addOutputFlagWithDefault is addOutputFlag with an explicit default value.
 // Action commands (commit, version) default to "text" so piping a human-facing
 // command does not silently switch it to JSON; an agent opts in with -o json.
 // Query commands default to "auto".
-func addOutputFlagWithDefault(cmd *cobra.Command, persistent bool, def string) {
+func addOutputFlagWithDefault(cmd *cobra.Command, def string) {
 	v := outputValue(def)
-	if persistent {
-		cmd.PersistentFlags().VarP(&v, "output", "o", "output format: auto, json, or text")
-	} else {
-		cmd.Flags().VarP(&v, "output", "o", "output format: auto, json, or text")
-	}
+	cmd.Flags().VarP(&v, "output", "o", "output format: auto, json, or text")
 }
 
 // outputFormat resolves the selected format from the -o/--output flag, honoring

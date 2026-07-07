@@ -25,6 +25,6 @@ var versionCmd = &cobra.Command{
 func init() {
 	rootCmd.Version = buildVersion
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	addOutputFlagWithDefault(versionCmd, false, "text")
+	addOutputFlagWithDefault(versionCmd, "text")
 	rootCmd.AddCommand(versionCmd)
 }
