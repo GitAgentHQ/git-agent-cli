@@ -14,8 +14,8 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show git-agent index health and row counts",
 	Long: `Print a snapshot of the git-agent code graph: whether the index exists, the
-last indexed commit, and row counts for commits, files, authors, and co-change
-pairs. Read-only.`,
+last indexed commit, row counts for commits, files, authors, and co-change
+pairs, and the database file size. Read-only.`,
 	RunE: jsonAwareRunE(runStatus),
 }
 
@@ -55,10 +55,25 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "  files:      %d\n", stats.FileCount)
 	fmt.Fprintf(out, "  authors:    %d\n", stats.AuthorCount)
 	fmt.Fprintf(out, "  co-change:  %d pairs\n", stats.CoChangedCount)
+	fmt.Fprintf(out, "  db size:    %s\n", formatBytes(stats.DBSizeBytes))
 	return nil
 }
 
+// formatBytes renders n human-readably: plain bytes below 1 KiB, otherwise
+// KiB or MiB with one decimal place.
+func formatBytes(n int64) string {
+	const unit = 1024
+	switch {
+	case n < unit:
+		return fmt.Sprintf("%d B", n)
+	case n < unit*unit:
+		return fmt.Sprintf("%.1f KiB", float64(n)/unit)
+	default:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(unit*unit))
+	}
+}
+
 func init() {
-	addOutputFlag(statusCmd, false)
+	addOutputFlag(statusCmd)
 	rootCmd.AddCommand(statusCmd)
 }

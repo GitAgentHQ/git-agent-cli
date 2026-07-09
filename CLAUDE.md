@@ -25,6 +25,10 @@ gofmt -w ./...
 
 **e2e tests**: `TestMain` builds the `git-agent` binary once, then all tests invoke it as a subprocess. After any source change, re-run `go test ./e2e/...` — the stale binary will not reflect changes.
 
+## CI / Build Verification
+
+There is **no CI workflow gating PRs**. The only GitHub Action is `release.yml`, which fires on a `v*` tag and cross-compiles the release targets with `CGO_ENABLED=0` (the release builds are cgo-free so they cross-compile without a C toolchain — do not introduce a cgo-only dependency, or the next tag release will fail to build). Because nothing runs on push/PR, **the local commands above are the only gate**: run `make build`, `make test`, and `gofmt -l .` before every commit/PR. If you ever re-add a PR-gated workflow, it belongs in `.github/workflows/` and should mirror the local `make test` + cgo-free build.
+
 ## Architecture
 
 Clean Architecture with strict inward dependency flow:

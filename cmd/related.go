@@ -364,6 +364,6 @@ func init() {
 	relatedCmd.Flags().Int("min-count", 3, "minimum co-change count")
 	relatedCmd.Flags().Bool("reindex", false, "force full re-index before query")
 	relatedCmd.Flags().Bool("tests", false, "show only related test files (which tests to run)")
-	addOutputFlag(relatedCmd, false)
+	addOutputFlag(relatedCmd)
 	rootCmd.AddCommand(relatedCmd)
 }
