@@ -226,12 +226,15 @@ If no scopes are configured for the project, git-agent generates scopes from git
 
 ## Require model co-author
 
-Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain. The default Git Agent attribution trailer alone does not satisfy this — only domains in `anthropic.com`, `openai.com`, `google.com`, plus anything listed under `model_co_author_domains:`, count.
+Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain. The default Git Agent attribution trailer alone does not satisfy this.
 
-When the flag is on, callers **must** pass `--co-author "Model Name <email@domain>"` explicitly. `git-agent` validates this at the CLI layer before invoking the LLM and exits with code `1` and a clear hint if the flag is missing — the model itself is never relied on to produce the trailer (it gets the casing or placement wrong). Example:
+Built-in domains (no `model_co_author_domains` config needed): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Only custom / lesser-known providers need `model_co_author_domains:`.
+
+When the flag is on, callers **must** pass `--co-author "Model Name <email@domain>"` explicitly. `git-agent` validates this at the CLI layer before invoking the LLM and exits with code `1` and a clear hint if the flag is missing — the model itself is never relied on to produce the trailer (it gets the casing or placement wrong). Examples:
 
 ```
 git-agent commit --co-author "Claude Opus 4.7 <noreply@anthropic.com>"
+git-agent commit --co-author "Grok 4.5 <noreply@x.ai>"
 ```
 
 ## Hook failures

@@ -13,7 +13,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show git-agent index health and row counts",
-	Long: `Print a snapshot of the git-agent code graph: whether the index exists, the
+	Long: `Print a snapshot of the git-agent code graph: whether the index is built, the
 last indexed commit, row counts for commits, files, authors, and co-change
 pairs, and the database file size. Read-only.`,
 	RunE: jsonAwareRunE(runStatus),
@@ -48,7 +48,12 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	last := stats.LastIndexedCommit
 	if last == "" {
-		last = "(none)"
+		// No indexed commit means the graph file exists (openGraphDB creates it
+		// on first run) but nothing has been indexed yet — a never-initialized repo.
+		fmt.Fprintln(out, "Graph: not indexed")
+		fmt.Fprintf(out, "  db size:    %s\n", formatBytes(stats.DBSizeBytes))
+		fmt.Fprintln(out, "  Run `git-agent commit` (or `git-agent init --graph`) to build it.")
+		return nil
 	}
 	fmt.Fprintf(out, "Graph: indexed (last commit %s)\n", last)
 	fmt.Fprintf(out, "  commits:    %d\n", stats.CommitCount)
@@ -59,18 +64,20 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// formatBytes renders n human-readably: plain bytes below 1 KiB, otherwise
-// KiB or MiB with one decimal place.
+// formatBytes renders n human-readably: plain bytes below 1 KiB, otherwise the
+// largest applicable binary unit (KiB, MiB, GiB, TiB) with one decimal place.
 func formatBytes(n int64) string {
 	const unit = 1024
-	switch {
-	case n < unit:
+	if n < unit {
 		return fmt.Sprintf("%d B", n)
-	case n < unit*unit:
-		return fmt.Sprintf("%.1f KiB", float64(n)/unit)
-	default:
-		return fmt.Sprintf("%.1f MiB", float64(n)/(unit*unit))
 	}
+	div, exp := int64(unit), 0
+	for n >= div*unit && exp < 3 { // cap at TiB
+		div *= unit
+		exp++
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), units[exp])
 }
 
 func init() {

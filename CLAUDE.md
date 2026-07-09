@@ -27,7 +27,7 @@ gofmt -w ./...
 
 ## CI / Build Verification
 
-There is **no CI workflow gating PRs**. The only GitHub Action is `release.yml`, which fires on a `v*` tag and cross-compiles the release targets with `CGO_ENABLED=0` (the release builds are cgo-free so they cross-compile without a C toolchain — do not introduce a cgo-only dependency, or the next tag release will fail to build). Because nothing runs on push/PR, **the local commands above are the only gate**: run `make build`, `make test`, and `gofmt -l .` before every commit/PR. If you ever re-add a PR-gated workflow, it belongs in `.github/workflows/` and should mirror the local `make test` + cgo-free build.
+`.github/workflows/build-check.yml` gates every push/PR to `main`/`develop` with a `CGO_ENABLED=0` build, cross-compile of all release targets, a `gofmt -l .` check, and the full test suite. `release.yml` fires on a `v*` tag and cross-compiles the release targets with `CGO_ENABLED=0` (the release builds are cgo-free so they cross-compile without a C toolchain — do not introduce a cgo-only dependency, or both the build-check and the next tag release will fail). The local `make build`, `make test`, and `gofmt -l .` should still be run before every commit, but the workflow is the merge gate.
 
 ## Architecture
 

@@ -58,11 +58,19 @@ const (
 
 // DefaultModelCoAuthorDomains is the built-in allow-list of email domains
 // that count as a "model" co-author for RequireModelCoAuthor enforcement.
-// User-supplied ModelCoAuthorDomains are appended to this list.
+// Covers the common AI providers out of the box so teams can enable
+// require_model_co_author without also configuring model_co_author_domains.
+// User-supplied ModelCoAuthorDomains are appended to this list for custom or
+// lesser-known providers.
 var DefaultModelCoAuthorDomains = []string{
 	"anthropic.com",
 	"openai.com",
 	"google.com",
+	"x.ai",
+	"zhipuai.cn",
+	"qwen.ai",
+	"deepseek.com",
+	"moonshot.ai",
 }
 
 // ScopeNames returns just the scope name strings.

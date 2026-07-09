@@ -599,3 +599,28 @@ func TestCommitCmd_GraphAutobuildOptOut(t *testing.T) {
 		t.Errorf("graph_autobuild=false must not create graph.db; stat err = %v", err)
 	}
 }
+
+// TestStatusCmd_NotIndexedOnFreshRepo asserts that on a repo with no indexed
+// commits, `status` (text mode) reports the not-indexed state rather than
+// masking it as "indexed (last commit (none))". openGraphDB creates the DB
+// file on first run, so the distinguisher is the absence of an indexed commit.
+func TestStatusCmd_NotIndexedOnFreshRepo(t *testing.T) {
+	dir := newGitRepo(t)
+
+	out, code := gitAgent(t, dir, "status", "-o", "text")
+	if code != 0 {
+		t.Fatalf("status exit %d: %s", code, out)
+	}
+	if !strings.Contains(out, "Graph: not indexed") {
+		t.Errorf("expected 'Graph: not indexed' on a fresh repo, got: %s", out)
+	}
+
+	// JSON mode should still succeed and report zero commits.
+	out, code = gitAgent(t, dir, "status", "-o", "json")
+	if code != 0 {
+		t.Fatalf("status -o json exit %d: %s", code, out)
+	}
+	if !strings.Contains(out, `"commit_count": 0`) {
+		t.Errorf("expected commit_count 0 on a fresh repo, got: %s", out)
+	}
+}
