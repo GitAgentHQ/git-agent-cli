@@ -185,7 +185,7 @@ git-agent related application/commit_service.go -o json
 |------|--------|------|
 | `--depth` | 1 | 传递性共变深度 |
 | `--top` | 20 | 最大结果数 |
-| `--min-count` | 3 | 最小共变次数阈值 |
+| `--min-count` | 2 | 最小共变次数阈值 |
 | `--tests` | false | 只保留相关的测试文件（决定改动后该跑哪些测试） |
 | `--reindex` | false | 查询前强制重新索引 |
 | `-o`、`--output` | 自动 | 输出格式：`auto`、`json`、`text`（管道时为 JSON，TTY 时为文本） |
