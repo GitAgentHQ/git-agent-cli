@@ -22,7 +22,7 @@ func TestRelated_ReportsCoChangeWithLinkingCommits(t *testing.T) {
 	tokenTest := filepath.Join(dir, "auth", "token_test.txt")
 
 	// Three commits that change token, middleware and the test together, with
-	// auth-themed subjects — enough to clear the default --min-count of 3.
+	// auth-themed subjects — comfortably above the default --min-count of 2.
 	subjects := []string{
 		"feat(auth): add token store",
 		"fix(auth): guard nil token",
