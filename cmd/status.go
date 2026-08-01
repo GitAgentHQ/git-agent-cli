@@ -55,6 +55,13 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(out, "  Run `git-agent commit` (or `git-agent init --graph`) to build it.")
 		return nil
 	}
+	if last == "" {
+		// Rows are committed and the last-indexed marker is written in separate
+		// transactions; an interrupted run (e.g. RecomputeCoChanged failing) can
+		// leave commits present with the marker unset. Keep the placeholder
+		// instead of printing a blank hash.
+		last = "(none)"
+	}
 	fmt.Fprintf(out, "Graph: indexed (last commit %s)\n", last)
 	fmt.Fprintf(out, "  commits:    %d\n", stats.CommitCount)
 	fmt.Fprintf(out, "  files:      %d\n", stats.FileCount)
