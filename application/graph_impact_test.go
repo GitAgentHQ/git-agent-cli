@@ -212,6 +212,31 @@ func TestImpactService_MinCount(t *testing.T) {
 	}
 }
 
+// TestImpactService_MinCountClampedToFloor asserts that an explicit 0 (or 1 —
+// "no minimum") is clamped to the index floor (2), not silently raised to the
+// legacy default 3. The co-change index only persists pairs at count >= 2, so
+// below-floor values cannot surface more than the floor.
+func TestImpactService_MinCountClampedToFloor(t *testing.T) {
+	repo := setupImpactTest(t)
+
+	// Pair with coupling_count=2 — visible at the floor, hidden at 3.
+	seedCoChanged(t, repo, "low.go", "target.go", 2, 0.5)
+
+	svc := NewImpactService(repo)
+	for _, minCount := range []int{0, 1} {
+		result, err := svc.Impact(context.Background(), graph.ImpactRequest{
+			Paths:    []string{"target.go"},
+			MinCount: minCount,
+		})
+		if err != nil {
+			t.Fatalf("Impact() error = %v", err)
+		}
+		if len(result.CoChanged) != 1 {
+			t.Errorf("MinCount=%d: len(CoChanged) = %d, want 1 (clamped to floor)", minCount, len(result.CoChanged))
+		}
+	}
+}
+
 func TestImpactService_NonExistentFile(t *testing.T) {
 	repo := setupImpactTest(t)
 

@@ -280,7 +280,7 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 	// actionable message.
 	if estimated := (len(system) + len(user)) / 4; estimated > maxInputTokensCeiling {
 		return "", agentErrors.NewAPIError(0, fmt.Sprintf(
-			"error: LLM input too large (estimated ~%d tokens, ceiling %d) — reduce the staged diff (commit fewer files at once), lower --max-diff-bytes / max_diff_bytes, or configure a model with a larger context window",
+			"error: LLM input too large (estimated ~%d tokens, ceiling %d) — reduce the staged diff (commit fewer files at once) or lower --max-diff-bytes / max_diff_bytes",
 			estimated, maxInputTokensCeiling,
 		))
 	}
