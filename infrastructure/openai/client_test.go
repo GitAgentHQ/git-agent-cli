@@ -364,6 +364,35 @@ func TestClient_OversizedInputFailsFast(t *testing.T) {
 	}
 }
 
+// TestClient_OversizedInputOverrideAllowsRaisedCeiling asserts that
+// SetMaxInputTokens lifts the preflight ceiling: a request the default ceiling
+// would refuse passes through to the server once the ceiling is raised.
+func TestClient_OversizedInputOverrideAllowsRaisedCeiling(t *testing.T) {
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		w.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"x\"}"}}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "deepseek-v4-flash", 5*time.Second, 0, nil)
+	// A ~5 MB diff estimates to ~1.3M tokens — above the 1M default, below 3M.
+	c.SetMaxInputTokens(3_000_000)
+
+	if _, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Diff:   &diff.StagedDiff{Content: strings.Repeat("a", 5<<20), Files: []string{"big.go"}},
+		Config: &project.Config{},
+	}); err != nil {
+		t.Fatalf("raised ceiling should let the request through, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&count); got != 1 {
+		t.Fatalf("expected exactly 1 HTTP request after raising the ceiling, got %d", got)
+	}
+	if got := c.MaxInputTokens(); got != 3_000_000 {
+		t.Errorf("MaxInputTokens() = %d, want 3000000", got)
+	}
+}
+
 func TestClient_OversizedInputMessageCarriesGuidance(t *testing.T) {
 	c := NewClient("test-key", "http://127.0.0.1:1", "model", time.Second, 0, nil)
 	_, err := c.Generate(context.Background(), commit.GenerateRequest{

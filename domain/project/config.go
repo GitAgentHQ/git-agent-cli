@@ -35,6 +35,7 @@ type Config struct {
 	Hooks                []string `json:"hooks"`                    // ordered list: "conventional", file paths, etc. Empty = no validation.
 	MaxDiffLines         int      `json:"maxDiffLines"`             // 0 = no limit
 	MaxDiffBytes         int      `json:"maxDiffBytes"`             // 0 = built-in default cap
+	MaxInputTokens       int      `json:"maxInputTokens"`           // 0 = built-in default preflight ceiling (1M tokens)
 	MaxPlanFiles         int      `json:"maxPlanFiles"`             // 0 = built-in default cap
 	PlanFallback         string   `json:"planFallback"`             // PlanFallbackNone | PlanFallbackHeuristic; empty = none
 	NoGitAgentCoAuthor   bool     `json:"noGitAgentCoAuthor"`       // When true, omit the default Co-Authored-By: Git Agent trailer

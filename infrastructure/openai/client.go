@@ -39,14 +39,16 @@ const (
 	scopesMaxTokensCeiling   = 16384
 	detectMaxTokensCeiling   = 4096
 
-	// maxInputTokensCeiling is the preflight bound on the combined system +
+	// defaultMaxInputTokens is the preflight bound on the combined system +
 	// user prompt. It mirrors the largest context window offered by the
 	// supported endpoints (AI Gateway / Gemini / DeepSeek all top out at 1M
 	// tokens); a request above this estimate is rejected before the HTTP call
 	// instead of burning a doomed request on the provider. Models with smaller
 	// context windows are covered by the 400 token-limit classification, which
-	// turns the provider's rejection into actionable guidance.
-	maxInputTokensCeiling = 1_000_000
+	// turns the provider's rejection into actionable guidance. Endpoints with
+	// larger windows can raise the ceiling via the max_input_tokens config key
+	// (SetMaxInputTokens); zero restores this default.
+	defaultMaxInputTokens = 1_000_000
 )
 
 type Client struct {
@@ -54,6 +56,7 @@ type Client struct {
 	model             string
 	requestTimeout    time.Duration
 	heartbeatInterval time.Duration
+	maxInputTokens    int // 0 = defaultMaxInputTokens
 	out               io.Writer
 }
 
@@ -91,6 +94,21 @@ func (c *Client) RequestTimeout() time.Duration { return c.requestTimeout }
 // HeartbeatInterval reports the cadence at which heartbeat lines are emitted
 // while an LLM call is in flight.
 func (c *Client) HeartbeatInterval() time.Duration { return c.heartbeatInterval }
+
+// SetMaxInputTokens overrides the preflight input-size ceiling (in tokens)
+// with the max_input_tokens config value. A non-positive value restores the
+// built-in default. Exposed so cmd-layer wiring can thread the project config
+// into the guard; all other callers use the default.
+func (c *Client) SetMaxInputTokens(n int) { c.maxInputTokens = n }
+
+// MaxInputTokens reports the active preflight input-size ceiling (the
+// configured value when set, else the built-in default).
+func (c *Client) MaxInputTokens() int {
+	if c.maxInputTokens > 0 {
+		return c.maxInputTokens
+	}
+	return defaultMaxInputTokens
+}
 
 // heartbeat emits a single "still waiting on LLM..." line per tick while an
 // LLM request is in flight. The goroutine exits within one tick of either the
@@ -278,10 +296,11 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 	// prompts tokenize denser, so the estimate can undershoot — those land on
 	// the provider's 400 classification instead, which still yields the same
 	// actionable message.
-	if estimated := (len(system) + len(user)) / 4; estimated > maxInputTokensCeiling {
+	ceiling := c.MaxInputTokens()
+	if estimated := (len(system) + len(user)) / 4; estimated > ceiling {
 		return "", agentErrors.NewAPIError(0, fmt.Sprintf(
 			"error: LLM input too large (estimated ~%d tokens, ceiling %d) — reduce the staged diff (commit fewer files at once) or lower --max-diff-bytes / max_diff_bytes",
-			estimated, maxInputTokensCeiling,
+			estimated, ceiling,
 		))
 	}
 

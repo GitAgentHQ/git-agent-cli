@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Expand built-in `DefaultModelCoAuthorDomains` so `require_model_co_author: true` accepts common AI providers without extra `model_co_author_domains` config: `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Custom / lesser-known providers still use `model_co_author_domains`.
+- `max_input_tokens` project config key raises the preflight input-size ceiling (default 1M tokens) for endpoints with larger context windows; the LLM input guard now has an override instead of a fixed constant.
 
 ### Fixed
 - Restore the `build-check` CI workflow (gates push/PR to `main`/`develop` with a `CGO_ENABLED=0` build, cross-compile, `gofmt` check, and the full test suite). It was removed in the prior `ci: remove pr-gated build check` commit, which left only the tag-time `release.yml` — a cgo-only dependency or broken test could then merge undetected and only surface at release time.

@@ -418,6 +418,9 @@ func buildCommitDeps(
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
 		heartbeatOut,
 	)
+	if projCfg != nil && projCfg.MaxInputTokens > 0 {
+		llmClient.SetMaxInputTokens(projCfg.MaxInputTokens)
+	}
 
 	var scopeSvc *application.ScopeService
 	if projCfg == nil || len(projCfg.Scopes) == 0 {

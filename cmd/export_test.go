@@ -31,6 +31,12 @@ func OpenAIHeartbeatIntervalForTest(c *infraOpenAI.Client) time.Duration {
 	return c.HeartbeatInterval()
 }
 
+// OpenAIMaxInputTokensForTest mirrors OpenAIRequestTimeoutForTest for the
+// preflight input-size ceiling threaded from max_input_tokens.
+func OpenAIMaxInputTokensForTest(c *infraOpenAI.Client) int {
+	return c.MaxInputTokens()
+}
+
 // CommitServiceHeuristicPlannerForTest returns the service's fallback planner
 // (or nil when fallback is disabled).
 func CommitServiceHeuristicPlannerForTest(s *application.CommitService) any {
