@@ -142,7 +142,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		if !commit.HasModelCoAuthor(trailers, domains) {
 			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
 				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
-					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"",
+					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"\n"+
+					"         git-agent commit --co-author \"GPT-5 <noreply@openai.com>\"",
 				strings.Join(domains, ", "),
 			))
 		}
@@ -417,6 +418,9 @@ func buildCommitDeps(
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
 		heartbeatOut,
 	)
+	if projCfg != nil && projCfg.MaxInputTokens > 0 {
+		llmClient.SetMaxInputTokens(projCfg.MaxInputTokens)
+	}
 
 	var scopeSvc *application.ScopeService
 	if projCfg == nil || len(projCfg.Scopes) == 0 {

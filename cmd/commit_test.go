@@ -109,13 +109,16 @@ func TestCommit_WiresConfigToConstructors(t *testing.T) {
 		t.Fatalf("resolved.HeartbeatInterval = %s, want 2s", resolved.HeartbeatInterval)
 	}
 
-	heuristicCfg := &project.Config{PlanFallback: project.PlanFallbackHeuristic}
+	heuristicCfg := &project.Config{PlanFallback: project.PlanFallbackHeuristic, MaxInputTokens: 2_500_000}
 	llmH, svcH := cmd.BuildCommitDepsForTest(resolved, heuristicCfg)
 	if got := cmd.OpenAIRequestTimeoutForTest(llmH); got != 5*time.Second {
 		t.Errorf("llm request timeout = %s, want 5s", got)
 	}
 	if got := cmd.OpenAIHeartbeatIntervalForTest(llmH); got != 2*time.Second {
 		t.Errorf("llm heartbeat interval = %s, want 2s", got)
+	}
+	if got := cmd.OpenAIMaxInputTokensForTest(llmH); got != 2_500_000 {
+		t.Errorf("llm max input tokens = %d, want 2500000", got)
 	}
 	if cmd.CommitServiceHeuristicPlannerForTest(svcH) == nil {
 		t.Errorf("plan_fallback=heuristic must produce a non-nil heuristicPlanner on the service")

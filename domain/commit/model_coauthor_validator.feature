@@ -6,6 +6,13 @@ Feature: Model Co-Authored-By trailer enforcement
   (Co-Authored-By: Git Agent <noreply@git-agent.dev>) does NOT satisfy this
   rule on its own — only domains in the allow-list count.
 
+  Built-in allow-list (project.DefaultModelCoAuthorDomains — no
+  model_co_author_domains config needed): anthropic.com, openai.com, google.com,
+  x.ai, zhipuai.cn, qwen.ai, deepseek.com, moonshot.ai. With
+  require_model_co_author on and no model_co_author_domains, the hook merges
+  this list in before validating, so a trailer from any of these passes. Custom
+  providers still use model_co_author_domains.
+
   Background:
     Given a raw commit message string
     And an allow-list of model email domains
@@ -70,6 +77,36 @@ Feature: Model Co-Authored-By trailer enforcement
       """
     And the allow-list is "anthropic.com,acme.ai"
     Then HasErrors returns false
+
+  # The built-in domains below are the production default allow-list
+  # (project.DefaultModelCoAuthorDomains). When require_model_co_author is on
+  # and model_co_author_domains is unset/empty, the hook layer merges these in
+  # before calling ValidateModelCoAuthor, so a trailer from any of them passes
+  # with NO model_co_author_domains config. That merge path is exercised by
+  # infrastructure/hook/composite_executor_test.go (RequireModelCoAuthor with an
+  # empty ModelCoAuthorDomains); these scenarios pin the list itself.
+
+  Scenario Outline: Built-in provider domain is in the default allow-list
+    Given the commit message is:
+      """
+      feat: add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+
+      Co-Authored-By: <model> <noreply@<domain>>
+      """
+    And the allow-list is "anthropic.com,openai.com,google.com,x.ai,zhipuai.cn,qwen.ai,deepseek.com,moonshot.ai"
+    Then HasErrors returns false
+
+    Examples:
+      | model       | domain      |
+      | Grok 4.5    | x.ai        |
+      | GLM-4.5     | zhipuai.cn  |
+      | Qwen3       | qwen.ai     |
+      | DeepSeek V3 | deepseek.com |
+      | Kimi K2     | moonshot.ai |
 
   # --- error: missing model trailer ---
 

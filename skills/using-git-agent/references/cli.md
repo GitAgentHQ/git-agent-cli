@@ -357,7 +357,7 @@ files are coupled, not just that they are.
 |---|---|---|
 | `--depth N` | 1 | Transitive co-change depth; depth > 1 entries are marked `[indirect, depth N]` |
 | `--top N` | 20 | Max results |
-| `--min-count N` | 3 | Minimum co-change count to include (index floor is 2; values below 2 cannot surface more) |
+| `--min-count N` | 2 | Minimum co-change count to include (matches the index floor of 2; values below 2 cannot surface more) |
 | `--reindex` | false | Force a full re-index before querying |
 | `--tests` | false | Keep only related test files — "which tests should I run for this change?" |
 | `-o, --output` | auto | Output format: `auto`, `json`, or `text` (JSON when piped, text on a TTY) |

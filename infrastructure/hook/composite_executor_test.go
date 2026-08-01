@@ -242,6 +242,29 @@ func TestCompositeExecutor_RequireModelCoAuthor_AnthropicTrailerPasses(t *testin
 	}
 }
 
+func TestCompositeExecutor_RequireModelCoAuthor_BuiltInGrokTrailerPasses(t *testing.T) {
+	// Built-in x.ai domain must pass with only require_model_co_author: true —
+	// no model_co_author_domains config required.
+	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Grok 4.5 <noreply@x.ai>"
+	exec := infraHook.NewCompositeHookExecutor()
+
+	input := domainHook.HookInput{
+		CommitMessage: msg,
+		StagedFiles:   []string{"auth.go"},
+		Config: domainProject.Config{
+			RequireModelCoAuthor: true,
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected built-in grok trailer to pass without ModelCoAuthorDomains, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
+	}
+}
+
 func TestCompositeExecutor_RequireModelCoAuthor_UserExtendedDomainPasses(t *testing.T) {
 	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Acme Bot <bot@acme.ai>"
 	exec := infraHook.NewCompositeHookExecutor()

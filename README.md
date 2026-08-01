@@ -191,7 +191,7 @@ git-agent related application/commit_service.go -o json  # adds the linking `com
 |------|---------|-------------|
 | `--depth` | 1 | Transitive co-change depth |
 | `--top` | 20 | Max results |
-| `--min-count` | 3 | Minimum co-change count to include |
+| `--min-count` | 2 | Minimum co-change count to include |
 | `--tests` | false | Keep only related test files |
 | `--reindex` | false | Force a full re-index before querying |
 | `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |

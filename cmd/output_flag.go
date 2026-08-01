@@ -42,8 +42,8 @@ func addOutputFlagWithDefault(cmd *cobra.Command, def string) {
 	cmd.Flags().VarP(&v, "output", "o", "output format: auto, json, or text")
 }
 
-// outputFormat resolves the selected format from the -o/--output flag, honoring
-// a value inherited from a parent command. Commands without the flag get auto.
+// outputFormat resolves the selected format from the -o/--output flag. The flag
+// is registered locally on each command, so commands without it get auto.
 func outputFormat(cmd *cobra.Command) output.Format {
 	f := cmd.Flags().Lookup("output")
 	if f == nil {

@@ -361,7 +361,7 @@ func realPath(p string) string {
 func init() {
 	relatedCmd.Flags().Int("depth", 1, "transitive co-change depth")
 	relatedCmd.Flags().Int("top", 20, "max results")
-	relatedCmd.Flags().Int("min-count", 3, "minimum co-change count")
+	relatedCmd.Flags().Int("min-count", 2, "minimum co-change count")
 	relatedCmd.Flags().Bool("reindex", false, "force full re-index before query")
 	relatedCmd.Flags().Bool("tests", false, "show only related test files (which tests to run)")
 	addOutputFlag(relatedCmd)

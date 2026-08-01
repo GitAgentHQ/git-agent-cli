@@ -35,6 +35,7 @@ type Config struct {
 	Hooks                []string `json:"hooks"`                    // ordered list: "conventional", file paths, etc. Empty = no validation.
 	MaxDiffLines         int      `json:"maxDiffLines"`             // 0 = no limit
 	MaxDiffBytes         int      `json:"maxDiffBytes"`             // 0 = built-in default cap
+	MaxInputTokens       int      `json:"maxInputTokens"`           // 0 = built-in default preflight ceiling (1M tokens)
 	MaxPlanFiles         int      `json:"maxPlanFiles"`             // 0 = built-in default cap
 	PlanFallback         string   `json:"planFallback"`             // PlanFallbackNone | PlanFallbackHeuristic; empty = none
 	NoGitAgentCoAuthor   bool     `json:"noGitAgentCoAuthor"`       // When true, omit the default Co-Authored-By: Git Agent trailer
@@ -58,11 +59,19 @@ const (
 
 // DefaultModelCoAuthorDomains is the built-in allow-list of email domains
 // that count as a "model" co-author for RequireModelCoAuthor enforcement.
-// User-supplied ModelCoAuthorDomains are appended to this list.
+// Covers the common AI providers out of the box so teams can enable
+// require_model_co_author without also configuring model_co_author_domains.
+// User-supplied ModelCoAuthorDomains are appended to this list for custom or
+// lesser-known providers.
 var DefaultModelCoAuthorDomains = []string{
 	"anthropic.com",
 	"openai.com",
 	"google.com",
+	"x.ai",
+	"zhipuai.cn",
+	"qwen.ai",
+	"deepseek.com",
+	"moonshot.ai",
 }
 
 // ScopeNames returns just the scope name strings.

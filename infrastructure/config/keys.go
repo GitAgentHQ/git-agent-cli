@@ -33,6 +33,7 @@ var KeyRegistry = map[string]KeyDef{
 	"hook":                    {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"max_diff_lines":          {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
 	"max_diff_bytes":          {Name: "max_diff_bytes", Type: "int", AllowProject: true, AllowLocal: true},
+	"max_input_tokens":        {Name: "max_input_tokens", Type: "int", AllowProject: true, AllowLocal: true},
 	"max_plan_files":          {Name: "max_plan_files", Type: "int", AllowProject: true, AllowLocal: true},
 	"plan_fallback":           {Name: "plan_fallback", Type: "string", AllowProject: true, AllowLocal: true},
 	"no_git_agent_co_author":  {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},

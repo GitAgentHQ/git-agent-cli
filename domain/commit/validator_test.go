@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 func validMsg() string {
@@ -247,7 +248,10 @@ func TestValidateConventional(t *testing.T) {
 func TestValidateModelCoAuthor(t *testing.T) {
 	const baseBody = "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\n"
 
-	defaults := []string{"anthropic.com", "openai.com", "google.com"}
+	// Source of truth: domain/project.DefaultModelCoAuthorDomains. Referencing it
+	// here keeps the tests in lockstep with the production allow-list instead of
+	// drifting as providers are added.
+	defaults := project.DefaultModelCoAuthorDomains
 
 	cases := []struct {
 		name        string
@@ -375,10 +379,35 @@ func TestValidateModelCoAuthor(t *testing.T) {
 			}
 		})
 	}
+
+	// Every built-in default domain must pass on its own — generated from
+	// project.DefaultModelCoAuthorDomains so adding a provider cannot leave it
+	// untested.
+	builtInModels := map[string]string{
+		"anthropic.com": "Claude Opus 4.6",
+		"openai.com":    "GPT-5",
+		"google.com":    "Gemini Pro",
+		"x.ai":          "Grok 4.5",
+		"zhipuai.cn":    "GLM-4.5",
+		"qwen.ai":       "Qwen3",
+		"deepseek.com":  "DeepSeek V3",
+		"moonshot.ai":   "Kimi K2",
+	}
+	for _, domain := range project.DefaultModelCoAuthorDomains {
+		domain := domain
+		t.Run("built-in/"+domain, func(t *testing.T) {
+			msg := baseBody + "Co-Authored-By: " + builtInModels[domain] + " <noreply@" + domain + ">"
+			result := commit.ValidateModelCoAuthor(msg, project.DefaultModelCoAuthorDomains)
+			if result.HasErrors() {
+				t.Errorf("built-in domain %s should pass with the default allow-list, got: %v",
+					domain, result.Errors())
+			}
+		})
+	}
 }
 
 func TestHasModelCoAuthor(t *testing.T) {
-	defaults := []string{"anthropic.com", "openai.com", "google.com"}
+	defaults := project.DefaultModelCoAuthorDomains
 
 	cases := []struct {
 		name     string
@@ -389,6 +418,12 @@ func TestHasModelCoAuthor(t *testing.T) {
 		{
 			name:     "matching anthropic trailer",
 			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Claude Opus 4.7 <noreply@anthropic.com>"}},
+			domains:  defaults,
+			want:     true,
+		},
+		{
+			name:     "matching built-in grok trailer",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Grok 4.5 <noreply@x.ai>"}},
 			domains:  defaults,
 			want:     true,
 		},

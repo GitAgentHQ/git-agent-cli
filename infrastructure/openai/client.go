@@ -38,6 +38,17 @@ const (
 	generateMaxTokensCeiling = 16384
 	scopesMaxTokensCeiling   = 16384
 	detectMaxTokensCeiling   = 4096
+
+	// defaultMaxInputTokens is the preflight bound on the combined system +
+	// user prompt. It mirrors the largest context window offered by the
+	// supported endpoints (AI Gateway / Gemini / DeepSeek all top out at 1M
+	// tokens); a request above this estimate is rejected before the HTTP call
+	// instead of burning a doomed request on the provider. Models with smaller
+	// context windows are covered by the 400 token-limit classification, which
+	// turns the provider's rejection into actionable guidance. Endpoints with
+	// larger windows can raise the ceiling via the max_input_tokens config key
+	// (SetMaxInputTokens); zero restores this default.
+	defaultMaxInputTokens = 1_000_000
 )
 
 type Client struct {
@@ -45,6 +56,7 @@ type Client struct {
 	model             string
 	requestTimeout    time.Duration
 	heartbeatInterval time.Duration
+	maxInputTokens    int // 0 = defaultMaxInputTokens
 	out               io.Writer
 }
 
@@ -82,6 +94,21 @@ func (c *Client) RequestTimeout() time.Duration { return c.requestTimeout }
 // HeartbeatInterval reports the cadence at which heartbeat lines are emitted
 // while an LLM call is in flight.
 func (c *Client) HeartbeatInterval() time.Duration { return c.heartbeatInterval }
+
+// SetMaxInputTokens overrides the preflight input-size ceiling (in tokens)
+// with the max_input_tokens config value. A non-positive value restores the
+// built-in default. Exposed so cmd-layer wiring can thread the project config
+// into the guard; all other callers use the default.
+func (c *Client) SetMaxInputTokens(n int) { c.maxInputTokens = n }
+
+// MaxInputTokens reports the active preflight input-size ceiling (the
+// configured value when set, else the built-in default).
+func (c *Client) MaxInputTokens() int {
+	if c.maxInputTokens > 0 {
+		return c.maxInputTokens
+	}
+	return defaultMaxInputTokens
+}
 
 // heartbeat emits a single "still waiting on LLM..." line per tick while an
 // LLM request is in flight. The goroutine exits within one tick of either the
@@ -263,6 +290,20 @@ Rules (STRICTLY enforce):
 func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, maxTokensCeiling int) (string, error) {
 	const maxAttempts = 3
 
+	// Preflight input-size guard: refuse a request that is already larger than
+	// the largest supported context before paying for a doomed HTTP call. The
+	// byte-per-4 estimate is conservative for code and English text; CJK-heavy
+	// prompts tokenize denser, so the estimate can undershoot — those land on
+	// the provider's 400 classification instead, which still yields the same
+	// actionable message.
+	ceiling := c.MaxInputTokens()
+	if estimated := (len(system) + len(user)) / 4; estimated > ceiling {
+		return "", agentErrors.NewAPIError(0, fmt.Sprintf(
+			"error: LLM input too large (estimated ~%d tokens, ceiling %d) — reduce the staged diff (commit fewer files at once) or lower --max-diff-bytes / max_diff_bytes",
+			estimated, ceiling,
+		))
+	}
+
 	msgs := []goopenai.ChatCompletionMessage{
 		{Role: goopenai.ChatMessageRoleSystem, Content: system},
 		{Role: goopenai.ChatMessageRoleUser, Content: user},
@@ -374,6 +415,30 @@ func detectResponseError(content string) *agentErrors.APIError {
 	return nil
 }
 
+// tokenLimitPatterns are substrings shared by provider "input too large"
+// rejections (Gemini, DeepSeek, OpenAI-compatible gateways). Matched against
+// the 400 message to rewrite it into actionable guidance instead of a raw
+// provider echo.
+var tokenLimitPatterns = []string{
+	"token count exceeds",
+	"maximum context",
+	"context length",
+	"context window",
+	"maximum number of tokens allowed",
+}
+
+// isTokenLimitMessage reports whether a provider error message indicates the
+// request exceeded the model's input token limit.
+func isTokenLimitMessage(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, p := range tokenLimitPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyAPIError inspects an error from the go-openai library and returns a
 // typed *agentErrors.APIError for non-transient failures (rate limit, auth,
 // bad request, etc.) that should NOT be retried. Returns nil for transient
@@ -392,6 +457,11 @@ func classifyAPIError(err error) *agentErrors.APIError {
 			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
 				fmt.Sprintf("error: API access denied (403): %s", apiErr.Message))
 		case http.StatusBadRequest:
+			if isTokenLimitMessage(apiErr.Message) {
+				return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
+					fmt.Sprintf("error: API bad request (400): the model's input token limit was exceeded (%s) — reduce the staged diff (commit fewer files at once), lower --max-diff-bytes / max_diff_bytes, or configure a model with a larger context window",
+						strings.TrimSpace(apiErr.Message)))
+			}
 			return agentErrors.NewAPIError(apiErr.HTTPStatusCode,
 				fmt.Sprintf("error: API bad request (400): %s", apiErr.Message))
 		case http.StatusNotFound:

@@ -519,7 +519,10 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 	}
 	minCount := req.MinCount
 	if minCount <= 0 {
-		minCount = 3
+		// Mirrors the application-layer coChangeIndexFloor (which infrastructure
+		// cannot import); service-layer callers already clamp to >= 2, so this
+		// only guards direct repo.Impact callers.
+		minCount = 2
 	}
 
 	// Resolve rename aliases per seed; seeds (and aliases) never appear as results.

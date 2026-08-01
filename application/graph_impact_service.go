@@ -39,8 +39,8 @@ func (s *ImpactService) Impact(ctx context.Context, req graph.ImpactRequest) (*g
 	if req.Top <= 0 {
 		req.Top = 20
 	}
-	if req.MinCount <= 0 {
-		req.MinCount = 3
+	if req.MinCount < coChangeIndexFloor {
+		req.MinCount = coChangeIndexFloor
 	}
 
 	result, err := s.repo.Impact(ctx, req)

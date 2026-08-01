@@ -100,6 +100,19 @@ func TestOutputText_ListsLinkingSubjects(t *testing.T) {
 	}
 }
 
+func TestRelatedCmd_DefaultMinCountIsTwo(t *testing.T) {
+	f := relatedCmd.Flags().Lookup("min-count")
+	if f == nil {
+		t.Fatal("related is missing the --min-count flag")
+	}
+	// The default aligns with the co-change index floor of 2, so a `related` run
+	// with no flag surfaces every pair the index persists. Shallow-history files,
+	// whose strongest couplings often reach only count 2, are no longer hidden.
+	if f.DefValue != "2" {
+		t.Errorf("related --min-count default = %s, want 2", f.DefValue)
+	}
+}
+
 func TestCapJoin(t *testing.T) {
 	if got := capJoin([]string{"a", "b"}, 3); got != "a, b" {
 		t.Errorf("under cap = %q, want 'a, b'", got)

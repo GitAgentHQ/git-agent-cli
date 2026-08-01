@@ -47,6 +47,42 @@ func TestClassifyAPIError_BadRequest(t *testing.T) {
 	}
 }
 
+func TestClassifyAPIError_TokenLimitBadRequest(t *testing.T) {
+	err := &goopenai.APIError{HTTPStatusCode: 400,
+		Message: "The input token count exceeds the maximum number of tokens allowed 1048576."}
+	result := classifyAPIError(err)
+	if result == nil {
+		t.Fatal("expected non-nil APIError for 400 token-limit rejection")
+	}
+	if result.HTTPStatusCode != 400 {
+		t.Errorf("expected status 400, got %d", result.HTTPStatusCode)
+	}
+	msg := result.Error()
+	if !strings.Contains(msg, "--max-diff-bytes") {
+		t.Errorf("expected token-limit 400 to carry actionable guidance, got: %q", msg)
+	}
+	if !strings.Contains(msg, "1048576") {
+		t.Errorf("expected token-limit 400 to preserve the provider's limit, got: %q", msg)
+	}
+}
+
+func TestClassifyAPIError_TokenLimitOtherWording(t *testing.T) {
+	// DeepSeek/Gemini variants of the same rejection must classify identically.
+	for _, msg := range []string{
+		"The input token count exceeds the maximum number of tokens allowed 1048576.",
+		"maximum context length exceeded",
+		"request exceeds the model's context window of 128000 tokens",
+	} {
+		result := classifyAPIError(&goopenai.APIError{HTTPStatusCode: 400, Message: msg})
+		if result == nil {
+			t.Fatalf("expected non-nil APIError for message %q", msg)
+		}
+		if !strings.Contains(result.Error(), "--max-diff-bytes") {
+			t.Errorf("message %q: expected actionable guidance, got: %q", msg, result.Error())
+		}
+	}
+}
+
 func TestClassifyAPIError_NotFound(t *testing.T) {
 	err := &goopenai.APIError{HTTPStatusCode: 404, Message: "model not found"}
 	result := classifyAPIError(err)

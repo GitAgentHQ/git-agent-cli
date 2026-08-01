@@ -148,13 +148,13 @@ func TestIndexService_FullIndex_PersistsWeakCoChange(t *testing.T) {
 		t.Fatalf("FullIndex() error = %v", err)
 	}
 
-	// At the default min-count (3) the weak pair is filtered out.
-	def, err := NewImpactService(repo).Impact(ctx, graph.ImpactRequest{Paths: []string{"a.go"}})
+	// At min-count 3 the weak pair is filtered out.
+	def, err := NewImpactService(repo).Impact(ctx, graph.ImpactRequest{Paths: []string{"a.go"}, MinCount: 3})
 	if err != nil {
-		t.Fatalf("Impact(default) error = %v", err)
+		t.Fatalf("Impact(min-count=3) error = %v", err)
 	}
 	if def.TotalFound != 0 {
-		t.Errorf("default min-count should hide the count-2 pair, got %d results", def.TotalFound)
+		t.Errorf("min-count 3 should hide the count-2 pair, got %d results", def.TotalFound)
 	}
 
 	// Lowering min-count to 2 must surface it — i.e. it was persisted at index time.
