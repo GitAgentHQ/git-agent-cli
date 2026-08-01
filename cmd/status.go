@@ -47,7 +47,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	}
 
 	last := stats.LastIndexedCommit
-	if last == "" {
+	if graphNeedsIndex(last, stats.CommitCount) {
 		// No indexed commit means the graph file exists (openGraphDB creates it
 		// on first run) but nothing has been indexed yet — a never-initialized repo.
 		fmt.Fprintln(out, "Graph: not indexed")
@@ -62,6 +62,10 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "  co-change:  %d pairs\n", stats.CoChangedCount)
 	fmt.Fprintf(out, "  db size:    %s\n", formatBytes(stats.DBSizeBytes))
 	return nil
+}
+
+func graphNeedsIndex(lastIndexedCommit string, commitCount int) bool {
+	return lastIndexedCommit == "" && commitCount == 0
 }
 
 // formatBytes renders n human-readably: plain bytes below 1 KiB, otherwise the
