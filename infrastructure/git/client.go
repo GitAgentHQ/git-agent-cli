@@ -148,6 +148,7 @@ func (c *Client) CommitLog(ctx context.Context, max int) ([]string, error) {
 
 	var entries []string
 	var current strings.Builder
+	fileCount := 0
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "COMMIT_START") {
 			if current.Len() > 0 {
@@ -155,11 +156,20 @@ func (c *Client) CommitLog(ctx context.Context, max int) ([]string, error) {
 				current.Reset()
 			}
 			current.WriteString(line[len("COMMIT_START"):])
+			fileCount = 0
 			continue
 		}
 		if line != "" {
+			// Cap per-commit file lists: a single mega-commit (vendor import,
+			// generated dump) can touch hundreds of thousands of paths, which
+			// would balloon the scope-generation prompt past the LLM input
+			// ceiling. Mirrors the capFiles bound used for tracked-file lists.
+			if fileCount >= 300 {
+				continue
+			}
 			current.WriteString("\n  ")
 			current.WriteString(line)
+			fileCount++
 		}
 	}
 	if current.Len() > 0 {

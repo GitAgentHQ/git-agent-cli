@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,6 +85,51 @@ func runGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+// TestClient_CommitLog_CapsPerCommitFiles asserts that a single mega-commit
+// (e.g. a vendor import touching hundreds of thousands of paths) contributes
+// at most 300 file lines to its CommitLog entry, so the scope-generation
+// prompt stays bounded regardless of history shape.
+func TestClient_CommitLog_CapsPerCommitFiles(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+
+	for i := 0; i < 350; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("f%03d.txt", i))
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-q", "-m", "feat: mega import")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	entries, err := NewClient().CommitLog(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("CommitLog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	// Entry format: "subject\n  file1\n  file2..." — count the file lines.
+	fileLines := strings.Count(entries[0], "\n  ")
+	if fileLines != 300 {
+		t.Errorf("file lines in entry = %d, want 300 (capped)", fileLines)
+	}
+	if !strings.Contains(entries[0], "feat: mega import") {
+		t.Errorf("entry missing subject: %q", entries[0])
 	}
 }
 
