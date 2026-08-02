@@ -7,15 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-02
+
+### Added
+- Cap per-commit file lists at 300 (infra)
+- Clamp min-count to index floor (app)
+- Add token limit preflight guard (infra)
+- Show partial graph index status (cli)
+- Add second example for co-author flag (cli)
+- Lower default min-count to 2
+
 ### Changed
 - Expand built-in `DefaultModelCoAuthorDomains` so `require_model_co_author: true` accepts common AI providers without extra `model_co_author_domains` config: `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Custom / lesser-known providers still use `model_co_author_domains`.
 - `max_input_tokens` project config key raises the preflight input-size ceiling (default 1M tokens) for endpoints with larger context windows; the LLM input guard now has an override instead of a fixed constant.
+- Simplify output flag registration (cli)
+- Simplify output flag signature (cli)
+- Update min-count default documentation
+- Document consolidated testing history
 
 ### Fixed
 - Restore the `build-check` CI workflow (gates push/PR to `main`/`develop` with a `CGO_ENABLED=0` build, cross-compile, `gofmt` check, and the full test suite). It was removed in the prior `ci: remove pr-gated build check` commit, which left only the tag-time `release.yml` — a cgo-only dependency or broken test could then merge undetected and only surface at release time.
 - `status` now reports `Graph: not indexed` (with db size and a build hint) on a repo whose graph has no indexed commits, instead of `Graph: indexed (last commit (none))`. The `Long` help now says "whether the index is built" rather than "whether the index exists", matching actual behavior.
 - `status` `db size` now rolls over to GiB/TiB for large databases instead of printing a large MiB number.
 - Stale `outputFormat` doc comment no longer claims `-o` is "inherited from a parent command" — it is registered locally on each command.
+- Update mincount fallback to 2 (infra)
 
 ## [0.7.0] - 2026-07-07
 
@@ -240,7 +255,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.5.2...v0.6.0
