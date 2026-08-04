@@ -65,7 +65,7 @@ The CLI is a Cobra tree. Every command lives in exactly one of three namespaces;
 ### Namespaces
 
 - **Action** (top-level): `init`, `commit`. These mutate the repo or the graph. (The hidden `capture` hook target and the `audit` forensic tree were removed when the agent Event Log subsystem was cut — the graph is now commit-history co-change only.)
-- **Meta** (top-level): `config`, `version`, `completion`. Configuration and tooling, not repo mutation.
+- **Meta** (top-level): `config`, `skills`, `version`, `completion`. Configuration and tooling, not repo mutation.
 - **Reads** (top-level): `related` and `status`. `related <files...>` is the co-change query — the files that habitually change with the given files, enriched with the commits that link them (subject + sha + date); language-agnostic (git history, not parsing), offline, no API key. `status` reports index health and row counts. A new co-change read goes at the top level here.
 
 **There is no query namespace parent.** The graph is a single data source (git-history co-change); there is no append-only Event Log and no separate forensic trust model. Reads are top-level `related`/`status`.
