@@ -32,6 +32,11 @@ Install the git-agent skill to enable AI agents to commit on your behalf:
 npx skills add https://github.com/GitAgentHQ/git-agent-cli --skill using-git-agent
 ```
 
+The skill is a discovery stub — the full usage guide ships in the binary:
+`git-agent skills get core` prints the main guide (triggers, workflows, flags,
+exit codes) and `git-agent skills get cli` prints the complete command
+reference, always matching the installed version.
+
 ## Quick Start
 
 ```bash
