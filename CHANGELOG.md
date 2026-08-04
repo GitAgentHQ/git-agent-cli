@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
+### Added
+- Add `skills` command with `list` and `get` subcommands: usage guides are embedded in the binary at build time and served by the CLI, so documentation always matches the installed version (cli)
+- Add a skill documentation registry embedding core and cli guides; the `using-git-agent` skill stub is now a discovery portal that delegates to the CLI for the full guide (skills)
+
 ## [0.8.0] - 2026-08-02
 
 ### Added
@@ -255,7 +261,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.0...v0.6.1
