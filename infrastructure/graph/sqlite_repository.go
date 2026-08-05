@@ -458,6 +458,40 @@ func (r *SQLiteRepository) coChangedNeighbors(ctx context.Context, path string, 
 	return out, rows.Err()
 }
 
+// nonSeedPartners returns the count of distinct co-change partners of path that
+// are NOT in the seed set and whose coupling cleared the minCount floor.
+// Breadth across the seeds is legitimate feature coupling; only coupling to
+// unrelated files marks a hub (a changelog or generated file that touches
+// everything). The seed set includes rename aliases so a shared multi-seed file
+// is not penalized; the minCount floor keeps one-off (count-1) couplings in a
+// big refactor commit from inflating the penalty for an otherwise focused file.
+func (r *SQLiteRepository) nonSeedPartners(ctx context.Context, path string, seeds map[string]bool, minCount int) (int, error) {
+	rows, err := r.db().QueryContext(ctx,
+		`SELECT DISTINCT
+			CASE WHEN c2.file_a = ? THEN c2.file_b ELSE c2.file_a END AS partner
+		FROM co_changed c2
+		WHERE (c2.file_a = ? OR c2.file_b = ?)
+		  AND c2.coupling_count >= ?`,
+		path, path, path, minCount,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("query partners for %q: %w", path, err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var partner string
+		if err := rows.Scan(&partner); err != nil {
+			return 0, fmt.Errorf("scan partner: %w", err)
+		}
+		if !seeds[partner] {
+			count++
+		}
+	}
+	return count, rows.Err()
+}
+
 // LinkingCommits returns the commits that modified both seed and related,
 // most-recent first, capped at limit. These are the commits that built the
 // co-change coupling between the pair — the "why are these related?" evidence
@@ -505,7 +539,9 @@ func (r *SQLiteRepository) LinkingCommits(ctx context.Context, seed, related str
 // Ranking uses the stored symmetric coupling strength (count / max(totalA,
 // totalB)) rather than directional P(neighbour | seed): a backtest showed
 // directional gives no recall gain while promoting high-fanout noise such as
-// changelogs to the top. The symmetric denominator suppresses that noise.
+// changelogs to the top. The symmetric denominator suppresses that noise, and a
+// seed-exclusive hubness penalty (score / (1 + non-seed partners)) further
+// demotes high-fanout hubs at sort time. Score/CouplingStrength stay raw.
 func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) (*graph.ImpactResult, error) {
 	start := time.Now()
 
@@ -532,6 +568,7 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 	}
 	var seedQueries []seedQuery
 	visited := make(map[string]bool)
+	seedSet := make(map[string]bool) // actual seeds + rename aliases, for hubness
 	for _, s := range req.Paths {
 		aliases, err := r.ResolveRenames(ctx, s)
 		if err != nil {
@@ -541,6 +578,7 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 		seedQueries = append(seedQueries, seedQuery{display: s, paths: paths})
 		for _, p := range paths {
 			visited[p] = true
+			seedSet[p] = true
 		}
 	}
 
@@ -626,8 +664,20 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 		frontier = next
 	}
 
+	// Hubness for ALL candidates (depth-1 and transitive): partners NOT in the
+	// seed set. Breadth across the seeds is legitimate coupling; coupling to
+	// unrelated files marks a hub and is penalized at sort time.
+	hubness := make(map[string]int, len(allEntries))
+	for _, e := range allEntries {
+		ns, err := r.nonSeedPartners(ctx, e.Path, seedSet, minCount)
+		if err != nil {
+			return nil, err
+		}
+		hubness[e.Path] = ns
+	}
+
 	totalFound := len(allEntries)
-	sortImpactEntries(allEntries)
+	sortImpactEntries(allEntries, hubness)
 	if len(allEntries) > top {
 		allEntries = allEntries[:top]
 	}
@@ -641,12 +691,22 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 }
 
 // sortImpactEntries ranks by aggregate score, then breadth of seed coupling,
-// then total co-changes, then path for determinism.
-func sortImpactEntries(entries []graph.ImpactEntry) {
+// then total co-changes, then path for determinism. A hubness penalty divides
+// each candidate's score by (1 + non-seed partners), demoting high-fanout noise
+// (changelogs, generated files) below focused couplings. Only the comparison
+// key is adjusted — Score/CouplingStrength values stay raw for consumers.
+func sortImpactEntries(entries []graph.ImpactEntry, hubness map[string]int) {
 	sort.Slice(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
-		if a.Score != b.Score {
-			return a.Score > b.Score
+		sa, sb := a.Score, b.Score
+		if p := hubness[a.Path]; p > 0 {
+			sa /= float64(1 + p)
+		}
+		if p := hubness[b.Path]; p > 0 {
+			sb /= float64(1 + p)
+		}
+		if sa != sb {
+			return sa > sb
 		}
 		if a.SeedMatches != b.SeedMatches {
 			return a.SeedMatches > b.SeedMatches
