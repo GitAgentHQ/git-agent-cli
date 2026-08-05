@@ -539,7 +539,9 @@ func (r *SQLiteRepository) LinkingCommits(ctx context.Context, seed, related str
 // Ranking uses the stored symmetric coupling strength (count / max(totalA,
 // totalB)) rather than directional P(neighbour | seed): a backtest showed
 // directional gives no recall gain while promoting high-fanout noise such as
-// changelogs to the top. The symmetric denominator suppresses that noise.
+// changelogs to the top. The symmetric denominator suppresses that noise, and a
+// seed-exclusive hubness penalty (score / (1 + non-seed partners)) further
+// demotes high-fanout hubs at sort time. Score/CouplingStrength stay raw.
 func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) (*graph.ImpactResult, error) {
 	start := time.Now()
 
