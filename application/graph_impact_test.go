@@ -266,3 +266,39 @@ func TestImpactService_EmptyPath(t *testing.T) {
 		t.Fatal("Impact() with no seed paths should return error")
 	}
 }
+
+// TestImpact_HubnessDemotesHighFanoutNoise pins the hubness penalty: a focused
+// coding partner must rank above a high-fanout hub (changelog) even when the
+// hub co-changes with the seed more often. main_test.go has 1 partner (the
+// seed, exempted), while CHANGELOG.md co-changes with main.go AND util.go and
+// config.go — its non-seed partner count inflates its penalty.
+func TestImpact_HubnessDemotesHighFanoutNoise(t *testing.T) {
+	repo := setupImpactTest(t)
+
+	// main.go <-> main_test.go: focused, 5 co-changes, strength 0.5.
+	seedCoChanged(t, repo, "main.go", "main_test.go", 5, 0.5)
+	// main.go <-> CHANGELOG.md: hub, 10 co-changes, strength 1.0.
+	seedCoChanged(t, repo, "main.go", "CHANGELOG.md", 10, 1.0)
+	// CHANGELOG.md also co-changes with unrelated files — this is what makes it
+	// a hub. util.go and config.go are NOT seeds, so they inflate the penalty.
+	seedCoChanged(t, repo, "CHANGELOG.md", "util.go", 10, 0.9)
+	seedCoChanged(t, repo, "CHANGELOG.md", "config.go", 10, 0.9)
+
+	svc := NewImpactService(repo)
+	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
+		Paths:    []string{"main.go"},
+		MinCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("Impact() error = %v", err)
+	}
+	if len(result.CoChanged) < 2 {
+		t.Fatalf("len(CoChanged) = %d, want >= 2: %+v", len(result.CoChanged), result.CoChanged)
+	}
+
+	// main_test.go (the useful coding answer) must rank above the changelog hub.
+	if result.CoChanged[0].Path != "main_test.go" {
+		t.Errorf("first = %q, want main_test.go (focused partner must beat the hub): %+v",
+			result.CoChanged[0].Path, result.CoChanged)
+	}
+}

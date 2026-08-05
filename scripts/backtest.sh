@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/backtest.sh — leak-free recall@k scorer for `git-agent related`
+# scripts/backtest.sh — leak-free MRR@k scorer for `git-agent related`
 #
 # Measures how well `related` ranks the files that REALLY change together in
 # git history, against a set of throwaway synthetic repos with known co-change

@@ -75,3 +75,7 @@ git-agent-proxy/.wrangler
 *.db-wal
 *.db-journal
 .git-agent/config.local.yml
+
+# Backtest build output (scripts/backtest.sh)
+backtest-bin/
+results.tsv
