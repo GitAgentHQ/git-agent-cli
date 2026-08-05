@@ -12,9 +12,9 @@ Reach for git-agent at these moments. Each situation maps to one command:
 |---|---|
 | About to start multi-file work / modify a feature — find what else changes | `git-agent related [files...]` |
 | Deciding which tests to run after a change | `git-agent related <files...> --tests` |
-| Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; if a full rebuild is needed, `git-agent init --graph`) |
+| Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; a full rebuild is `git-agent related <file> --reindex`) |
 | Ready to commit staged changes | `git-agent commit --intent "..."` |
-| New repo, or no scopes configured | `git-agent init` (add `--graph` to also build the code graph now) |
+| New repo, or no scopes configured | `git-agent init` |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
 If the situation isn't listed, run `git-agent --help`. Every `related` and
@@ -137,8 +137,8 @@ probably noise.
    git-agent config set request_timeout 5m
    ```
    Or shrink what the planner has to reason about: sharpen `--intent`, cap the
-   diff with `--max-diff-lines <n>`, or switch to a more capable model via
-   `--model`.
+   diff with `--max-diff-lines <n>` / `--max-diff-bytes <n>`, or switch to a
+   more capable model via `--model`.
 
 ### Structured output (`-o json`)
 
@@ -206,7 +206,8 @@ planner cannot stage a pure deletion).
 | `--co-author "Name <email>"` | Attribute a co-author (repeatable); skipped if `no_model_co_author` is set in config |
 | `--trailer "Key: Value"` | Add an arbitrary git trailer (repeatable) |
 | `--no-attribution` | Omit the default `Co-Authored-By: Git Agent` trailer |
-| `--max-diff-lines N` | Cap diff size sent to the model (0 = no limit) |
+| `--max-diff-lines N` | Cap diff size sent to the model (0 = no line limit; a byte cap always applies) |
+| `--max-diff-bytes N` | Cap diff byte size sent to the model (0 or negative = built-in default ~384 KiB) |
 | `-o json` | Emit machine-readable commit results (titles, SHAs, hook outcomes) for scripting; defaults to text |
 
 `--amend` and `--no-stage` are mutually exclusive.
@@ -276,10 +277,9 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 
 | Command | What it does |
 |---|---|
-| `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json` |
+| `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json`. Auto-indexes git history on first run; `--reindex` forces a full rebuild |
 | `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, last indexed commit, db size) |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
-| `git-agent init --graph` | One-shot cold start: build the code graph (commit-history co-change). No LLM needed. Otherwise the first `commit` builds it automatically |
 | `git-agent init --scope` | Regenerate scopes only |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |

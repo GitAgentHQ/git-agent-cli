@@ -78,7 +78,8 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `--co-author` | stringArray | | Add a co-author trailer (repeatable); skipped if `no_model_co_author` is set in config |
 | `--trailer` | stringArray | | Add an arbitrary git trailer, format `"Key: Value"` (repeatable) |
 | `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent <noreply@git-agent.dev>` trailer (`--no-git-agent` is a deprecated alias) |
-| `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no limit) |
+| `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no line limit; a byte cap always applies) |
+| `--max-diff-bytes` | int | 0 | Maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override) |
 | `--max-plan-files` | int | 0 | Maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150) |
 | `-o`, `--output` | string | `text` | Output format: `text`, `json`, or `auto` (JSON when piped) |
 
@@ -170,7 +171,7 @@ With no flags, runs the full setup wizard:
 |-------|----------|
 | `conventional` | Go-native Conventional Commits 1.0.0 validation |
 | `empty` | No-op; always passes |
-| `<file path>` | Go validation + shell script at that path |
+| `<file path>` | Go validation + shell script at that path (relative paths resolve against the repo root) |
 
 Shell hooks receive a JSON payload on stdin with the following fields:
 
@@ -248,6 +249,7 @@ Set a configuration value in the specified scope. Keys accept both snake_case an
 | `api-key` | `api_key` |
 | `base-url` | `base_url` |
 | `max-diff-lines` | `max_diff_lines` |
+| `max-diff-bytes` | `max_diff_bytes` |
 | `max-plan-files` | `max_plan_files` |
 | `no-git-agent-co-author` | `no_git_agent_co_author` |
 | `no-model-co-author` | `no_model_co_author` |
@@ -393,23 +395,8 @@ and row counts. Read-only; auto-syncs projections before reading. The first
 
 `exists`, `last_indexed_commit` (omitempty — absent until git history is
 indexed by the first `related`), `commit_count`, `file_count`,
-`author_count`, `co_changed_count`, `session_count`, `action_count`,
-`db_size_bytes` (SQLite page_count × page_size).
-
-## git-agent init --graph
-
-```
-git-agent init --graph
-```
-
-One-shot cold start that builds the code graph in a single pass — no LLM
-needed: `EnsureIndex` with Force reads git history and recomputes `co_changed`
-(the data `related` reads).
-
-This is opt-in: the default `init` wizard does NOT build the graph. The graph
-builds automatically instead — the first `git-agent commit` bootstraps and
-maintains it (via `graph_autobuild`), and every read syncs the index before
-reading. Run `init --graph` only for an explicit full cold start.
+`author_count`, `co_changed_count`, `db_size_bytes` (SQLite page_count ×
+page_size).
 
 ---
 

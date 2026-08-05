@@ -81,6 +81,39 @@ func TestLoadProjectConfig_LocalOverridesProject(t *testing.T) {
 	}
 }
 
+func TestLoadProjectConfig_HookRelativePathResolved(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "hook:\n  - my-hook.sh\n  - conventional\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config when hook is set")
+	}
+	if len(cfg.Hooks) != 2 {
+		t.Fatalf("expected 2 hooks, got %d: %v", len(cfg.Hooks), cfg.Hooks)
+	}
+	if want := filepath.Join(dir, "my-hook.sh"); cfg.Hooks[0] != want {
+		t.Errorf("expected relative hook resolved to %q, got %q", want, cfg.Hooks[0])
+	}
+	if cfg.Hooks[1] != "conventional" {
+		t.Errorf("expected built-in 'conventional' to pass through unchanged, got %q", cfg.Hooks[1])
+	}
+}
+
+func TestLoadProjectConfig_HookAbsolutePathUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "scripts", "pre-commit.sh")
+	writeProjectConfig(t, dir, "hook:\n  - "+abs+"\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config when hook is set")
+	}
+	if len(cfg.Hooks) != 1 || cfg.Hooks[0] != abs {
+		t.Errorf("expected absolute hook unchanged, got %v", cfg.Hooks)
+	}
+}
+
 func TestLoadProjectConfig_AllZero_ReturnsNil(t *testing.T) {
 	// No fields set anywhere → loader still returns nil (existing contract).
 	dir := t.TempDir()
