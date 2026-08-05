@@ -52,7 +52,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		// on first run) but nothing has been indexed yet — a never-initialized repo.
 		fmt.Fprintln(out, "Graph: not indexed")
 		fmt.Fprintf(out, "  db size:    %s\n", formatBytes(stats.DBSizeBytes))
-		fmt.Fprintln(out, "  Run `git-agent commit` (or `git-agent init --graph`) to build it.")
+		fmt.Fprintln(out, "  Run `git-agent related <file>` (or the first `git-agent commit`) to build it.")
 		return nil
 	}
 	if last == "" {

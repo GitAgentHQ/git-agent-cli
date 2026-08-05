@@ -235,7 +235,7 @@ no API key).
 ```bash
 git-agent status              # index health + row counts
 git-agent status -o json      # structured output
-git-agent init --graph        # one-shot cold build (commit-history co-change)
+git-agent related <file>      # auto-indexes git history on first run
 ```
 
 ## Configuration

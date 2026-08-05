@@ -217,7 +217,7 @@ agent 可以在每次多文件改动时调用。
 ```bash
 git-agent status            # 索引健康度 + 行数
 git-agent status -o json    # JSON 输出
-git-agent init --graph      # 一次性全量建图（提交历史共变）
+git-agent related <file>    # 首次运行自动建索引
 ```
 
 ## 配置

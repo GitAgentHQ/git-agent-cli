@@ -36,9 +36,10 @@ func TestRelated_ReportsCoChangeWithLinkingCommits(t *testing.T) {
 		runGit(t, dir, "commit", "-q", "-m", subj)
 	}
 
-	// Build the co-change index (no LLM needed).
-	if out, code := gitAgent(t, dir, "init", "--graph"); code != 0 {
-		t.Fatalf("init --graph: exit %d\n%s", code, out)
+	// Warm up: first run auto-indexes git history (no LLM needed); its "Indexed
+	// N commits" notice goes to stderr and would pollute the JSON assertions below.
+	if out, code := gitAgent(t, dir, "related", "auth/token.txt", "-o", "json"); code != 0 {
+		t.Fatalf("related (warm-up): exit %d\n%s", code, out)
 	}
 
 	// related auth/token.txt -> JSON with middleware + the linking commits.
