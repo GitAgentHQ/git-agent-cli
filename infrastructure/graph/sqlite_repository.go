@@ -666,7 +666,9 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 
 	// Hubness for ALL candidates (depth-1 and transitive): partners NOT in the
 	// seed set. Breadth across the seeds is legitimate coupling; coupling to
-	// unrelated files marks a hub and is penalized at sort time.
+	// unrelated files marks a hub and is penalized at sort time. Only candidates
+	// with >1 non-seed partner are treated as hubs — a single cohesive partner
+	// (a module member) is not fanout.
 	hubness := make(map[string]int, len(allEntries))
 	for _, e := range allEntries {
 		ns, err := r.nonSeedPartners(ctx, e.Path, seedSet, minCount)
@@ -693,16 +695,18 @@ func (r *SQLiteRepository) Impact(ctx context.Context, req graph.ImpactRequest) 
 // sortImpactEntries ranks by aggregate score, then breadth of seed coupling,
 // then total co-changes, then path for determinism. A hubness penalty divides
 // each candidate's score by (1 + non-seed partners), demoting high-fanout noise
-// (changelogs, generated files) below focused couplings. Only the comparison
-// key is adjusted — Score/CouplingStrength values stay raw for consumers.
+// (changelogs, generated files) below focused couplings. Only candidates with
+// >1 non-seed partner are demoted — a single cohesive partner (a module member)
+// is not fanout, so it keeps its score. Only the comparison key is adjusted —
+// Score/CouplingStrength values stay raw for consumers.
 func sortImpactEntries(entries []graph.ImpactEntry, hubness map[string]int) {
 	sort.Slice(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
 		sa, sb := a.Score, b.Score
-		if p := hubness[a.Path]; p > 0 {
+		if p := hubness[a.Path]; p > 1 {
 			sa /= float64(1 + p)
 		}
-		if p := hubness[b.Path]; p > 0 {
+		if p := hubness[b.Path]; p > 1 {
 			sb /= float64(1 + p)
 		}
 		if sa != sb {

@@ -302,3 +302,35 @@ func TestImpact_HubnessDemotesHighFanoutNoise(t *testing.T) {
 			result.CoChanged[0].Path, result.CoChanged)
 	}
 }
+
+// TestImpact_HubnessKeepsSinglePartnerFocused pins the >1 threshold: a module
+// member with exactly ONE non-seed partner (a cohesive sibling) is not fanout
+// and must keep its score. A naive penalty (p > 0) would count the intra-module
+// pair as hub noise and demote main_test.go/util.go below the weaker solo
+// foo.go — Code Terrier's finding. main_test.go and util.go each have one
+// non-seed partner, so neither is demoted.
+func TestImpact_HubnessKeepsSinglePartnerFocused(t *testing.T) {
+	repo := setupImpactTest(t)
+
+	// main_test.go <-> util.go: cohesive module pair, each also coupled to seed.
+	seedCoChanged(t, repo, "main.go", "main_test.go", 10, 1.0)
+	seedCoChanged(t, repo, "main.go", "util.go", 10, 1.0)
+	seedCoChanged(t, repo, "main_test.go", "util.go", 10, 1.0)
+	// foo.go: weaker, solo coupling to the seed, no partners.
+	seedCoChanged(t, repo, "main.go", "foo.go", 6, 0.6)
+
+	svc := NewImpactService(repo)
+	result, err := svc.Impact(context.Background(), graph.ImpactRequest{
+		Paths:    []string{"main.go"},
+		MinCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("Impact() error = %v", err)
+	}
+
+	// The focused module partner must beat the weaker solo-coupled foo.go.
+	if result.CoChanged[0].Path != "main_test.go" {
+		t.Errorf("first = %q, want main_test.go (module member must beat weaker solo file): %+v",
+			result.CoChanged[0].Path, result.CoChanged)
+	}
+}
