@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Remove the `init --graph` flag: `related` auto-indexes git history on first run and `--reindex` forces a full rebuild (cli)
+
 ## [0.9.0] - 2026-08-04
 
 ### Added

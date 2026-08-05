@@ -90,7 +90,7 @@ Prefer config keys over per-command flags. A value belongs on the command line o
 
 ### Hidden commands
 
-There are currently no hidden commands (the `capture` hook target was removed with the Event Log). Graph building is automatic (via `commit` / `init --graph` and read-path auto-sync), so there are no manual index/sync commands.
+There are currently no hidden commands (the `capture` hook target was removed with the Event Log). Graph building is automatic (via `commit` and read-path auto-sync through `related`), so there are no manual index/sync commands.
 
 ## Commit Conventions
 

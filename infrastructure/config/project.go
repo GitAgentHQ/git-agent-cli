@@ -91,6 +91,27 @@ func migrateHooks(raw rawProjectConfig) []string {
 	return nil
 }
 
+// resolveHookPaths makes each file-path hook value absolute for execution.
+// Built-in values ("", "empty", "conventional") pass through unchanged; a
+// relative path is resolved against repoRoot so `.git-agent/config.yml` can
+// reference a script by bare filename (e.g. `hook: [my-hook.sh]`).
+func resolveHookPaths(hooks []string, repoRoot string) []string {
+	resolved := make([]string, len(hooks))
+	for i, h := range hooks {
+		switch h {
+		case "", "empty", "conventional":
+			resolved[i] = h
+		default:
+			if filepath.IsAbs(h) {
+				resolved[i] = h
+			} else {
+				resolved[i] = filepath.Join(repoRoot, h)
+			}
+		}
+	}
+	return resolved
+}
+
 // LoadProjectConfig loads and merges local > project > user config into a domain Config.
 // Returns nil when no config files exist.
 func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
@@ -118,6 +139,7 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 			merged.Hooks = userHooks
 		}
 	}
+	merged.Hooks = resolveHookPaths(merged.Hooks, repoRoot)
 	if local.MaxDiffLines != nil {
 		merged.MaxDiffLines = local.MaxDiffLines
 	}

@@ -261,17 +261,17 @@ repo. Consequences:
 | `commit_test.go` | `commit` flags (dry-run, intent, trailer, no-stage, amend), SIGINT, small-diff regression, JSON output, JSON dry-run, removed `--all`/`add` |
 | `config_test.go` | `config set/get` hook, project/local scope, provider-key rejection, unknown key |
 | `init_gitignore_test.go` | `init --gitignore` no-API-key/no-repo failures, `--force`, no-break-config-set |
-| `init_graph_test.go` | `init --graph` builds graph, opt-in not in wizard |
+| `init_graph_test.go` | `init` wizard does not build graph (opt-in; first commit does) |
 | `init_test.go` | `init --scope` no-API-key failure, hook+scope together, `--max-commits`, `--force` |
 | `related_test.go` | `related` reports co-change with linking commits, no-seeds emits empty JSON |
 | `helpers_test.go` | shared e2e harness |
 
-### BDD feature specs (18 files)
+### BDD feature specs (17 files)
 
 `application/cochange_index.feature`, `application/commit_graph_generation.feature`,
 `application/commit_json.feature`, `application/commit_multi.feature`,
 `application/impact_aggregation.feature`, `application/index_performance.feature`,
-`application/init_graph_build.feature`, `application/scope_service.feature`,
+`application/scope_service.feature`,
 `cmd/related.feature`, `cmd/related_output.feature`, `cmd/related_seeds.feature`,
 `domain/commit/filelist.feature`, `domain/commit/model_coauthor_validator.feature`,
 `domain/commit/validator.feature`, `hooks/conventional.feature`,
