@@ -142,6 +142,29 @@ make_repo_diluted() {
   echo "$dir"
 }
 
+# module: a cohesive module — main_test.go and util.go co-change with each other
+# AND both with the seed (main.go), each at strong coupling. This is Code
+# Terrier's finding: a naive hubness penalty counts the intra-module coupling as
+# hub noise and demotes the module members below an unrelated weaker file
+# (foo.go). A correct rank must keep the module pair (62%) above foo.go (37%).
+make_repo_module() {
+  local dir="$WORK/module-$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" config user.email test@example.com
+  git -C "$dir" config user.name test
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    echo "m$i" >> "$dir/main.go"; echo "t$i" >> "$dir/main_test.go"; echo "u$i" >> "$dir/util.go"
+    git -C "$dir" add -A; git -C "$dir" commit -q -m "module $i"
+  done
+  for i in 1 2 3 4 5 6; do
+    echo "m$i" >> "$dir/main.go"; echo "f$i" >> "$dir/foo.go"
+    git -C "$dir" add -A; git -C "$dir" commit -q -m "foo $i"
+  done
+  echo "$dir"
+}
+
 # --- ground truth + query ---------------------------------------------------
 # run_trial REPO SEED EXPECTED — builds the index, runs related, computes the
 # reciprocal rank of EXPECTED among the top-K results. MRR (not recall@k) is
@@ -181,18 +204,25 @@ run_trial() {
 }
 
 # --- trials -----------------------------------------------------------------
-# Each fixture family contributes to the total: hub is the discriminating
-# fixture (main_test.go must outrank the high-fanout CHANGELOG.md); the others
-# are regressions guards. Trial counts derive from TRIALS so the knob actually
-# controls the run. A single failed trial is logged and skipped, never fatal —
-# the final mean MRR must always be printed for the optimizer to parse.
-HUB_N=$(( (TRIALS + 1) / 4 ));   [ "$HUB_N" -lt 1 ] && HUB_N=1
-GUARD_N=$(( (TRIALS + 2) / 4 )); [ "$GUARD_N" -lt 1 ] && GUARD_N=1
-echo "backtest: running $(( HUB_N*1 + GUARD_N*3 )) synthetic-repo trials" >&2
+# Two discriminating fixtures — hub (main_test.go must outrank the high-fanout
+# CHANGELOG.md) and module (module members must outrank an unrelated weaker
+# foo.go, per Code Terrier's finding). Strong/test/diluted are regression
+# guards. Trial counts derive from TRIALS. A single failed trial is logged and
+# skipped, never fatal — the final mean MRR must always be printed.
+DISC_N=$(( (TRIALS + 1) / 3 ));  [ "$DISC_N" -lt 1 ] && DISC_N=1
+GUARD_N=$(( (TRIALS + 2) / 3 )); [ "$GUARD_N" -lt 1 ] && GUARD_N=1
+echo "backtest: running $(( DISC_N*2 + GUARD_N*3 )) synthetic-repo trials" >&2
 
-for n in $(seq 1 "$HUB_N"); do
+# hub: the useful main_test.go must beat the high-fanout CHANGELOG.md.
+for n in $(seq 1 "$DISC_N"); do
   dh="$(make_repo_hub "$n")"
   run_trial "$dh" "main.go" "main_test.go" || true
+done
+
+# module: the cohesive module pair must beat the unrelated weaker foo.go.
+for n in $(seq 1 "$DISC_N"); do
+  dm="$(make_repo_module "$n")"
+  run_trial "$dm" "main.go" "main_test.go" || true
 done
 
 # strong sanity: A <-> B must still rank B first
