@@ -118,7 +118,9 @@ probably noise.
 
 3. **On auth error (401 / missing key)** — official release binaries already
    route through the free shared gateway with zero config. If an auth error
-   still appears, guide the user to bring their own key via
+   still appears, retry with `--free` to force routing through the shared
+   gateway, overriding any local `api_key` / `base_url` / `model`. If that still
+   fails, guide the user to bring their own key via
    `~/.config/git-agent/config.yml`:
    ```yaml
    base_url: https://api.openai.com/v1

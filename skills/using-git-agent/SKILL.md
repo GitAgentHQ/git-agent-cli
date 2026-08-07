@@ -41,7 +41,7 @@ instructions never go stale.
 - **Co-change relations**: `git-agent related` mines git history for the files that move with your change — offline, language-agnostic, no API key
 - **Auto-scope**: generates commit scopes from git history automatically
 - **Hook validation**: conventional-commit validation built in; custom hooks via shell scripts
-- **Config precedence**: CLI flag > `~/.config/git-agent/config.yml` > defaults
+- **Config precedence**: CLI flag > `git config --local` > `~/.config/git-agent/config.yml` > free shared-gateway default; `--free` forces the gateway and ignores the rest
 - **Structured output**: `-o json` on every read command for scripting
 
 ## Status check
