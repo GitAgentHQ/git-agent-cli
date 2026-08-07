@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-07
+
+### Fixed
+- Fix the release workflow reading an unset `GATEWAY_URL` secret: point it at the existing `WORKER_URL` secret so tag-triggered releases build with the embedded gateway URL instead of failing at the Build step (ci)
+
+### Docs
+- Document the `--free` flag in the CLI reference and skill docs: it forces routing via the shared gateway, clarifies configuration precedence for the override, and updates error guidance to suggest `--free` for auth issues (docs)
+
 ## [0.10.0] - 2026-08-07
 
 ### Added
@@ -283,7 +291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...v0.8.0

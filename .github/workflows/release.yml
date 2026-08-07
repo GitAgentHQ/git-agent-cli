@@ -39,11 +39,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
+          GATEWAY_URL: ${{ secrets.WORKER_URL }}
           OUTPUT: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
         run: |
           if [[ -z "${GATEWAY_URL:-}" ]]; then
-            echo "::error::GATEWAY_URL secret is not configured; refusing to build a gateway-less release"
+            echo "::error::WORKER_URL secret is not configured; refusing to build a gateway-less release"
             exit 1
           fi
           bash scripts/build.sh
