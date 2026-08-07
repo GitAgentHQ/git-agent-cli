@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-07
+
 ### Added
 - Add a free shared gateway as the zero-config default: official release binaries embed the gateway URL (never a credential), so `git-agent commit` works out of the box with no API key or config. The Worker holds the upstream token server-side and rate-limits anonymous free usage.
+- Add a `--free` routing flag that forces routing via the shared gateway: it clears any custom `api_key`/`model` and pins `base_url` to the embedded gateway URL, overriding custom credentials and endpoints while keeping auxiliary settings (cli)
 - Add direct Cloudflare AI Gateway routing through `cloudflare_ai_gateway_id` for bring-your-own-key setups; Gateway requests retain usage metadata without storing prompt or response payloads, and keep retries owned by the CLI
+- Add a seed-exclusive hubness penalty to `related` ranking that demotes high-fanout "hub" files (changelogs, vendored dirs) so focused module partners rank above unrelated noise, plus a synthetic backtest runner to validate recall (infra)
 
 ### Changed
 - Relax the provider-config gate: with no `api_key`, git-agent routes to the free shared gateway (base_url only, model pinned server-side); supplying an `api_key` switches to direct mode and requires `base_url` + `model`
 - Build and release credential-free binaries; the only build-time default is the gateway URL, never a token
+- `config show -o json` reports mode `"free"` only when `base_url` equals the embedded shared-gateway URL with no `api_key`; custom endpoints and no-provider dev builds are labeled `"configured"` (cli)
+
+### Fixed
+- Threshold the hubness penalty at >1 non-seed partner so a single cohesive module partner is not demoted below an unrelated weaker file (infra)
+- Resolve a bare hook filename in `.git-agent/config.yml` against the repo root so `hook: [my-hook.sh]` executes instead of failing with "executable file not found in $PATH" (infra)
+- Make `release.yml` fail fast when the `GATEWAY_URL` secret is unset, preventing a gateway-less release binary from shipping silently with green CI (ci)
 
 ### Removed
 - Remove the old shared `--free`/embedded-credential flow that shipped the proxy's `CLIENT_TOKEN` in public binaries — the free gateway now holds its own credential server-side instead
@@ -273,7 +283,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.6.1...v0.7.0

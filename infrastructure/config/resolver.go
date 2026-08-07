@@ -32,6 +32,7 @@ type ProviderConfig struct {
 	CloudflareAIGatewayID string
 	RequestTimeout        time.Duration // 0 = use DefaultRequestTimeout
 	HeartbeatInterval     time.Duration // 0 = use DefaultHeartbeatInterval
+	ForceFreeGateway      bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
 	NoGitAgentCoAuthor    bool          // When true, omit the default Co-Authored-By: Git Agent trailer
 	NoModelCoAuthor       bool          // When true, ignore all --co-author trailers
 	RequireModelCoAuthor  bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
@@ -54,6 +55,11 @@ type fileConfig struct {
 // Resolve merges config from (highest to lowest priority):
 // CLI flags > git config --local git-agent.* > YAML file > build-time default
 // (BuildBaseURL, free shared gateway) > empty.
+//
+// ForceFreeGateway (--free) overrides the merge for the routing fields only:
+// the request goes to the embedded shared gateway regardless of any user
+// api_key / base_url / model. Non-routing fields (timeouts, co-author policy)
+// still resolve normally.
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	var file fileConfig
 	if configPath != "" {
@@ -101,6 +107,18 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.Model = file.Model
 	}
 	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
+
+	// --free forces routing through the embedded shared gateway: clear api_key
+	// (the Worker holds the credential server-side), pin base_url to the
+	// build-time gateway URL, and let the Worker pick the model. BuildBaseURL is
+	// empty for dev builds, so the caller's providerConfigError then surfaces the
+	// "install an official release binary" hint.
+	if flags.ForceFreeGateway {
+		result.APIKey = ""
+		result.BaseURL = BuildBaseURL
+		result.Model = ""
+		result.CloudflareAIGatewayID = ""
+	}
 
 	result.NoGitAgentCoAuthor = flags.NoGitAgentCoAuthor || file.NoGitAgentCoAuthor
 	result.NoModelCoAuthor = flags.NoModelCoAuthor || file.NoModelCoAuthor
