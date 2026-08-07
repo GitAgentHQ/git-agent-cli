@@ -39,11 +39,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          CLIENT_TOKEN: ${{ secrets.CLIENT_TOKEN }}
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          MODEL: ${{ secrets.FREE_MODEL }}
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
           OUTPUT: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
-        run: bash scripts/build.sh
+        run: |
+          if [[ -z "${GATEWAY_URL:-}" ]]; then
+            echo "::error::GATEWAY_URL secret is not configured; refusing to build a gateway-less release"
+            exit 1
+          fi
+          bash scripts/build.sh
 
       - name: Create tarball
         if: matrix.ext == ''

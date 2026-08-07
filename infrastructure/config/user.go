@@ -19,7 +19,12 @@ func WriteUserField(configPath, key, value string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0644)
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return err
+	}
+	// WriteFile preserves an existing file's mode, so repair configurations
+	// created by older versions that could be read by other local users.
+	return os.Chmod(configPath, 0600)
 }
 
 // ReadUserField reads a single key from the user config file.

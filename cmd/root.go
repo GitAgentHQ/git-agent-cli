@@ -13,7 +13,6 @@ import (
 )
 
 var verbose bool
-var freeMode bool
 
 var rootCmd = &cobra.Command{
 	Use:          "git-agent",
@@ -67,20 +66,39 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
 	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:   apiKey,
-		Model:    model,
-		BaseURL:  baseURL,
-		FreeMode: freeMode,
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: baseURL,
 	}, userConfigPath())
+}
+
+// providerConfigError validates the resolved provider config.
+//
+// Two modes:
+//   - Direct: the user set an api_key, so they are calling their own endpoint
+//     and must also provide base_url and model.
+//   - Free shared gateway: no api_key, so requests go to the built-in (or
+//     user-configured) gateway URL. The Worker pins the model server-side, so
+//     model may be empty.
+func providerConfigError(cfg *infraConfig.ProviderConfig) string {
+	if cfg == nil {
+		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set --api-key / base_url / model"
+	}
+	if cfg.APIKey != "" {
+		if cfg.BaseURL == "" || cfg.Model == "" {
+			return "error: incomplete AI provider configuration\nhint: set base_url and model in ~/.config/git-agent/config.yml or pass --base-url and --model"
+		}
+		return ""
+	}
+	if cfg.BaseURL == "" {
+		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set base_url to an OpenAI-compatible endpoint"
+	}
+	return ""
 }
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().BoolVar(&freeMode, "free", false, "use only build-time embedded credentials; ignore config file and git config")
 	rootCmd.PersistentFlags().String("api-key", "", "API key for the AI provider")
 	rootCmd.PersistentFlags().String("model", "", "model to use for generation")
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
-	rootCmd.MarkFlagsMutuallyExclusive("free", "api-key")
-	rootCmd.MarkFlagsMutuallyExclusive("free", "model")
-	rootCmd.MarkFlagsMutuallyExclusive("free", "base-url")
 }

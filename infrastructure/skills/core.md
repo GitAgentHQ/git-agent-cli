@@ -116,20 +116,19 @@ probably noise.
    ```
    No provider flags on the first attempt.
 
-3. **On auth error (401 / missing key)** — retry once with `--free`:
-   ```
-   git-agent commit --intent "..." --free
-   ```
-
-4. **If `--free` also fails** — guide the user to create `~/.config/git-agent/config.yml`:
+3. **On auth error (401 / missing key)** — official release binaries already
+   route through the free shared gateway with zero config. If an auth error
+   still appears, guide the user to bring their own key via
+   `~/.config/git-agent/config.yml`:
    ```yaml
    base_url: https://api.openai.com/v1
    api_key: sk-...
    model: gpt-4o
    ```
-   Other supported providers: Cloudflare Workers AI, local Ollama.
+   For Cloudflare AI Gateway, use the Cloudflare AI REST API base URL and add
+   `cloudflare_ai_gateway_id`. Other supported providers include local Ollama.
 
-5. **On planner timeout** (`LLM planner timed out (model=..., after ...)`) — the
+4. **On planner timeout** (`LLM planner timed out (model=..., after ...)`) — the
    diff was too large, or the model too slow, to plan the commit groups in time.
    `--request-timeout` is **not** a flag; raise the budget via the config key,
    then retry:

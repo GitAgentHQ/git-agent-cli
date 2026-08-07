@@ -57,8 +57,7 @@ var commitCmd = &cobra.Command{
 Configuration resolution (highest to lowest priority):
   1. CLI flags (--api-key, --model, --base-url)
   2. git config --local git-agent.{model,base-url}
-  3. ~/.config/git-agent/config.yml (supports $ENV_VAR expansion)
-  4. Build-time defaults`,
+  3. ~/.config/git-agent/config.yml (supports $ENV_VAR expansion)`,
 	RunE: runCommit,
 }
 
@@ -84,8 +83,8 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 	providerCfg.NoGitAgentCoAuthor = providerCfg.NoGitAgentCoAuthor || noGitAgent
 
-	if providerCfg.APIKey == "" {
-		return agentErrors.NewExitCodeError(1, "error: no API key configured\nhint: set --api-key flag, add api_key to ~/.config/git-agent/config.yml, or use an official release binary with a built-in key")
+	if configErr := providerConfigError(providerCfg); configErr != "" {
+		return agentErrors.NewExitCodeError(1, configErr)
 	}
 
 	gitClient := infraGit.NewClient()
@@ -418,6 +417,7 @@ func buildCommitDeps(
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
 		heartbeatOut,
 	)
+	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 	if projCfg != nil && projCfg.MaxInputTokens > 0 {
 		llmClient.SetMaxInputTokens(projCfg.MaxInputTokens)
 	}

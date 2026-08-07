@@ -46,17 +46,55 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 	}
 }
 
-func TestResolve_ZeroConfigUsesDefaults(t *testing.T) {
+func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
 	flags := config.ProviderConfig{}
 	got, err := config.Resolve(context.Background(), flags, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.BaseURL != config.DefaultBaseURL {
-		t.Errorf("expected BaseURL %q, got %q", config.DefaultBaseURL, got.BaseURL)
+	if got.BaseURL != "" {
+		t.Errorf("expected empty BaseURL, got %q", got.BaseURL)
 	}
-	if got.Model != config.DefaultModel {
-		t.Errorf("expected Model %q, got %q", config.DefaultModel, got.Model)
+	if got.Model != "" {
+		t.Errorf("expected empty Model, got %q", got.Model)
+	}
+}
+
+// TestResolve_BuildBaseURLFallback locks in the zero-config free-gateway
+// path: when no user config sets base_url, the build-time embedded gateway
+// URL (official release binary) becomes the default.
+func TestResolve_BuildBaseURLFallback(t *testing.T) {
+	orig := config.BuildBaseURL
+	config.BuildBaseURL = "https://git-agent-gateway.example.com"
+	defer func() { config.BuildBaseURL = orig }()
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.BaseURL != "https://git-agent-gateway.example.com" {
+		t.Errorf("expected BuildBaseURL fallback, got %q", got.BaseURL)
+	}
+	// api_key stays empty in free mode — the gateway holds the real credential.
+	if got.APIKey != "" {
+		t.Errorf("expected empty APIKey in free mode, got %q", got.APIKey)
+	}
+}
+
+// TestResolve_UserBaseURLOverridesBuildBaseURL ensures explicit user config
+// still wins over the built-in gateway URL.
+func TestResolve_UserBaseURLOverridesBuildBaseURL(t *testing.T) {
+	orig := config.BuildBaseURL
+	config.BuildBaseURL = "https://git-agent-gateway.example.com"
+	defer func() { config.BuildBaseURL = orig }()
+
+	path := writeTempConfig(t, "base_url: \"https://custom.api.com/v1\"\n")
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.BaseURL != "https://custom.api.com/v1" {
+		t.Errorf("expected user base_url to override built-in, got %q", got.BaseURL)
 	}
 }
 
@@ -112,28 +150,16 @@ func TestResolve_UnsetEnvVarExpandsToEmpty(t *testing.T) {
 	}
 }
 
-func TestResolve_FreeModeUsesBuildTimeCredentials(t *testing.T) {
-	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
+func TestResolve_CloudflareAIGatewayIDFromFile(t *testing.T) {
+	t.Setenv("TEST_CF_GATEWAY_ID", "git-agent-production")
+	path := writeTempConfig(t, "api_key: \"file-key\"\ncloudflare_ai_gateway_id: \"${TEST_CF_GATEWAY_ID}\"\n")
 
-	// Simulate build-time proxy credentials injected via ldflags.
-	orig := config.BuildAPIKey
-	config.BuildAPIKey = "proxy-key"
-	defer func() { config.BuildAPIKey = orig }()
-
-	flags := config.ProviderConfig{FreeMode: true}
-	got, err := config.Resolve(context.Background(), flags, path)
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.APIKey != "proxy-key" {
-		t.Errorf("expected APIKey %q, got %q", "proxy-key", got.APIKey)
-	}
-	// YAML file values must be ignored.
-	if got.BaseURL == "https://api.example.com/v1" {
-		t.Errorf("free mode must not use YAML base_url")
-	}
-	if got.Model == "gpt-4" {
-		t.Errorf("free mode must not use YAML model")
+	if got.CloudflareAIGatewayID != "git-agent-production" {
+		t.Errorf("expected CloudflareAIGatewayID %q, got %q", "git-agent-production", got.CloudflareAIGatewayID)
 	}
 }
 
@@ -182,6 +208,17 @@ func TestKeyRegistry_HeartbeatInterval_UserScopeOnly(t *testing.T) {
 	}
 }
 
+func TestKeyRegistry_CloudflareAIGatewayID_UserScopeOnly(t *testing.T) {
+	def, ok := config.KeyRegistry["cloudflare_ai_gateway_id"]
+	if !ok {
+		t.Fatal("expected cloudflare_ai_gateway_id in KeyRegistry")
+	}
+	if def.Type != "string" || !def.AllowUser || def.AllowProject || def.AllowLocal {
+		t.Errorf("expected user-only string key, got type=%q user=%v project=%v local=%v",
+			def.Type, def.AllowUser, def.AllowProject, def.AllowLocal)
+	}
+}
+
 func TestKeyRegistry_PlanFallback_ProjectAndLocal(t *testing.T) {
 	def, ok := config.KeyRegistry["plan_fallback"]
 	if !ok {
@@ -202,6 +239,7 @@ func TestResolveKey_NewKebabAliases(t *testing.T) {
 	}{
 		{"request-timeout", "request_timeout"},
 		{"heartbeat-interval", "heartbeat_interval"},
+		{"cloudflare-ai-gateway-id", "cloudflare_ai_gateway_id"},
 		{"plan-fallback", "plan_fallback"},
 	}
 	for _, tc := range cases {

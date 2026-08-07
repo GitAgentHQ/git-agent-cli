@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,7 @@ const (
 	defaultHeartbeatInterval = 15 * time.Second
 )
 
-// Per-endpoint upper bounds on MaxCompletionTokens. callLLM doubles the budget
+// Per-endpoint upper bounds on completion tokens. callLLM doubles the budget
 // on every finish_reason=length retry; once the next double would exceed the
 // matching ceiling, callLLM returns a *commit.PlannerBudgetExhaustedError
 // instead of pinging the endpoint a third time. Keeping ceilings as constants
@@ -58,6 +59,39 @@ type Client struct {
 	heartbeatInterval time.Duration
 	maxInputTokens    int // 0 = defaultMaxInputTokens
 	out               io.Writer
+	gatewayTransport  *cloudflareAIGatewayTransport
+	cloudflareAI      bool
+}
+
+type cloudflareAIGatewayTransport struct {
+	base      http.RoundTripper
+	mu        sync.RWMutex
+	gatewayID string
+}
+
+func (t *cloudflareAIGatewayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.RLock()
+	gatewayID := t.gatewayID
+	t.mu.RUnlock()
+	if gatewayID == "" || !isCloudflareAIURL(req.URL) {
+		return t.base.RoundTrip(req)
+	}
+	clone := req.Clone(req.Context())
+	clone.Header = req.Header.Clone()
+	clone.Header.Set("cf-aig-gateway-id", gatewayID)
+	clone.Header.Set("cf-aig-collect-log-payload", "false")
+	clone.Header.Set("cf-aig-max-attempts", "1")
+	return t.base.RoundTrip(clone)
+}
+
+func isCloudflareAIURL(u *url.URL) bool {
+	if u == nil || !strings.EqualFold(u.Hostname(), "api.cloudflare.com") {
+		return false
+	}
+	const prefix = "/client/v4/accounts/"
+	remainder := strings.TrimPrefix(u.Path, prefix)
+	accountEnd := strings.IndexByte(remainder, '/')
+	return remainder != u.Path && accountEnd > 0 && strings.HasPrefix(remainder[accountEnd:], "/ai/")
 }
 
 func NewClient(
@@ -75,15 +109,23 @@ func NewClient(
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = defaultHeartbeatInterval
 	}
-	cfg.HTTPClient = &http.Client{Timeout: requestTimeout}
+	gatewayTransport := &cloudflareAIGatewayTransport{base: http.DefaultTransport}
+	cfg.HTTPClient = &http.Client{Timeout: requestTimeout, Transport: gatewayTransport}
 	c := &Client{
 		inner:             goopenai.NewClientWithConfig(cfg),
 		model:             model,
 		requestTimeout:    requestTimeout,
 		heartbeatInterval: heartbeatInterval,
 		out:               out,
+		gatewayTransport:  gatewayTransport,
+		cloudflareAI:      isCloudflareAIBaseURL(baseURL),
 	}
 	return c
+}
+
+func isCloudflareAIBaseURL(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	return err == nil && isCloudflareAIURL(u)
 }
 
 // RequestTimeout reports the per-attempt HTTP timeout this client applies to
@@ -94,6 +136,22 @@ func (c *Client) RequestTimeout() time.Duration { return c.requestTimeout }
 // HeartbeatInterval reports the cadence at which heartbeat lines are emitted
 // while an LLM call is in flight.
 func (c *Client) HeartbeatInterval() time.Duration { return c.heartbeatInterval }
+
+// SetCloudflareAIGateway opts this client into Cloudflare AI Gateway headers.
+// Gateway retries stay disabled because callLLM owns the request retry budget;
+// prompt and response payload logging is disabled to keep source diffs private.
+func (c *Client) SetCloudflareAIGateway(gatewayID string) {
+	c.gatewayTransport.mu.Lock()
+	defer c.gatewayTransport.mu.Unlock()
+	c.gatewayTransport.gatewayID = gatewayID
+}
+
+// CloudflareAIGatewayID reports the configured gateway ID.
+func (c *Client) CloudflareAIGatewayID() string {
+	c.gatewayTransport.mu.RLock()
+	defer c.gatewayTransport.mu.RUnlock()
+	return c.gatewayTransport.gatewayID
+}
 
 // SetMaxInputTokens overrides the preflight input-size ceiling (in tokens)
 // with the max_input_tokens config value. A non-positive value restores the
@@ -199,21 +257,6 @@ func unmarshalLLMJSON(raw, wrapKey string, dest any) error {
 	return nil
 }
 
-// AllSystemPrompts returns every static system prompt sent by this client.
-// The returned slice is the source of truth for the proxy's ALLOWED_SYSTEM_PROMPTS
-// secret. To sync: git-agent config prompts | wrangler secret put ALLOWED_SYSTEM_PROMPTS
-func AllSystemPrompts() []string {
-	return []string{
-		generateSystemPrompt,
-		generateSystemPromptScoped,
-		retrySystemPrompt,
-		planSystemPrompt,
-		planSystemPromptScoped,
-		detectTechSystemPrompt,
-		generateScopesSystemPrompt,
-	}
-}
-
 const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
 
 const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name; if no listed scope covers the change, omit the scope rather than using a mismatched one; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
@@ -310,11 +353,12 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 	}
 
 	req := goopenai.ChatCompletionRequest{
-		Model:               c.model,
-		Messages:            msgs,
-		MaxCompletionTokens: maxTokens,
-		Temperature:         0,
+		Model:       c.model,
+		Messages:    msgs,
+		Temperature: 0,
 	}
+	setCompletionTokenBudget(&req, maxTokens, c.cloudflareAI)
+	tokenBudget := maxTokens
 
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -365,16 +409,17 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 		// Empty: reasoning models may spend all tokens on chain-of-thought.
 		// Partial: output is likely truncated (e.g. incomplete JSON).
 		if len(resp.Choices) > 0 && resp.Choices[0].FinishReason == goopenai.FinishReasonLength {
-			next := req.MaxCompletionTokens * 2
+			next := tokenBudget * 2
 			if next > maxTokensCeiling {
 				return "", &commit.PlannerBudgetExhaustedError{
 					Model:   c.model,
 					Ceiling: maxTokensCeiling,
 				}
 			}
-			req.MaxCompletionTokens = next
+			setCompletionTokenBudget(&req, next, c.cloudflareAI)
 			lastErr = fmt.Errorf("LLM exhausted token limit at %d (model=%s, attempt=%d/%d)",
-				req.MaxCompletionTokens/2, c.model, attempt+1, maxAttempts)
+				tokenBudget, c.model, attempt+1, maxAttempts)
+			tokenBudget = next
 			continue
 		}
 
@@ -390,6 +435,16 @@ func (c *Client) callLLM(ctx context.Context, system, user string, maxTokens, ma
 		return content, nil
 	}
 	return "", lastErr
+}
+
+func setCompletionTokenBudget(req *goopenai.ChatCompletionRequest, tokens int, cloudflareAI bool) {
+	if cloudflareAI {
+		req.MaxTokens = tokens
+		req.MaxCompletionTokens = 0
+		return
+	}
+	req.MaxTokens = 0
+	req.MaxCompletionTokens = tokens
 }
 
 // detectResponseError checks if a successful LLM response body contains an

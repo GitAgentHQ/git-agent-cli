@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add a free shared gateway as the zero-config default: official release binaries embed the gateway URL (never a credential), so `git-agent commit` works out of the box with no API key or config. The Worker holds the upstream token server-side and rate-limits anonymous free usage.
+- Add direct Cloudflare AI Gateway routing through `cloudflare_ai_gateway_id` for bring-your-own-key setups; Gateway requests retain usage metadata without storing prompt or response payloads, and keep retries owned by the CLI
+
+### Changed
+- Relax the provider-config gate: with no `api_key`, git-agent routes to the free shared gateway (base_url only, model pinned server-side); supplying an `api_key` switches to direct mode and requires `base_url` + `model`
+- Build and release credential-free binaries; the only build-time default is the gateway URL, never a token
+
 ### Removed
+- Remove the old shared `--free`/embedded-credential flow that shipped the proxy's `CLIENT_TOKEN` in public binaries — the free gateway now holds its own credential server-side instead
 - Remove the `init --graph` flag: `related` auto-indexes git history on first run and `--reindex` forces a full rebuild (cli)
 
 ## [0.9.0] - 2026-08-04

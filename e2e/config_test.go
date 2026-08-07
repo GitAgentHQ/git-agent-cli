@@ -18,6 +18,23 @@ func TestConfigShowCmd_Runs(t *testing.T) {
 	}
 }
 
+// TestConfigShow_ModeNotFreeForCustomBaseURL locks in the mode label: an
+// arbitrary OpenAI-compatible endpoint with no api_key is NOT the shared
+// gateway, so config show -o json must report mode "configured", never "free".
+func TestConfigShow_ModeNotFreeForCustomBaseURL(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "config", "show", "-o", "json", "--base-url", "http://localhost:11434/v1")
+	if code != 0 {
+		t.Fatalf("git-agent config show: exit code %d\noutput: %s", code, out)
+	}
+	if !strings.Contains(out, `"mode": "configured"`) {
+		t.Errorf("expected mode configured for custom base_url, got: %s", out)
+	}
+	if strings.Contains(out, `"mode": "free"`) {
+		t.Errorf("custom base_url must not be labeled free mode, got: %s", out)
+	}
+}
+
 func TestConfigSet_ProjectScope(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "config", "set", "hook", "conventional", "--project")
@@ -70,6 +87,23 @@ func TestConfigSet_DefaultScopeForProviderKey(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "gpt-4o") {
 		t.Errorf("expected 'gpt-4o' in user config.yml, got:\n%s", data)
+	}
+}
+
+func TestConfigSet_CloudflareAIGatewayIDDefaultsToUserScope(t *testing.T) {
+	dir := newGitRepo(t)
+	xdgDir := t.TempDir()
+	out, code := gitAgentEnv(t, dir, []string{"XDG_CONFIG_HOME=" + xdgDir},
+		"config", "set", "cloudflare-ai-gateway-id", "git-agent-production")
+	if code != 0 {
+		t.Fatalf("config set cloudflare gateway: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(xdgDir, "git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("user config.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "cloudflare_ai_gateway_id: git-agent-production") {
+		t.Errorf("expected gateway ID in user config.yml, got:\n%s", data)
 	}
 }
 

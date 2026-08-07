@@ -17,13 +17,13 @@ func TestVerboseFlag_Accepted(t *testing.T) {
 
 func TestOutputContract_StdoutEmpty_OnError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	// With no API key, the commit command returns an error and should not
-	// write to stdout.
+	// A dev build with no built-in gateway URL and no config errors out on
+	// "no provider configured" and must not write to stdout.
 	err := cmd.ExecuteArgs([]string{"commit"})
 	if err == nil {
-		t.Fatal("expected error with no API key, got nil")
+		t.Fatal("expected error with no provider, got nil")
 	}
-	// Verify the error is about missing API key, not a flag or parse issue.
+	// Verify the error is about provider config, not a flag or parse issue.
 	if strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("unexpected unknown flag error: %v", err)
 	}

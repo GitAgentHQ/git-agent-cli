@@ -27,6 +27,69 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestClient_CloudflareAIGatewayHeaders(t *testing.T) {
+	var requestBody map[string]any
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("cf-aig-gateway-id"); got != "git-agent-production" {
+			t.Errorf("cf-aig-gateway-id = %q, want %q", got, "git-agent-production")
+		}
+		if got := r.Header.Get("cf-aig-collect-log-payload"); got != "false" {
+			t.Errorf("cf-aig-collect-log-payload = %q, want false", got)
+		}
+		if got := r.Header.Get("cf-aig-max-attempts"); got != "1" {
+			t.Errorf("cf-aig-max-attempts = %q, want 1", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(chatCompletionBody(t, "ok"))),
+			Request:    r,
+		}, nil
+	})
+
+	c := NewClient("test-key", "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1", "test-model", 5*time.Second, 0, nil)
+	c.gatewayTransport.base = transport
+	c.SetCloudflareAIGateway("git-agent-production")
+
+	if _, err := c.callLLM(context.Background(), "system", "user", 100, 200); err != nil {
+		t.Fatalf("callLLM: %v", err)
+	}
+	if got := requestBody["max_tokens"]; got != float64(100) {
+		t.Errorf("max_tokens = %#v, want 100", got)
+	}
+	if _, ok := requestBody["max_completion_tokens"]; ok {
+		t.Error("Cloudflare request unexpectedly contains max_completion_tokens")
+	}
+}
+
+func TestClient_OmitsCloudflareHeadersForOtherProviders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, header := range []string{"cf-aig-gateway-id", "cf-aig-collect-log-payload", "cf-aig-max-attempts"} {
+			if got := r.Header.Get(header); got != "" {
+				t.Errorf("%s = %q, want empty", header, got)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, "ok"))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	c.SetCloudflareAIGateway("must-not-leak")
+	if _, err := c.callLLM(context.Background(), "system", "user", 100, 200); err != nil {
+		t.Fatalf("callLLM: %v", err)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 // stallHandler hijacks the connection, holds it open while reading bytes
 // from the client until the client closes it, then exits. The read loop
 // guarantees the goroutine returns promptly once the client side closes the

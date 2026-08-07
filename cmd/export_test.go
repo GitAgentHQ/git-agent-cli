@@ -31,10 +31,21 @@ func OpenAIHeartbeatIntervalForTest(c *infraOpenAI.Client) time.Duration {
 	return c.HeartbeatInterval()
 }
 
+// OpenAICloudflareAIGatewayIDForTest reports the gateway ID wired from user config.
+func OpenAICloudflareAIGatewayIDForTest(c *infraOpenAI.Client) string {
+	return c.CloudflareAIGatewayID()
+}
+
 // OpenAIMaxInputTokensForTest mirrors OpenAIRequestTimeoutForTest for the
 // preflight input-size ceiling threaded from max_input_tokens.
 func OpenAIMaxInputTokensForTest(c *infraOpenAI.Client) int {
 	return c.MaxInputTokens()
+}
+
+// ProviderConfigErrorForTest exposes providerConfigError so the free-gateway
+// / direct / no-provider validation modes can be unit-tested in isolation.
+func ProviderConfigErrorForTest(cfg *infraConfig.ProviderConfig) string {
+	return providerConfigError(cfg)
 }
 
 // CommitServiceHeuristicPlannerForTest returns the service's fallback planner

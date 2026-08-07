@@ -15,14 +15,14 @@ import (
 	"time"
 )
 
-func TestCommitCmd_NoAPIKey_Returns1(t *testing.T) {
+func TestCommitCmd_NoProvider_Returns1(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "commit", "--dry-run")
 	if code != 1 {
-		t.Fatalf("expected exit 1 with no API key, got %d\noutput: %s", code, out)
+		t.Fatalf("expected exit 1 with no provider, got %d\noutput: %s", code, out)
 	}
-	if !strings.Contains(out, "API key") {
-		t.Errorf("expected 'API key' in output, got: %s", out)
+	if !strings.Contains(out, "no provider") {
+		t.Errorf("expected 'no provider' in output, got: %s", out)
 	}
 }
 

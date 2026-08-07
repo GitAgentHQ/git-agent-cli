@@ -10,7 +10,7 @@ make build        # dev build, no credentials
 make test         # all tests with -count=1 (no cache)
 make install      # install to $GOPATH/bin
 
-# Build with embedded credentials (reads from .env)
+# Build a release-style binary (embeds the free gateway URL if GATEWAY_URL is set)
 bash scripts/build.sh
 
 # Run a single package

@@ -9,8 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultBaseURL = "https://api.anthropic.com/v1"
-const DefaultModel = "claude-3-5-haiku-20241022"
+// BuildBaseURL is the shared free-gateway URL embedded at build time via
+// -ldflags "-X .../config.BuildBaseURL=...". It is a URL only — never a
+// credential. Official release binaries point here so a user with zero
+// configuration gets the free shared gateway; any user-provided base_url
+// overrides it. Empty for dev builds (no built-in default).
+var BuildBaseURL = ""
 
 // DefaultRequestTimeout bounds the per-HTTP-request deadline given to the LLM
 // client, including streamed completions. Chosen to comfortably exceed a slow
@@ -21,65 +25,36 @@ const DefaultRequestTimeout = 90 * time.Second
 // waiting" progress lines while an LLM call is in flight.
 const DefaultHeartbeatInterval = 15 * time.Second
 
-// Build-time defaults injected via -ldflags "-X github.com/gitagenthq/git-agent/infrastructure/config.BuildAPIKey=..."
-var (
-	BuildAPIKey  = ""
-	BuildBaseURL = ""
-	BuildModel   = ""
-)
-
 type ProviderConfig struct {
-	APIKey               string
-	BaseURL              string
-	Model                string
-	RequestTimeout       time.Duration // 0 = use DefaultRequestTimeout
-	HeartbeatInterval    time.Duration // 0 = use DefaultHeartbeatInterval
-	FreeMode             bool          // When true, use only build-time proxy credentials; all user config sources are ignored
-	NoGitAgentCoAuthor   bool          // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor      bool          // When true, ignore all --co-author trailers
-	RequireModelCoAuthor bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
-	ModelCoAuthorDomains []string      // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
+	APIKey                string
+	BaseURL               string
+	Model                 string
+	CloudflareAIGatewayID string
+	RequestTimeout        time.Duration // 0 = use DefaultRequestTimeout
+	HeartbeatInterval     time.Duration // 0 = use DefaultHeartbeatInterval
+	NoGitAgentCoAuthor    bool          // When true, omit the default Co-Authored-By: Git Agent trailer
+	NoModelCoAuthor       bool          // When true, ignore all --co-author trailers
+	RequireModelCoAuthor  bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	ModelCoAuthorDomains  []string      // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
 }
 
 type fileConfig struct {
-	APIKey               string   `yaml:"api_key"`
-	BaseURL              string   `yaml:"base_url"`
-	Model                string   `yaml:"model"`
-	RequestTimeout       string   `yaml:"request_timeout"`
-	HeartbeatInterval    string   `yaml:"heartbeat_interval"`
-	NoGitAgentCoAuthor   bool     `yaml:"no_git_agent_co_author"`
-	NoModelCoAuthor      bool     `yaml:"no_model_co_author"`
-	RequireModelCoAuthor bool     `yaml:"require_model_co_author"`
-	ModelCoAuthorDomains []string `yaml:"model_co_author_domains"`
+	APIKey                string   `yaml:"api_key"`
+	BaseURL               string   `yaml:"base_url"`
+	Model                 string   `yaml:"model"`
+	CloudflareAIGatewayID string   `yaml:"cloudflare_ai_gateway_id"`
+	RequestTimeout        string   `yaml:"request_timeout"`
+	HeartbeatInterval     string   `yaml:"heartbeat_interval"`
+	NoGitAgentCoAuthor    bool     `yaml:"no_git_agent_co_author"`
+	NoModelCoAuthor       bool     `yaml:"no_model_co_author"`
+	RequireModelCoAuthor  bool     `yaml:"require_model_co_author"`
+	ModelCoAuthorDomains  []string `yaml:"model_co_author_domains"`
 }
 
 // Resolve merges config from (highest to lowest priority):
-// CLI flags > git config --local git-agent.* > YAML file > build-time defaults > hardcoded defaults.
-// When FreeMode is true, only build-time proxy credentials are used; all user config sources are ignored.
+// CLI flags > git config --local git-agent.* > YAML file > build-time default
+// (BuildBaseURL, free shared gateway) > empty.
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
-	if flags.FreeMode {
-		result := &ProviderConfig{
-			APIKey:            BuildAPIKey,
-			BaseURL:           BuildBaseURL,
-			Model:             BuildModel,
-			RequestTimeout:    flags.RequestTimeout,
-			HeartbeatInterval: flags.HeartbeatInterval,
-		}
-		if result.BaseURL == "" {
-			result.BaseURL = DefaultBaseURL
-		}
-		if result.Model == "" {
-			result.Model = DefaultModel
-		}
-		if result.RequestTimeout <= 0 {
-			result.RequestTimeout = DefaultRequestTimeout
-		}
-		if result.HeartbeatInterval <= 0 {
-			result.HeartbeatInterval = DefaultHeartbeatInterval
-		}
-		return result, nil
-	}
-
 	var file fileConfig
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
@@ -93,6 +68,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 			file.APIKey = os.ExpandEnv(file.APIKey)
 			file.BaseURL = os.ExpandEnv(file.BaseURL)
 			file.Model = os.ExpandEnv(file.Model)
+			file.CloudflareAIGatewayID = os.ExpandEnv(file.CloudflareAIGatewayID)
 		}
 	}
 
@@ -105,8 +81,6 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.APIKey = flags.APIKey
 	} else if file.APIKey != "" {
 		result.APIKey = file.APIKey
-	} else if BuildAPIKey != "" {
-		result.APIKey = BuildAPIKey
 	}
 
 	if flags.BaseURL != "" {
@@ -117,8 +91,6 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.BaseURL = file.BaseURL
 	} else if BuildBaseURL != "" {
 		result.BaseURL = BuildBaseURL
-	} else {
-		result.BaseURL = DefaultBaseURL
 	}
 
 	if flags.Model != "" {
@@ -127,11 +99,8 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.Model = gitModel
 	} else if file.Model != "" {
 		result.Model = file.Model
-	} else if BuildModel != "" {
-		result.Model = BuildModel
-	} else {
-		result.Model = DefaultModel
 	}
+	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
 
 	result.NoGitAgentCoAuthor = flags.NoGitAgentCoAuthor || file.NoGitAgentCoAuthor
 	result.NoModelCoAuthor = flags.NoModelCoAuthor || file.NoModelCoAuthor
