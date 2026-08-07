@@ -65,10 +65,12 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 	apiKey, _ := cmd.Flags().GetString("api-key")
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
+	forceFree, _ := cmd.Flags().GetBool("free")
 	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:  apiKey,
-		Model:   model,
-		BaseURL: baseURL,
+		APIKey:           apiKey,
+		Model:            model,
+		BaseURL:          baseURL,
+		ForceFreeGateway: forceFree,
 	}, userConfigPath())
 }
 
@@ -101,4 +103,5 @@ func init() {
 	rootCmd.PersistentFlags().String("api-key", "", "API key for the AI provider")
 	rootCmd.PersistentFlags().String("model", "", "model to use for generation")
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
+	rootCmd.PersistentFlags().Bool("free", false, "force routing through the free shared gateway, overriding api_key / base_url / model")
 }
