@@ -92,6 +92,7 @@ func TestCommit_WiresConfigToConstructors(t *testing.T) {
 		"api_key: test-key\n" +
 		"base_url: http://127.0.0.1:0\n" +
 		"model: test-model\n" +
+		"cloudflare_ai_gateway_id: git-agent-production\n" +
 		"request_timeout: 5s\n" +
 		"heartbeat_interval: 2s\n"
 	if err := os.WriteFile(userCfgPath, []byte(userYAML), 0o644); err != nil {
@@ -116,6 +117,9 @@ func TestCommit_WiresConfigToConstructors(t *testing.T) {
 	}
 	if got := cmd.OpenAIHeartbeatIntervalForTest(llmH); got != 2*time.Second {
 		t.Errorf("llm heartbeat interval = %s, want 2s", got)
+	}
+	if got := cmd.OpenAICloudflareAIGatewayIDForTest(llmH); got != "git-agent-production" {
+		t.Errorf("llm Cloudflare AI Gateway ID = %q, want git-agent-production", got)
 	}
 	if got := cmd.OpenAIMaxInputTokensForTest(llmH); got != 2_500_000 {
 		t.Errorf("llm max input tokens = %d, want 2500000", got)

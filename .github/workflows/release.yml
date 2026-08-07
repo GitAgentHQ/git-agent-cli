@@ -39,9 +39,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          CLIENT_TOKEN: ${{ secrets.CLIENT_TOKEN }}
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          MODEL: ${{ secrets.FREE_MODEL }}
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
           OUTPUT: git-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
         run: bash scripts/build.sh
 

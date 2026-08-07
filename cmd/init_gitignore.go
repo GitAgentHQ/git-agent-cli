@@ -21,12 +21,16 @@ func runGitignore(cmd *cobra.Command, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	if providerCfg == nil || providerCfg.APIKey == "" {
-		return fmt.Errorf("error: no API key configured\nhint: set --api-key flag or add api_key to ~/.config/git-agent/config.yml")
+	if configErr := providerConfigError(providerCfg); configErr != "" {
+		return fmt.Errorf("%s", configErr)
 	}
 
 	gitClient := infraGit.NewClient()
-	openaiClient := infraOpenAI.NewClient(providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model, 0, 0, nil)
+	openaiClient := infraOpenAI.NewClient(
+		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
+		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval, nil,
+	)
+	openaiClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 	toptalClient := infraGitignore.NewToptalClient()
 	svc := application.NewGitignoreService(openaiClient, toptalClient, gitClient)
 

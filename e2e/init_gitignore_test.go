@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-func TestInitGitignoreFlag_NoAPIKey_Fails(t *testing.T) {
+func TestInitGitignoreFlag_NoProvider_Fails(t *testing.T) {
 	dir := newGitRepo(t)
 	_, code := gitAgent(t, dir, "init", "--gitignore")
 	if code == 0 {
-		t.Fatal("expected non-zero exit when no API key configured")
+		t.Fatal("expected non-zero exit when no provider configured")
 	}
 }
 

@@ -134,7 +134,7 @@ git-agent config set --local max-plan-files 300     # raise the planner file-lis
 
 | Scope flag | Config file | Purpose |
 |------------|-------------|---------|
-| `--user` | `~/.config/git-agent/config.yml` | Provider keys (api_key, base_url, model) |
+| `--user` | `~/.config/git-agent/config.yml` | Provider keys and Cloudflare AI Gateway ID |
 | `--project` | `.git-agent/config.yml` | Shared, checked into git |
 | `--local` | `.git-agent/config.local.yml` | Personal override, gitignored |
 
@@ -250,14 +250,30 @@ api_key: sk-...
 model: gpt-4o
 ```
 
+### Free shared gateway (zero config)
+
+Official release binaries point at a free shared gateway by default, so **no
+configuration is required** — just run `git-agent commit`. Your requests are
+routed through a Cloudflare Worker that holds the upstream credential
+server-side (never in the binary) and rate-limits anonymous free usage.
+
+To opt out and use your own endpoint, set `base_url` (and optionally `api_key`
+/ `model`) — any user config overrides the built-in gateway URL.
+
 Examples for other providers:
 
 ```yaml
-# Cloudflare Workers AI
+# Bring your own key — Cloudflare AI Gateway + Workers AI
 base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
 api_key: YOUR_CLOUDFLARE_API_TOKEN
-model: "@cf/meta/llama-3.1-8b-instruct"
+model: "@cf/zai-org/glm-4.7-flash"
+cloudflare_ai_gateway_id: YOUR_GATEWAY_ID # use "default" for the default gateway
 ```
+
+When you bring your own key, git-agent routes requests through that endpoint
+directly; for Cloudflare, `cloudflare_ai_gateway_id` opts into the gateway,
+disables prompt/response payload storage while retaining metadata, and leaves
+retries to the CLI so retry layers cannot multiply.
 
 ```yaml
 # Local Ollama
@@ -317,7 +333,6 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | `--model` | Model to use for generation |
 | `--base-url` | Base URL for the AI provider |
 | `-v, --verbose` | Enable verbose output |
-| `--free` | Use only build-time embedded credentials; ignore config file and git config |
 
 ## Exit Codes
 

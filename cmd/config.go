@@ -18,7 +18,7 @@ var configSetCmd = &cobra.Command{
 	Long: `Set a configuration value in the specified scope.
 
 Scopes:
-  --user     ~/.config/git-agent/config.yml  (provider keys: api_key, base_url, model)
+  --user     ~/.config/git-agent/config.yml  (provider keys and Cloudflare AI Gateway ID)
   --project  .git-agent/config.yml           (shared, checked into git)
   --local    .git-agent/config.local.yml     (personal override, gitignored)
 
@@ -186,27 +186,31 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	free := infraConfig.BuildAPIKey != "" && cfg.APIKey == infraConfig.BuildAPIKey
-
 	if outputFormat(cmd) == output.FormatJSON {
-		if free {
-			return output.EncodeJSON(cmd.OutOrStdout(), map[string]any{"mode": "free"})
+		// mode: "free" when no api_key (routes via the shared gateway),
+		// "configured" when the user brings their own key.
+		mode := "configured"
+		if cfg.APIKey == "" {
+			mode = "free"
 		}
-		return output.EncodeJSON(cmd.OutOrStdout(), map[string]any{
-			"mode":     "configured",
+		result := map[string]any{
+			"mode":     mode,
 			"api_key":  maskAPIKey(cfg.APIKey),
 			"model":    cfg.Model,
 			"base_url": cfg.BaseURL,
-		})
+		}
+		if cfg.CloudflareAIGatewayID != "" {
+			result["cloudflare_ai_gateway_id"] = cfg.CloudflareAIGatewayID
+		}
+		return output.EncodeJSON(cmd.OutOrStdout(), result)
 	}
 
-	if free {
-		fmt.Fprintln(cmd.OutOrStdout(), "mode: FREE (using built-in credentials)")
-		return nil
-	}
 	fmt.Fprintf(cmd.OutOrStdout(), "api_key:  %s\n", maskAPIKey(cfg.APIKey))
 	fmt.Fprintf(cmd.OutOrStdout(), "model:    %s\n", cfg.Model)
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url: %s\n", cfg.BaseURL)
+	if cfg.CloudflareAIGatewayID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "cloudflare_ai_gateway_id: %s\n", cfg.CloudflareAIGatewayID)
+	}
 	return nil
 }
 

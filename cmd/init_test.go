@@ -16,7 +16,7 @@ func requireInitRegistered(t *testing.T, err error) {
 	}
 }
 
-func TestInitCmd_ScopeFlag_NoAPIKey_ReturnsError(t *testing.T) {
+func TestInitCmd_ScopeFlag_NoProvider_ReturnsError(t *testing.T) {
 	cmd.ResetInitFlags()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := t.TempDir()
@@ -29,13 +29,15 @@ func TestInitCmd_ScopeFlag_NoAPIKey_ReturnsError(t *testing.T) {
 	}
 	os.Chdir(dir)
 
+	// A dev build has no built-in gateway URL and no user config, so init
+	// --scope must fail with a "no provider configured" diagnostic.
 	err := cmd.ExecuteArgs([]string{"init", "--scope"})
 	requireInitRegistered(t, err)
 	if err == nil {
-		t.Fatal("expected error when --scope given without API key, got nil")
+		t.Fatal("expected error when --scope given without a provider, got nil")
 	}
-	if !strings.Contains(err.Error(), "API key") {
-		t.Errorf("expected 'API key' in error, got: %v", err)
+	if !strings.Contains(err.Error(), "no provider") {
+		t.Errorf("expected 'no provider' in error, got: %v", err)
 	}
 }
 

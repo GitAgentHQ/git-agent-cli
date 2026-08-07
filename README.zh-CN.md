@@ -127,7 +127,7 @@ git-agent config set --local max-plan-files 300     # 提高规划阶段文件�
 
 | 作用域参数 | 配置文件 | 用途 |
 |------------|----------|------|
-| `--user` | `~/.config/git-agent/config.yml` | 提供商密钥（api_key、base_url、model） |
+| `--user` | `~/.config/git-agent/config.yml` | 提供商密钥和 Cloudflare AI Gateway ID |
 | `--project` | `.git-agent/config.yml` | 共享配置，提交到 git |
 | `--local` | `.git-agent/config.local.yml` | 本地覆盖，gitignore |
 
@@ -232,14 +232,28 @@ api_key: sk-...
 model: gpt-4o
 ```
 
+### 免费共享网关（零配置）
+
+官方 release 二进制默认指向免费共享网关，因此**无需任何配置**——直接运行
+`git-agent commit` 即可。请求经由一个 Cloudflare Worker 转发，上游凭据由
+服务端持有（绝不进入二进制），并对匿名免费用户按 IP 限流。
+
+若想使用自己的端点，设置 `base_url`（可选 `api_key` / `model`）即可——
+任何用户配置都会覆盖内置网关 URL。
+
 其他提供商示例：
 
 ```yaml
-# Cloudflare Workers AI
+# 自带 key —— Cloudflare AI Gateway + Workers AI
 base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
 api_key: YOUR_CLOUDFLARE_API_TOKEN
-model: "@cf/meta/llama-3.1-8b-instruct"
+model: "@cf/zai-org/glm-4.7-flash"
+cloudflare_ai_gateway_id: YOUR_GATEWAY_ID # 默认 Gateway 可填写 "default"
 ```
+
+自带 key 时，git-agent 直接路由到你配置的端点；对 Cloudflare 设置
+`cloudflare_ai_gateway_id` 可接入 Gateway，保留用量元数据但不保存 prompt
+和 response 内容，并由 CLI 独占重试策略，避免多层重试相乘。
 
 ```yaml
 # 本地 Ollama
@@ -299,7 +313,6 @@ hook:
 | `--model` | 用于生成的模型 |
 | `--base-url` | AI 提供商的 base URL |
 | `-v, --verbose` | 启用详细输出 |
-| `--free` | 仅使用构建时内嵌凭证；忽略配置文件和 git config |
 
 ## 退出码
 

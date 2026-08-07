@@ -15,17 +15,13 @@ AI-first Git CLI for automated commit message generation.
 | `--api-key` | string | API key for the AI provider |
 | `--base-url` | string | Base URL for the AI provider |
 | `--model` | string | Model to use for generation |
-| `--free` | bool | Use only build-time embedded credentials; ignore config file and git config |
 | `--verbose`, `-v` | bool | Verbose output |
-
-`--free` is mutually exclusive with `--api-key`, `--model`, and `--base-url` (enforced at parse time by Cobra).
 
 ### Provider config resolution (highest to lowest priority)
 
 1. Global CLI flags (`--api-key`, `--model`, `--base-url`)
 2. `git config --local git-agent.{model,base-url}`
 3. `~/.config/git-agent/config.yml` (supports `$ENV_VAR` expansion)
-4. Build-time defaults
 
 ---
 
@@ -227,10 +223,14 @@ Show the resolved provider configuration (`api_key` masked, `model`, `base_url`)
 
 Output format:
 ```
-api_key:  sk-****
-model:    claude-3-5-haiku-20241022
-base_url: https://api.anthropic.com/v1
+api_key:  (not set)
+model:    
+base_url: https://git-agent-gateway.example.com
 ```
+
+Official release binaries embed the free shared-gateway URL as the default
+`base_url`, so `api_key`/`model` may be empty. Any user config (api_key,
+base_url, model) overrides the built-in gateway.
 
 ---
 
@@ -248,6 +248,7 @@ Set a configuration value in the specified scope. Keys accept both snake_case an
 |------------|-----------|
 | `api-key` | `api_key` |
 | `base-url` | `base_url` |
+| `cloudflare-ai-gateway-id` | `cloudflare_ai_gateway_id` |
 | `max-diff-lines` | `max_diff_lines` |
 | `max-diff-bytes` | `max_diff_bytes` |
 | `max-plan-files` | `max_plan_files` |
@@ -258,7 +259,7 @@ Set a configuration value in the specified scope. Keys accept both snake_case an
 
 | Flag | File | Purpose |
 |------|------|---------|
-| `--user` | `~/.config/git-agent/config.yml` | Provider keys: `api_key`, `base_url`, `model` |
+| `--user` | `~/.config/git-agent/config.yml` | Provider keys and `cloudflare_ai_gateway_id` |
 | `--project` | `.git-agent/config.yml` | Shared, checked into git |
 | `--local` | `.git-agent/config.local.yml` | Personal override, gitignored |
 
@@ -276,7 +277,7 @@ git-agent config get <key> [flags]
 
 Show the resolved value of a configuration key and its source scope. Accepts both snake_case and kebab-case keys.
 
-Resolution order for non-provider keys: local > project > user. Provider-only keys (api_key, base_url, model) resolve from user scope only.
+Resolution order for non-provider keys: local > project > user. Provider-only keys (`api_key`, `base_url`, `model`, `cloudflare_ai_gateway_id`) resolve from user scope only.
 
 ---
 

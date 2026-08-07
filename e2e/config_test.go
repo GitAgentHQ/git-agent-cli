@@ -73,6 +73,23 @@ func TestConfigSet_DefaultScopeForProviderKey(t *testing.T) {
 	}
 }
 
+func TestConfigSet_CloudflareAIGatewayIDDefaultsToUserScope(t *testing.T) {
+	dir := newGitRepo(t)
+	xdgDir := t.TempDir()
+	out, code := gitAgentEnv(t, dir, []string{"XDG_CONFIG_HOME=" + xdgDir},
+		"config", "set", "cloudflare-ai-gateway-id", "git-agent-production")
+	if code != 0 {
+		t.Fatalf("config set cloudflare gateway: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(xdgDir, "git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("user config.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "cloudflare_ai_gateway_id: git-agent-production") {
+		t.Errorf("expected gateway ID in user config.yml, got:\n%s", data)
+	}
+}
+
 func TestConfigGet_ProjectScope(t *testing.T) {
 	dir := newGitRepo(t)
 	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"), "hook:\n  - conventional\n")

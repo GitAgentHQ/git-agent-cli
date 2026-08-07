@@ -7,34 +7,34 @@ import (
 	"testing"
 )
 
-func TestInitCmd_ScopeFlag_NoAPIKey_Fails(t *testing.T) {
+func TestInitCmd_ScopeFlag_NoProvider_Fails(t *testing.T) {
 	dir := newGitRepo(t)
 	_, code := gitAgent(t, dir, "init", "--scope")
 	if code == 0 {
-		t.Fatal("expected non-zero exit when --scope given without API key, got 0")
+		t.Fatal("expected non-zero exit when --scope given without a provider, got 0")
 	}
 }
 
 func TestInitCmd_HookAndScope_BothTogether_ScopeFails(t *testing.T) {
 	dir := newGitRepo(t)
-	// Without API key, --scope fails; hook is now a separate config set call.
+	// Without a provider, --scope fails; hook is now a separate config set call.
 	out, code := gitAgent(t, dir, "init", "--scope")
 	if code == 0 {
-		t.Fatalf("expected non-zero exit when --scope given without API key, got 0 (output: %s)", out)
+		t.Fatalf("expected non-zero exit when --scope given without a provider, got 0 (output: %s)", out)
 	}
 }
 
 func TestInitCmd_MaxCommitsFlag_Recognized(t *testing.T) {
 	dir := newGitRepo(t)
-	// --max-commits is still valid; scope requires API key so it will fail, but the flag must be parsed.
+	// --max-commits is still valid; scope fails without a provider, but the flag must be parsed.
 	_, code := gitAgent(t, dir, "init", "--scope", "--max-commits", "50")
-	// Non-zero is expected (no API key), but must not be "unknown flag".
+	// Non-zero is expected (no provider), but must not be "unknown flag".
 	_ = code
 }
 
 func TestInitCmd_ForceFlag_Recognized(t *testing.T) {
 	dir := newGitRepo(t)
-	// --force with no API key fails on scope generation, but the flag must be parsed.
+	// --force with no provider fails on scope generation, but the flag must be parsed.
 	out, _ := gitAgent(t, dir, "init", "--force")
 	if strings.Contains(out, "unknown flag") {
 		t.Errorf("--force flag not recognized: %s", out)

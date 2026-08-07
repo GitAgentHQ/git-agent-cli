@@ -199,10 +199,12 @@ const maxRePlans = 2
 const maxCommitGroups = 5
 
 // DefaultMaxDiffBytes caps the byte size of the diff sent to the LLM when the
-// caller sets no explicit limit. git-agent-proxy rejects request bodies over
-// 512 KiB; 384 KiB of raw diff keeps the JSON-escaped body (plus system prompt
-// and envelope) under that gate, and comfortably under the AI Gateway's larger
-// limit too. Override with --max-diff-bytes / max_diff_bytes for endpoints that
+// caller sets no explicit limit. 384 KiB of raw diff stays under the free
+// gateway's 512 KiB body gate after JSON escaping (Go's json.Marshal HTML-
+// escapes <, >, & and doubles quotes/backslashes/newlines), with headroom for
+// the system prompt and envelope. A quote/backslash-heavy diff near this cap
+// can still escape past 512 KiB — that's why the Worker also rejects oversized
+// bodies. Override with --max-diff-bytes / max_diff_bytes for endpoints that
 // allow more. Unlike the line cap, this guard is always applied — large
 // vendored or minified files have few lines but many bytes, so the line cap
 // alone cannot bound the request body.
