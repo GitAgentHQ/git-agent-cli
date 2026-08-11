@@ -148,63 +148,67 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
-	// 1. Autonomous check for .gitignore (create if missing, or update if new mandatory/tech rules found)
+	// 1. Autonomous check for .gitignore (create if missing, or update if missing mandatory rules)
 	gitignorePath := filepath.Join(root, ".gitignore")
-	gitignoreExisted := false
-	if _, err := os.Stat(gitignorePath); err == nil {
-		gitignoreExisted = true
-	}
-
-	_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
-	toptalClient := infraGitignore.NewToptalClient()
-	gitignoreSvc := application.NewGitignoreService(
-		llmClient,
-		toptalClient,
-		gitClient,
-	)
-	techs, gitignoreUpdated, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
-	} else if gitignoreUpdated {
-		if gitignoreExisted {
-			fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated .gitignore (%s)\n", strings.Join(techs, ", "))
+	existingGitignore, gitignoreErr := os.ReadFile(gitignorePath)
+	if os.IsNotExist(gitignoreErr) {
+		_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
+		toptalClient := infraGitignore.NewToptalClient()
+		gitignoreSvc := application.NewGitignoreService(
+			llmClient,
+			toptalClient,
+			gitClient,
+		)
+		techs, _, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Generated .gitignore (%s)\n", strings.Join(techs, ", "))
+			if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
+				allFiles = updatedFiles
+				if len(allFiles) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
+					return nil
+				}
+			}
 		}
-		// Refresh changed files in case newly ignored files were removed from staging
-		if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
-			allFiles = updatedFiles
-			if len(allFiles) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
-				return nil
+	} else if gitignoreErr == nil {
+		updated := application.EnsureMandatoryIgnoreRules(string(existingGitignore))
+		if updated != string(existingGitignore) {
+			if err := os.WriteFile(gitignorePath, []byte(updated), 0644); err == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Updated .gitignore with mandatory ignore rules.")
+				if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
+					allFiles = updatedFiles
+					if len(allFiles) == 0 {
+						fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
+						return nil
+					}
+				}
 			}
 		}
 	}
 
 	// 2. Autonomous check for Scope configuration (.git-agent/config.yml)
-	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
-	var existingScopes []domainProject.Scope
-	if projCfg != nil {
-		existingScopes = projCfg.Scopes
-	}
-
-	scopeSvc := application.NewScopeService(llmClient, gitClient)
-	scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
-	} else if len(scopes) > 0 {
-		projCfgPath := infraConfig.ProjectConfigPath(root)
-		if added, err := scopeSvc.MergeAndSave(cmd.Context(), projCfgPath, scopes); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: save scopes failed: %v\n", err)
-		} else if len(added) > 0 {
-			addedNames := make([]string, len(added))
-			for i, s := range added {
-				addedNames[i] = s.Name
-			}
-			if projCfg != nil && len(existingScopes) > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated scopes in %s (added: %s)\n", projCfgPath, strings.Join(addedNames, ", "))
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Initialized scopes in %s (%s)\n", projCfgPath, strings.Join(addedNames, ", "))
+	projCfgPath := infraConfig.ProjectConfigPath(root)
+	existingScopes := application.ReadScopes(projCfgPath)
+	if hasUncoveredDirs(allFiles, existingScopes) {
+		scopeSvc := application.NewScopeService(llmClient, gitClient)
+		scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
+		} else if len(scopes) > 0 {
+			if added, err := scopeSvc.MergeAndSave(cmd.Context(), projCfgPath, scopes); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: save scopes failed: %v\n", err)
+			} else if len(added) > 0 {
+				addedNames := make([]string, len(added))
+				for i, s := range added {
+					addedNames[i] = s.Name
+				}
+				if len(existingScopes) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated scopes in %s (added: %s)\n", projCfgPath, strings.Join(addedNames, ", "))
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Initialized scopes in %s (%s)\n", projCfgPath, strings.Join(addedNames, ", "))
+				}
 			}
 		}
 	}
@@ -228,6 +232,35 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 
 	// 4. Delegate to runCommit to execute planning and commit
 	return runCommit(cmd, args)
+}
+
+func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
+	if len(scopes) == 0 {
+		return true
+	}
+	for _, file := range allFiles {
+		parts := strings.Split(filepath.ToSlash(file), "/")
+		if len(parts) <= 1 {
+			continue
+		}
+		topDir := strings.ToLower(parts[0])
+		if strings.HasPrefix(topDir, ".") {
+			continue
+		}
+		covered := false
+		for _, s := range scopes {
+			name := strings.ToLower(s.Name)
+			desc := strings.ToLower(s.Description)
+			if name == topDir || strings.HasPrefix(topDir, name) || strings.HasPrefix(name, topDir) || strings.Contains(desc, topDir) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
