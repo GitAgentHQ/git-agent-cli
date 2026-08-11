@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and release
+  build:
+    name: Build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -62,15 +62,37 @@ jobs:
           zip git-agent-${{ matrix.goos }}-${{ matrix.goarch }}.zip git-agent.exe
           rm git-agent.exe
 
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            ${{ matrix.ext == '' && format('git-agent-{0}-{1}.tar.gz', matrix.goos, matrix.goarch) || format('git-agent-{0}-{1}.zip', matrix.goos, matrix.goarch) }}
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            git-agent-*.tar.gz
+            git-agent-*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --verify-tag
+          gh release upload "${{ github.ref_name }}" assets/*/* --repo "${{ github.repository }}" --clobber
 
   update-homebrew:
     name: Update Homebrew formula
-    needs: release
+    needs: publish
     runs-on: ubuntu-latest
     steps:
       - name: Update formula

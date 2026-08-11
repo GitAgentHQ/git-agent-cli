@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-11
+
+### Fixed
+- Fix the release workflow matrix race: five parallel build jobs each tried to create and finalize the same GitHub release via `softprops/action-gh-release`, failing with `already_exists` errors that left the v0.11.0 release missing half its assets. Builds now upload artifacts in parallel and a single publish job creates the release and uploads all assets (ci)
+
 ## [0.11.0] - 2026-08-11
 
 ### Added
@@ -306,7 +311,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.9.0...v0.10.0
