@@ -1404,7 +1404,7 @@ func TestCommitService_TimeoutPropagatesWhenOptedOut(t *testing.T) {
 	}
 }
 
-func TestCommitService_AutoGitignore_WhenMissing(t *testing.T) {
+func TestCommitService_AutoGitignore_SkippedDuringExplicitCommit(t *testing.T) {
 	tmpDir := t.TempDir()
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{
@@ -1433,12 +1433,8 @@ func TestCommitService_AutoGitignore_WhenMissing(t *testing.T) {
 	}
 
 	gitignorePath := filepath.Join(tmpDir, ".gitignore")
-	data, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("expected .gitignore to be generated, got err: %v", err)
-	}
-	if !strings.Contains(string(data), "*.exe") {
-		t.Errorf("expected .gitignore to contain generated content, got:\n%s", string(data))
+	if _, err := os.Stat(gitignorePath); !os.IsNotExist(err) {
+		t.Fatalf("expected .gitignore NOT to be generated during explicit Commit, but file exists")
 	}
 }
 
@@ -1481,5 +1477,41 @@ func TestCommitService_AutoGitignore_WhenExists(t *testing.T) {
 	}
 	if string(data) != "custom-rule\n" {
 		t.Errorf("expected existing .gitignore to be untouched, got:\n%s", string(data))
+	}
+}
+
+func TestCommitService_AutoScope_InMemoryOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		repoRoot:        tmpDir,
+		stagedDiff:      &diff.StagedDiff{Files: []string{"main.go"}, Content: "diff --git a/main.go b/main.go\n+func main(){}\n"},
+		allChangedFiles: []string{"main.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"main.go"}}}}}
+	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cli"}, {Name: "app"}}}
+	mockGit := &mockGitReader{commits: []string{"feat: init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
+	scopeSvc := application.NewScopeService(llm, mockGit)
+
+	svc := application.NewCommitService(gen, planner, git, noopHook(), scopeSvc, nil, nil, nil)
+
+	configPath := filepath.Join(tmpDir, ".git-agent", "config.yml")
+	req := application.CommitRequest{
+		ProjectConfigPath: configPath,
+		Config:            &project.Config{Scopes: nil},
+	}
+	_, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify scopes were set in memory on req.Config
+	if len(req.Config.Scopes) != 2 {
+		t.Errorf("expected 2 in-memory scopes on req.Config, got %d", len(req.Config.Scopes))
+	}
+
+	// Verify file was NOT written to disk during explicit commit
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Errorf("expected config file NOT to be created on disk during explicit commit")
 	}
 }
