@@ -148,11 +148,13 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
+	// Ensure graph.db is untracked before inspecting files or loading DB
+	_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
+
 	// 1. Autonomous check for .gitignore (create if missing, or update if missing mandatory rules)
 	gitignorePath := filepath.Join(root, ".gitignore")
 	existingGitignore, gitignoreErr := os.ReadFile(gitignorePath)
 	if os.IsNotExist(gitignoreErr) {
-		_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
 		toptalClient := infraGitignore.NewToptalClient()
 		gitignoreSvc := application.NewGitignoreService(
 			llmClient,
@@ -190,8 +192,14 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 
 	// 2. Autonomous check for Scope configuration (.git-agent/config.yml)
 	projCfgPath := infraConfig.ProjectConfigPath(root)
-	existingScopes := application.ReadScopes(projCfgPath)
-	if hasUncoveredDirs(allFiles, existingScopes) {
+	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
+	var mergedScopes []domainProject.Scope
+	if projCfg != nil {
+		mergedScopes = projCfg.Scopes
+	}
+
+	if hasUncoveredDirs(allFiles, mergedScopes) {
+		existingScopes := application.ReadScopes(projCfgPath)
 		scopeSvc := application.NewScopeService(llmClient, gitClient)
 		scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
 		if err != nil {
@@ -234,20 +242,13 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	return runCommit(cmd, args)
 }
 
-func dirInitials(dir string) string {
-	parts := strings.FieldsFunc(dir, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
-	if len(parts) <= 1 {
-		return ""
-	}
-	var b strings.Builder
-	for _, p := range parts {
-		if len(p) > 0 {
-			b.WriteByte(p[0])
-		}
-	}
-	return b.String()
+var stdDirAbbrevs = map[string]string{
+	"application":    "app",
+	"infrastructure": "infra",
+	"cmd":            "cli",
+	"command":        "cli",
+	"documentation":  "docs",
+	"test":           "tests",
 }
 
 func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
@@ -264,11 +265,11 @@ func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 			continue
 		}
 		covered := false
-		initials := dirInitials(topDir)
+		abbrev := stdDirAbbrevs[topDir]
 		for _, s := range scopes {
 			name := strings.ToLower(s.Name)
 			desc := strings.ToLower(s.Description)
-			if name == topDir || (initials != "" && name == initials) || strings.Contains(desc, topDir) {
+			if name == topDir || (abbrev != "" && name == abbrev) || strings.Contains(desc, topDir+"/") || strings.Contains(desc, topDir+" ") || desc == topDir {
 				covered = true
 				break
 			}

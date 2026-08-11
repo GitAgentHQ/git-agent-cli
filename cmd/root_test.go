@@ -56,8 +56,8 @@ func TestProviderConfigError_DirectRequiresBaseURLAndModel(t *testing.T) {
 
 func TestHasUncoveredDirs(t *testing.T) {
 	existingScopes := []project.Scope{
-		{Name: "git", Description: "git package"},
-		{Name: "pi", Description: "pi agent package"},
+		{Name: "git", Description: "git package in git/"},
+		{Name: "pi", Description: "pi agent package in pi/"},
 	}
 
 	// 1. Files in git-agent directory should be detected as UNCOVERED when scope is git
@@ -72,9 +72,9 @@ func TestHasUncoveredDirs(t *testing.T) {
 		t.Errorf("expected git/ files to be covered by existing git scope")
 	}
 
-	// 3. Files in hyphenated directory matching scope initials should be COVERED
-	scopesWithGA := append(existingScopes, project.Scope{Name: "ga", Description: "git-agent plugin"})
+	// 3. Files in directory with matching scope description should be COVERED
+	scopesWithGA := append(existingScopes, project.Scope{Name: "ga", Description: "git-agent/ plugin"})
 	if cmd.HasUncoveredDirsForTest(files, scopesWithGA) {
-		t.Errorf("expected git-agent/ files to be covered when scope 'ga' is present")
+		t.Errorf("expected git-agent/ files to be covered when scope description references git-agent/")
 	}
 }
