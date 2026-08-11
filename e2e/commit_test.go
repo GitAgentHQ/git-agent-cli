@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -622,5 +623,74 @@ func TestStatusCmd_NotIndexedOnFreshRepo(t *testing.T) {
 	}
 	if !strings.Contains(out, `"commit_count": 0`) {
 		t.Errorf("expected commit_count 0 on a fresh repo, got: %s", out)
+	}
+}
+
+// TestCommitCmd_AutoInitScopeAndGitignore verifies that running commit in a fresh
+// repo with no .gitignore and no .git-agent/config.yml actively discovers and
+// initializes both scope and gitignore.
+func TestCommitCmd_AutoInitScopeAndGitignore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		bodyStr := string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		var respContent string
+		if strings.Contains(bodyStr, "technologies are used") || strings.Contains(bodyStr, "Toptal") {
+			respContent = `{"technologies":["go"]}`
+		} else if strings.Contains(bodyStr, "Derive commit scopes") {
+			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
+		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
+			respContent = `{"groups":[{"files":["main.go"],"message":{"title":"feat(cli): initial commit"}}]}`
+		} else {
+			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
+		}
+		resp := fmt.Sprintf(`{"id":"chatcmpl-auto","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%q}}]}`, respContent)
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main() {}\n")
+
+	gitInRepo := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	gitInRepo("add", "main.go")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "test-model",
+		"--no-attribution",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+		t.Errorf("expected .gitignore to be auto-generated during commit")
+	}
+
+	configPath := filepath.Join(dir, ".git-agent", "config.yml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Errorf("expected .git-agent/config.yml to be auto-generated during commit: %v", err)
+	} else if !strings.Contains(string(configData), "cli") {
+		t.Errorf("expected generated scope 'cli' in config.yml, got:\n%s", string(configData))
 	}
 }
