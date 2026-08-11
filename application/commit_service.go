@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -87,6 +89,7 @@ type CommitService struct {
 	git              CommitGitClient
 	hookExec         hook.HookExecutor
 	scopeSvc         *ScopeService           // nil = no auto-scope
+	gitignoreSvc     *GitignoreService       // nil = no auto-gitignore
 	filter           diff.DiffFilter         // nil = no filtering
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
@@ -182,6 +185,11 @@ func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
 	s.coChange = provider
 }
 
+// SetGitignoreService sets an optional gitignore service for auto-gitignore generation during commit.
+func (s *CommitService) SetGitignoreService(svc *GitignoreService) {
+	s.gitignoreSvc = svc
+}
+
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
 	if req.Verbose && req.LogWriter != nil {
 		fmt.Fprintf(req.LogWriter, format+"\n", args...)
@@ -235,6 +243,28 @@ func truncationLimitDesc(maxLines, maxBytes int) string {
 func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *CommitResult, retErr error) {
 	if req.Amend {
 		return s.commitAmend(ctx, req)
+	}
+
+	// Ensure req.Config is non-nil up front so auto-scope and auto-gitignore can run
+	if req.Config == nil {
+		req.Config = &project.Config{}
+	}
+
+	// Auto-gitignore when .gitignore does not exist in repo root
+	if s.gitignoreSvc != nil {
+		root, err := s.git.RepoRoot(ctx)
+		if err == nil {
+			gitignorePath := filepath.Join(root, ".gitignore")
+			if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+				s.out(req, "Generating .gitignore...")
+				techs, err := s.gitignoreSvc.Generate(ctx, GitignoreRequest{})
+				if err != nil {
+					s.out(req, "Warning: failed to generate .gitignore, continuing without .gitignore (%v)", err)
+				} else {
+					s.vlog(req, ".gitignore generated: %v", strings.Join(techs, ", "))
+				}
+			}
+		}
 	}
 
 	var staged, unstaged *diff.StagedDiff

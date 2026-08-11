@@ -48,10 +48,17 @@ Feature: Multi-Commit Service
     Then both paths are placed in the same commit group
     And exactly one commit records the move as a rename
 
-  Scenario: Auto-scope when project.yml is missing
-    Given no project.yml exists
+  Scenario: Auto-scope when project config has no scopes
+    Given project config has no scopes
     And a ScopeService is configured
-    When CommitService.Commit is called with Config=nil
+    When CommitService.Commit is called
     Then ScopeService.Generate is called
-    And the generated scopes are written to .git-agent/project.yml
+    And the generated scopes are written to .git-agent/config.yml
     And the scopes are used for commit message generation
+
+  Scenario: Auto-gitignore when .gitignore is missing
+    Given no .gitignore file exists in the repository
+    And a GitignoreService is configured
+    When CommitService.Commit is called
+    Then GitignoreService.Generate is called
+    And a .gitignore file is written to the repository root

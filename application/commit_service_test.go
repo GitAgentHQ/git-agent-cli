@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +45,7 @@ func (m *mockCommitPlanner) Plan(_ context.Context, req commit.PlanRequest) (*co
 }
 
 type mockCommitGitClient struct {
+	repoRoot              string
 	stagedDiff            *diff.StagedDiff
 	stagedDiffSeq         []*diff.StagedDiff // if set, returned in order; falls back to stagedDiff
 	stagedErr             error
@@ -139,6 +142,9 @@ func (m *mockCommitGitClient) FormatTrailers(_ context.Context, message string, 
 }
 
 func (m *mockCommitGitClient) RepoRoot(_ context.Context) (string, error) {
+	if m.repoRoot != "" {
+		return m.repoRoot, nil
+	}
 	return ".", nil
 }
 
@@ -1395,5 +1401,85 @@ func TestCommitService_TimeoutPropagatesWhenOptedOut(t *testing.T) {
 	}
 	if !errors.Is(err, commit.ErrPlannerTimedOut) {
 		t.Errorf("expected wrapped ErrPlannerTimedOut, got: %v", err)
+	}
+}
+
+func TestCommitService_AutoGitignore_WhenMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		repoRoot:        tmpDir,
+		stagedDiff:      &diff.StagedDiff{Files: []string{"main.go"}, Content: "diff --git a/main.go b/main.go\n+func main(){}\n"},
+		allChangedFiles: []string{"main.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"main.go"}}}}}
+
+	detector := &mockTechDetector{techs: []string{"go"}}
+	generator := &mockContentGenerator{content: "*.exe\n.git-agent/graph.db\n"}
+	mockGit := &mockGitReader{
+		repoRoot: tmpDir,
+	}
+	gitignoreSvc := application.NewGitignoreService(detector, generator, mockGit)
+
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+	svc.SetGitignoreService(gitignoreSvc)
+
+	req := application.CommitRequest{
+		Config: &project.Config{Scopes: []project.Scope{{Name: "cli"}}},
+	}
+	_, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gitignorePath := filepath.Join(tmpDir, ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("expected .gitignore to be generated, got err: %v", err)
+	}
+	if !strings.Contains(string(data), "*.exe") {
+		t.Errorf("expected .gitignore to contain generated content, got:\n%s", string(data))
+	}
+}
+
+func TestCommitService_AutoGitignore_WhenExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitignorePath := filepath.Join(tmpDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte("custom-rule\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		repoRoot:        tmpDir,
+		stagedDiff:      &diff.StagedDiff{Files: []string{"main.go"}, Content: "diff --git a/main.go b/main.go\n+func main(){}\n"},
+		allChangedFiles: []string{"main.go"},
+	}
+	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"main.go"}}}}}
+
+	detector := &mockTechDetector{techs: []string{"go"}}
+	generator := &mockContentGenerator{content: "*.exe\n"}
+	mockGit := &mockGitReader{
+		repoRoot: tmpDir,
+	}
+	gitignoreSvc := application.NewGitignoreService(detector, generator, mockGit)
+
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+	svc.SetGitignoreService(gitignoreSvc)
+
+	req := application.CommitRequest{
+		Config: &project.Config{Scopes: []project.Scope{{Name: "cli"}}},
+	}
+	_, err := svc.Commit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "custom-rule\n" {
+		t.Errorf("expected existing .gitignore to be untouched, got:\n%s", string(data))
 	}
 }
