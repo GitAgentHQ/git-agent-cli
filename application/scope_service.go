@@ -72,7 +72,7 @@ func filterConventionalTypes(scopes []project.Scope) []project.Scope {
 	return result
 }
 
-func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []project.Scope) error {
+func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes []project.Scope) ([]project.Scope, error) {
 	// Read full YAML map to preserve all existing keys (e.g., hook).
 	rawMap := readExistingYAMLMap(path)
 
@@ -81,18 +81,27 @@ func (s *ScopeService) MergeAndSave(ctx context.Context, path string, newScopes 
 		existingScopes = parseScopesFromYAML(v)
 	}
 
-	rawMap["scopes"] = mergeScopes(existingScopes, newScopes)
+	merged, added := mergeScopes(existingScopes, newScopes)
+	if len(added) == 0 {
+		return nil, nil
+	}
+
+	rawMap["scopes"] = merged
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
+		return nil, fmt.Errorf("creating config dir: %w", err)
 	}
 
 	data, err := yaml.Marshal(rawMap)
 	if err != nil {
-		return fmt.Errorf("marshalling yaml: %w", err)
+		return nil, fmt.Errorf("marshalling yaml: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return nil, err
+	}
+
+	return added, nil
 }
 
 // parseScopesFromYAML handles both legacy string format and new structured format.
@@ -134,13 +143,14 @@ func readExistingYAMLMap(path string) map[string]any {
 	return m
 }
 
-func mergeScopes(existing, newScopes []project.Scope) []project.Scope {
+func mergeScopes(existing, newScopes []project.Scope) ([]project.Scope, []project.Scope) {
 	seen := make(map[string]int, len(existing))
 	for i, s := range existing {
 		seen[strings.ToLower(s.Name)] = i
 	}
 	result := make([]project.Scope, len(existing))
 	copy(result, existing)
+	var added []project.Scope
 	for _, s := range newScopes {
 		key := strings.ToLower(s.Name)
 		if idx, ok := seen[key]; ok {
@@ -151,7 +161,8 @@ func mergeScopes(existing, newScopes []project.Scope) []project.Scope {
 		} else {
 			result = append(result, s)
 			seen[key] = len(result) - 1
+			added = append(added, s)
 		}
 	}
-	return result
+	return result, added
 }

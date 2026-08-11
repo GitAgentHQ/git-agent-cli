@@ -63,7 +63,7 @@ func TestScopeService_MergeAndSave_CreatesFile(t *testing.T) {
 	path := filepath.Join(dir, "project.yml")
 
 	svc := application.NewScopeService(nil, nil)
-	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
+	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -78,11 +78,11 @@ func TestScopeService_MergeAndSave_DeduplicatesScopes(t *testing.T) {
 
 	svc := application.NewScopeService(nil, nil)
 
-	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
+	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error on first write: %v", err)
 	}
 	// "app" is duplicate, "infra" is new
-	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "app"}, {Name: "infra"}}); err != nil {
+	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "app"}, {Name: "infra"}}); err != nil {
 		t.Fatalf("unexpected error on second write: %v", err)
 	}
 
@@ -109,10 +109,10 @@ func TestScopeService_MergeAndSave_CaseInsensitiveDedupe(t *testing.T) {
 
 	svc := application.NewScopeService(nil, nil)
 
-	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "CMD"}}); err != nil {
+	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "CMD"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}}); err != nil {
+	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}}); err != nil {
 		t.Fatalf("unexpected error on second write: %v", err)
 	}
 

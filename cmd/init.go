@@ -184,7 +184,7 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 			return err
 		}
 	} else {
-		if err := scopeSvc.MergeAndSave(cmd.Context(), configPath, scopes); err != nil {
+		if _, err := scopeSvc.MergeAndSave(cmd.Context(), configPath, scopes); err != nil {
 			return err
 		}
 	}

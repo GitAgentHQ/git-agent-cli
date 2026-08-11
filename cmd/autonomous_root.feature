@@ -20,6 +20,12 @@ Feature: Autonomous Root Command (bare git-agent)
     Then co-change provider is queried for related files
     And related context is output
 
+  Scenario: Bare git-agent evaluates diff and updates scopes when new modules are detected
+    Given a git repository with uncommitted changes and existing scopes
+    When git-agent is executed with no subcommands
+    Then ScopeService.Generate is called with existing scopes
+    And newly detected scopes are appended to project config on disk
+
   Scenario: Bare git-agent reports clean working tree when no changes exist
     Given a git repository with no changed files
     When git-agent is executed with no subcommands

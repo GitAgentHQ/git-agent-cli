@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gitagenthq/git-agent/application"
+	domainProject "github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
@@ -147,37 +148,63 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
-	// 1. Auto-init check for .gitignore
+	// 1. Autonomous check for .gitignore (create if missing, or update if new mandatory/tech rules found)
 	gitignorePath := filepath.Join(root, ".gitignore")
-	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-		_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
-		toptalClient := infraGitignore.NewToptalClient()
-		gitignoreSvc := application.NewGitignoreService(
-			llmClient,
-			toptalClient,
-			gitClient,
-		)
-		techs, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
-		} else if len(techs) > 0 {
+	gitignoreExisted := false
+	if _, err := os.Stat(gitignorePath); err == nil {
+		gitignoreExisted = true
+	}
+
+	_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
+	toptalClient := infraGitignore.NewToptalClient()
+	gitignoreSvc := application.NewGitignoreService(
+		llmClient,
+		toptalClient,
+		gitClient,
+	)
+	techs, gitignoreUpdated, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
+	} else if gitignoreUpdated {
+		if gitignoreExisted {
+			fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated .gitignore (%s)\n", strings.Join(techs, ", "))
+		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Generated .gitignore (%s)\n", strings.Join(techs, ", "))
+		}
+		// Refresh changed files in case newly ignored files were removed from staging
+		if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
+			allFiles = updatedFiles
+			if len(allFiles) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
+				return nil
+			}
 		}
 	}
 
-	// 2. Auto-init check for Scope configuration
+	// 2. Autonomous check for Scope configuration (.git-agent/config.yml)
 	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
-	if projCfg == nil || len(projCfg.Scopes) == 0 {
-		scopeSvc := application.NewScopeService(llmClient, gitClient)
-		scopes, err := scopeSvc.Generate(cmd.Context(), 200, nil)
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
-		} else if len(scopes) > 0 {
-			projCfgPath := infraConfig.ProjectConfigPath(root)
-			if err := scopeSvc.MergeAndSave(cmd.Context(), projCfgPath, scopes); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: save scopes failed: %v\n", err)
+	var existingScopes []domainProject.Scope
+	if projCfg != nil {
+		existingScopes = projCfg.Scopes
+	}
+
+	scopeSvc := application.NewScopeService(llmClient, gitClient)
+	scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
+	} else if len(scopes) > 0 {
+		projCfgPath := infraConfig.ProjectConfigPath(root)
+		if added, err := scopeSvc.MergeAndSave(cmd.Context(), projCfgPath, scopes); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: save scopes failed: %v\n", err)
+		} else if len(added) > 0 {
+			addedNames := make([]string, len(added))
+			for i, s := range added {
+				addedNames[i] = s.Name
+			}
+			if projCfg != nil && len(existingScopes) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated scopes in %s (added: %s)\n", projCfgPath, strings.Join(addedNames, ", "))
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Initialized scopes in %s\n", projCfgPath)
+				fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Initialized scopes in %s (%s)\n", projCfgPath, strings.Join(addedNames, ", "))
 			}
 		}
 	}
