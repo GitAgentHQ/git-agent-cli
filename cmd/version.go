@@ -8,7 +8,7 @@ import (
 	"github.com/gitagenthq/git-agent/pkg/output"
 )
 
-var buildVersion = "0.10.1"
+var buildVersion = "0.11.0"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
