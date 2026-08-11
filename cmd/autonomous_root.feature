@@ -18,7 +18,7 @@ Feature: Autonomous Root Command (bare git-agent)
     Given a git repository with modified files
     When git-agent is executed with no subcommands
     Then co-change provider is queried for related files
-    And related context is output
+    And related co-change context is provided to commit planner
 
   Scenario: Bare git-agent evaluates diff and updates scopes when new modules are detected
     Given a git repository with uncommitted changes and existing scopes
