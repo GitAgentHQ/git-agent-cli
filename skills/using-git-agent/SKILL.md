@@ -42,7 +42,7 @@ instructions never go stale.
 - **Auto-scope**: generates commit scopes from git history automatically
 - **Scope & `.gitignore` optimization**: regenerates scopes from latest history (`init --scope --force`) and re-derives `.gitignore` while preserving custom rules (`init --gitignore`)
 - **Hook validation**: conventional-commit validation built in; custom hooks via shell scripts
-- **Config precedence**: CLI flag > `git config --local` > `~/.config/git-agent/config.yml` > free shared-gateway default; `--free` forces the gateway and ignores the rest
+- **Config precedence**: CLI flag > Agent Session env (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`) > `git config --local` > `~/.config/git-agent/config.yml` > free shared-gateway default; `--free` forces the gateway and ignores the rest
 - **Structured output**: `-o json` on every read command for scripting
 
 ## Status check

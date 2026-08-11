@@ -261,18 +261,21 @@ rules (`.git-agent/graph.db`, `*.db-shm`/`*.db-wal`/`*.db-journal`,
 `.git-agent/config.local.yml`) are re-injected idempotently. No `--force`
 needed — the merge never clobbers custom rules.
 
-## Require model co-author
+## Require model co-author & Auto-Inference
 
-Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain. The default Git Agent attribution trailer alone does not satisfy this.
+Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain.
+
+### Automatic Model Co-Author Inference
+`git-agent` automatically derives the `Co-Authored-By` trailer directly from the active LLM session model ID (read from Agent Session environment variables like `PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, or the `--model` flag).
+- **Reasoning Tier & Date Suffixes** (`-high`, `-thinking`, `-non-reasoning`, `-20241022`) are automatically stripped.
+- **Model Variants** (`Flash`, `Max`, `Pro`, `Opus`, `Sonnet`) are preserved.
+- **Example**: `gemini-3.6-flash-high` $\rightarrow$ `Co-Authored-By: Gemini 3.6 Flash <noreply@google.com>`.
+
+**Note for Coding Agents**: Never hardcode `model:` in `~/.config/git-agent/config.yml`. `git-agent` prioritizes live Agent Session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`) over static YAML configuration.
 
 Built-in domains (no `model_co_author_domains` config needed): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Only custom / lesser-known providers need `model_co_author_domains:`.
 
-When the flag is on, callers **must** pass `--co-author "Model Name <email@domain>"` explicitly. `git-agent` validates this at the CLI layer before invoking the LLM and exits with code `1` and a clear hint if the flag is missing — the model itself is never relied on to produce the trailer (it gets the casing or placement wrong). Examples:
-
-```
-git-agent commit --co-author "Claude Opus 4.7 <noreply@anthropic.com>"
-git-agent commit --co-author "Grok 4.5 <noreply@x.ai>"
-```
+Manual `--co-author "Name <email@domain>"` flags remain available for custom human or secondary co-author attributions, but are no longer required for active model attribution even when `require_model_co_author: true` is set.
 
 ## Hook failures
 
