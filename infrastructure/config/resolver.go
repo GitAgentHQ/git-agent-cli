@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -99,16 +100,19 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.BaseURL = BuildBaseURL
 	}
 
+	// Model resolution precedence:
+	// 1. CLI flag (--model)
+	// 2. Active agent session environment variables (pi, Claude Code, Codex, generic)
+	// 3. git config --local git-agent.model
+	// 4. YAML config file (~/.config/git-agent/config.yml)
 	if flags.Model != "" {
 		result.Model = flags.Model
+	} else if sessionModel := getSessionModelEnv(); sessionModel != "" {
+		result.Model = sessionModel
 	} else if gitModel != "" {
 		result.Model = gitModel
 	} else if file.Model != "" {
 		result.Model = file.Model
-	} else if piModel := os.Getenv("PI_MODEL"); piModel != "" {
-		result.Model = piModel
-	} else if envModel := os.Getenv("MODEL"); envModel != "" {
-		result.Model = envModel
 	}
 	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
 
@@ -139,6 +143,26 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
 
 	return result, nil
+}
+
+// getSessionModelEnv checks active AI agent session environment variables
+// in priority order: pi > Claude Code / Anthropic > Codex / OpenAI > generic MODEL.
+func getSessionModelEnv() string {
+	envs := []string{
+		"PI_MODEL",
+		"CLAUDE_CODE_MODEL",
+		"CLAUDE_MODEL",
+		"ANTHROPIC_MODEL",
+		"CODEX_MODEL",
+		"OPENAI_MODEL",
+		"MODEL",
+	}
+	for _, env := range envs {
+		if val := strings.TrimSpace(os.Getenv(env)); val != "" {
+			return val
+		}
+	}
+	return ""
 }
 
 // resolveDuration applies the precedence chain flag > file YAML > default,

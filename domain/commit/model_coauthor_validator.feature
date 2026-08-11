@@ -118,14 +118,16 @@ Feature: Model Co-Authored-By trailer enforcement
 
     Examples:
       | model_id                    | expected_coauthor                          |
-      | gemini-3.6-flash-high       | Gemini 3.6 Flash High <noreply@google.com> |
+      | gemini-3.6-flash-high       | Gemini 3.6 Flash <noreply@google.com>      |
       | opencode/deepseek-v4-pro    | DeepSeek V4 Pro <noreply@deepseek.com>     |
       | claude-3-5-sonnet-20241022  | Claude 3.5 Sonnet <noreply@anthropic.com>  |
+      | claude-opus-4-6-thinking    | Claude Opus 4.6 <noreply@anthropic.com>    |
       | gpt-5.6-luna                | GPT 5.6 Luna <noreply@openai.com>          |
       | bailian/qwen3.8-max         | Qwen 3.8 Max <noreply@qwen.ai>             |
       | ark/glm-5-2                 | GLM 5.2 <noreply@zhipuai.cn>               |
       | kimi-k3                     | Kimi K3 <noreply@moonshot.ai>              |
       | grok-4.5                    | Grok 4.5 <noreply@x.ai>                    |
+      | grok-4.20-0309-non-reasoning| Grok 4.20 <noreply@x.ai>                   |
 
   # --- error: missing model trailer ---
 

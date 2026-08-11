@@ -369,18 +369,34 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 		return Trailer{}, false
 	}
 
+	// Strip trailing date or tier/reasoning components
+	for {
+		changed := false
+		lowerClean := strings.ToLower(cleaned)
+		for _, suffix := range []string{"-non-reasoning", "-reasoning", "-thinking", "-high", "-medium", "-low", "-minimal", "-xhigh"} {
+			if strings.HasSuffix(lowerClean, suffix) {
+				cleaned = cleaned[:len(cleaned)-len(suffix)]
+				changed = true
+				break
+			}
+		}
+		if changed {
+			continue
+		}
+		if idx := strings.LastIndex(cleaned, "-"); idx != -1 {
+			datePart := cleaned[idx+1:]
+			if (len(datePart) == 8 || len(datePart) == 4) && isDigits(datePart) {
+				cleaned = cleaned[:idx]
+				continue
+			}
+		}
+		break
+	}
+
 	// Format human-readable title from cleaned model ID.
 	parts := strings.FieldsFunc(cleaned, func(r rune) bool {
 		return r == '-' || r == '_'
 	})
-
-	// Strip trailing date component if 8 digits (YYYYMMDD) or 4 digits (MMDD) at end of model ID
-	if len(parts) > 1 {
-		last := parts[len(parts)-1]
-		if (len(last) == 8 || len(last) == 4) && isDigits(last) {
-			parts = parts[:len(parts)-1]
-		}
-	}
 
 	for i, p := range parts {
 		pLower := strings.ToLower(p)
@@ -426,6 +442,15 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+func isTierSuffix(s string) bool {
+	switch s {
+	case "high", "medium", "low", "minimal", "xhigh", "max", "lite", "extra", "thinking", "reasoning", "non-reasoning":
+		return true
+	default:
+		return false
+	}
 }
 
 func capitalize(s string) string {

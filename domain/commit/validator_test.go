@@ -589,7 +589,7 @@ func TestInferModelCoAuthor(t *testing.T) {
 		{
 			modelID: "gemini-3.6-flash-high",
 			wantKey: "Co-Authored-By",
-			wantVal: "Gemini 3.6 Flash High <noreply@google.com>",
+			wantVal: "Gemini 3.6 Flash <noreply@google.com>",
 			wantOk:  true,
 		},
 		{
@@ -602,6 +602,12 @@ func TestInferModelCoAuthor(t *testing.T) {
 			modelID: "claude-3-5-sonnet-20241022",
 			wantKey: "Co-Authored-By",
 			wantVal: "Claude 3.5 Sonnet <noreply@anthropic.com>",
+			wantOk:  true,
+		},
+		{
+			modelID: "claude-opus-4-6-thinking",
+			wantKey: "Co-Authored-By",
+			wantVal: "Claude Opus 4.6 <noreply@anthropic.com>",
 			wantOk:  true,
 		},
 		{
@@ -632,6 +638,12 @@ func TestInferModelCoAuthor(t *testing.T) {
 			modelID: "grok-4.5",
 			wantKey: "Co-Authored-By",
 			wantVal: "Grok 4.5 <noreply@x.ai>",
+			wantOk:  true,
+		},
+		{
+			modelID: "grok-4.20-0309-non-reasoning",
+			wantKey: "Co-Authored-By",
+			wantVal: "Grok 4.20 <noreply@x.ai>",
 			wantOk:  true,
 		},
 		{
