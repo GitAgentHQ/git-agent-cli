@@ -335,23 +335,22 @@ func containsDomain(normalized []string, want string) bool {
 type ModelProviderInfo struct {
 	MatchKeyword string // Substring to identify provider (e.g. "gemini", "claude", "deepseek")
 	Domain       string // Canonical email domain (e.g. "google.com")
-	BrandTitle   string // Canonical brand name formatting (e.g. "Gemini", "Claude", "DeepSeek")
 }
 
 // knownProviders is the table-driven registry of recognized AI model providers used for co-author inference.
 var knownProviders = []ModelProviderInfo{
-	{MatchKeyword: "gemini", Domain: "google.com", BrandTitle: "Gemini"},
-	{MatchKeyword: "claude", Domain: "anthropic.com", BrandTitle: "Claude"},
-	{MatchKeyword: "gpt", Domain: "openai.com", BrandTitle: "GPT"},
-	{MatchKeyword: "codex", Domain: "openai.com", BrandTitle: "Codex"},
-	{MatchKeyword: "o1", Domain: "openai.com", BrandTitle: "O1"},
-	{MatchKeyword: "o3", Domain: "openai.com", BrandTitle: "O3"},
-	{MatchKeyword: "deepseek", Domain: "deepseek.com", BrandTitle: "DeepSeek"},
-	{MatchKeyword: "qwen", Domain: "qwen.ai", BrandTitle: "Qwen"},
-	{MatchKeyword: "glm", Domain: "zhipuai.cn", BrandTitle: "GLM"},
-	{MatchKeyword: "kimi", Domain: "moonshot.ai", BrandTitle: "Kimi"},
-	{MatchKeyword: "moonshot", Domain: "moonshot.ai", BrandTitle: "Moonshot"},
-	{MatchKeyword: "grok", Domain: "x.ai", BrandTitle: "Grok"},
+	{MatchKeyword: "gemini", Domain: "google.com"},
+	{MatchKeyword: "claude", Domain: "anthropic.com"},
+	{MatchKeyword: "gpt", Domain: "openai.com"},
+	{MatchKeyword: "codex", Domain: "openai.com"},
+	{MatchKeyword: "o1", Domain: "openai.com"},
+	{MatchKeyword: "o3", Domain: "openai.com"},
+	{MatchKeyword: "deepseek", Domain: "deepseek.com"},
+	{MatchKeyword: "qwen", Domain: "qwen.ai"},
+	{MatchKeyword: "glm", Domain: "zhipuai.cn"},
+	{MatchKeyword: "kimi", Domain: "moonshot.ai"},
+	{MatchKeyword: "moonshot", Domain: "moonshot.ai"},
+	{MatchKeyword: "grok", Domain: "x.ai"},
 }
 
 // ignoredTierSuffixes is an ordered table of routing, reasoning, and tier suffixes to strip.

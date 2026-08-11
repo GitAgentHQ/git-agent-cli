@@ -415,15 +415,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			if err != nil {
 				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
 			} else {
-				configPath := req.ProjectConfigPath
-				if configPath == "" {
-					configPath = ".git-agent/project.yml"
-				}
-				if err := s.scopeSvc.MergeAndSave(ctx, configPath, newScopes); err != nil {
-					s.vlog(req, "save scopes (non-fatal): %v", err)
-				}
 				req.Config.Scopes = newScopes
-				s.out(req, "Scopes updated: %v, re-planning...", req.Config.ScopeNames())
+				s.out(req, "Scopes updated (in-memory): %v, re-planning...", req.Config.ScopeNames())
 				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
 					StagedDiff:    staged,
 					UnstagedDiff:  unstaged,

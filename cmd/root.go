@@ -129,6 +129,14 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
+	if amend, _ := cmd.Flags().GetBool("amend"); amend {
+		return runCommit(cmd, args)
+	}
+
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		return runCommit(cmd, args)
+	}
+
 	// 1. Auto-init check for .gitignore
 	gitignorePath := filepath.Join(root, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
@@ -211,6 +219,7 @@ func init() {
 	_ = rootCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
 	rootCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	rootCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
+	rootCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
 	rootCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
 	rootCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
 	rootCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
