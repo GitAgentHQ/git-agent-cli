@@ -578,3 +578,81 @@ func TestValidateConventional_ScopeWhitelist(t *testing.T) {
 		})
 	}
 }
+
+func TestInferModelCoAuthor(t *testing.T) {
+	cases := []struct {
+		modelID string
+		wantKey string
+		wantVal string
+		wantOk  bool
+	}{
+		{
+			modelID: "gemini-3.6-flash-high",
+			wantKey: "Co-Authored-By",
+			wantVal: "Gemini 3.6 Flash High <noreply@google.com>",
+			wantOk:  true,
+		},
+		{
+			modelID: "opencode/deepseek-v4-pro",
+			wantKey: "Co-Authored-By",
+			wantVal: "DeepSeek V4 Pro <noreply@deepseek.com>",
+			wantOk:  true,
+		},
+		{
+			modelID: "claude-3-5-sonnet-20241022",
+			wantKey: "Co-Authored-By",
+			wantVal: "Claude 3.5 Sonnet <noreply@anthropic.com>",
+			wantOk:  true,
+		},
+		{
+			modelID: "gpt-5.6-luna",
+			wantKey: "Co-Authored-By",
+			wantVal: "GPT 5.6 Luna <noreply@openai.com>",
+			wantOk:  true,
+		},
+		{
+			modelID: "bailian/qwen3.8-max",
+			wantKey: "Co-Authored-By",
+			wantVal: "Qwen 3.8 Max <noreply@qwen.ai>",
+			wantOk:  true,
+		},
+		{
+			modelID: "ark/glm-5-2",
+			wantKey: "Co-Authored-By",
+			wantVal: "GLM 5.2 <noreply@zhipuai.cn>",
+			wantOk:  true,
+		},
+		{
+			modelID: "kimi-k3",
+			wantKey: "Co-Authored-By",
+			wantVal: "Kimi K3 <noreply@moonshot.ai>",
+			wantOk:  true,
+		},
+		{
+			modelID: "grok-4.5",
+			wantKey: "Co-Authored-By",
+			wantVal: "Grok 4.5 <noreply@x.ai>",
+			wantOk:  true,
+		},
+		{
+			modelID: "unknown-custom-model",
+			wantOk:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.modelID, func(t *testing.T) {
+			got, ok := commit.InferModelCoAuthor(tc.modelID)
+			if ok != tc.wantOk {
+				t.Fatalf("InferModelCoAuthor(%q) ok = %v, want %v", tc.modelID, ok, tc.wantOk)
+			}
+			if ok {
+				if got.Key != tc.wantKey || got.Value != tc.wantVal {
+					t.Errorf("InferModelCoAuthor(%q) = {%q, %q}, want {%q, %q}",
+						tc.modelID, got.Key, got.Value, tc.wantKey, tc.wantVal)
+				}
+			}
+		})
+	}
+}

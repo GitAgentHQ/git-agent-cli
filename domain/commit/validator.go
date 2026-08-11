@@ -331,6 +331,110 @@ func containsDomain(normalized []string, want string) bool {
 	return false
 }
 
+// InferModelCoAuthor infers a Co-Authored-By trailer from a model ID string.
+// Returns (Trailer{}, false) if the model ID cannot be matched to a known provider domain.
+func InferModelCoAuthor(modelID string) (Trailer, bool) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return Trailer{}, false
+	}
+
+	// Strip provider routing prefixes (e.g. "opencode/", "bailian/", "ark/", "loli/")
+	cleaned := modelID
+	if idx := strings.LastIndex(cleaned, "/"); idx != -1 {
+		cleaned = cleaned[idx+1:]
+	}
+
+	lower := strings.ToLower(cleaned)
+	var domain string
+
+	switch {
+	case strings.Contains(lower, "gemini"):
+		domain = "google.com"
+	case strings.Contains(lower, "claude"):
+		domain = "anthropic.com"
+	case strings.HasPrefix(lower, "gpt") || strings.HasPrefix(lower, "codex") || strings.HasPrefix(lower, "o1") || strings.HasPrefix(lower, "o3"):
+		domain = "openai.com"
+	case strings.Contains(lower, "deepseek"):
+		domain = "deepseek.com"
+	case strings.Contains(lower, "qwen"):
+		domain = "qwen.ai"
+	case strings.Contains(lower, "glm"):
+		domain = "zhipuai.cn"
+	case strings.Contains(lower, "kimi") || strings.HasPrefix(lower, "moonshot"):
+		domain = "moonshot.ai"
+	case strings.Contains(lower, "grok"):
+		domain = "x.ai"
+	default:
+		return Trailer{}, false
+	}
+
+	// Format human-readable title from cleaned model ID.
+	parts := strings.FieldsFunc(cleaned, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+
+	// Strip trailing date component if 8 digits (YYYYMMDD) or 4 digits (MMDD) at end of model ID
+	if len(parts) > 1 {
+		last := parts[len(parts)-1]
+		if (len(last) == 8 || len(last) == 4) && isDigits(last) {
+			parts = parts[:len(parts)-1]
+		}
+	}
+
+	for i, p := range parts {
+		pLower := strings.ToLower(p)
+		switch {
+		case pLower == "gpt":
+			parts[i] = "GPT"
+		case pLower == "glm":
+			parts[i] = "GLM"
+		case pLower == "ai":
+			parts[i] = "AI"
+		case pLower == "deepseek":
+			parts[i] = "DeepSeek"
+		case strings.HasPrefix(pLower, "qwen") && len(pLower) > 4:
+			parts[i] = "Qwen " + pLower[4:]
+		case len(pLower) >= 2 && pLower[0] == 'v' && isDigits(pLower[1:]):
+			parts[i] = "V" + pLower[1:]
+		default:
+			parts[i] = capitalize(p)
+		}
+	}
+
+	// Join adjacent numbers with '.' if model ID used '-' between version digits (e.g. claude-3-5 -> Claude 3.5)
+	var mergedParts []string
+	for i := 0; i < len(parts); i++ {
+		if i > 0 && isDigits(parts[i-1]) && isDigits(parts[i]) {
+			mergedParts[len(mergedParts)-1] = mergedParts[len(mergedParts)-1] + "." + parts[i]
+		} else {
+			mergedParts = append(mergedParts, parts[i])
+		}
+	}
+
+	title := strings.Join(mergedParts, " ")
+	return Trailer{
+		Key:   "Co-Authored-By",
+		Value: fmt.Sprintf("%s <noreply@%s>", title, domain),
+	}, true
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // extractEmailDomain returns the lowercased domain from the last <...@...>
 // pair on the line. Callers should pre-validate format with coAuthorRe.
 func extractEmailDomain(line string) string {

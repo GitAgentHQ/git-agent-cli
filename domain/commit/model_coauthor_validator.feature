@@ -108,6 +108,25 @@ Feature: Model Co-Authored-By trailer enforcement
       | DeepSeek V3 | deepseek.com |
       | Kimi K2     | moonshot.ai |
 
+  # --- model co-author inference ---
+
+  Scenario Outline: Infer model co-author trailer from model ID
+    Given a model ID "<model_id>"
+    When InferModelCoAuthor is called
+    Then the inferred co-author key is "Co-Authored-By"
+    And the inferred co-author value is "<expected_coauthor>"
+
+    Examples:
+      | model_id                    | expected_coauthor                          |
+      | gemini-3.6-flash-high       | Gemini 3.6 Flash High <noreply@google.com> |
+      | opencode/deepseek-v4-pro    | DeepSeek V4 Pro <noreply@deepseek.com>     |
+      | claude-3-5-sonnet-20241022  | Claude 3.5 Sonnet <noreply@anthropic.com>  |
+      | gpt-5.6-luna                | GPT 5.6 Luna <noreply@openai.com>          |
+      | bailian/qwen3.8-max         | Qwen 3.8 Max <noreply@qwen.ai>             |
+      | ark/glm-5-2                 | GLM 5.2 <noreply@zhipuai.cn>               |
+      | kimi-k3                     | Kimi K3 <noreply@moonshot.ai>              |
+      | grok-4.5                    | Grok 4.5 <noreply@x.ai>                    |
+
   # --- error: missing model trailer ---
 
   Scenario: Only Git Agent trailer is not sufficient
