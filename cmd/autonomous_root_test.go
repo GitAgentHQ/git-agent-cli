@@ -61,3 +61,25 @@ func TestAutonomousRoot_CleanRepo(t *testing.T) {
 		t.Fatalf("unexpected error running bare git-agent on clean repo: %v", err)
 	}
 }
+
+func TestAutonomousRoot_DryRun_CleanRepo(t *testing.T) {
+	cmd.ResetRootFlags()
+	defer cmd.ResetRootFlags()
+	dir := setupTestGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "initial commit")
+
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmd.ExecuteArgs([]string{"--dry-run", "--base-url", "http://localhost:8080", "--api-key", "test-key", "--model", "gpt-4o"})
+	if err != nil {
+		t.Fatalf("expected git-agent --dry-run on clean repo to exit 0, got: %v", err)
+	}
+}

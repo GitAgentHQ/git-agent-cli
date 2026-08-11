@@ -122,20 +122,30 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
+	if amend, _ := cmd.Flags().GetBool("amend"); amend {
+		return runCommit(cmd, args)
+	}
+
+	allFiles, err := gitClient.AllChangedFiles(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("listing changed files: %w", err)
+	}
+
+	if len(allFiles) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] No changes detected. Repository working tree is clean.")
+		return nil
+	}
+
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		return runCommit(cmd, args)
+	}
+
 	llmClient := infraOpenAI.NewClient(
 		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
 		cmd.OutOrStdout(),
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
-
-	if amend, _ := cmd.Flags().GetBool("amend"); amend {
-		return runCommit(cmd, args)
-	}
-
-	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-		return runCommit(cmd, args)
-	}
 
 	// 1. Auto-init check for .gitignore
 	gitignorePath := filepath.Join(root, ".gitignore")
@@ -173,16 +183,6 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// 3. Changed files & Co-change analysis
-	allFiles, err := gitClient.AllChangedFiles(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("listing changed files: %w", err)
-	}
-
-	if len(allFiles) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] No changes detected. Repository working tree is clean.")
-		return nil
-	}
-
 	// Query co-change context for modified files
 	graphDBPath := infraGraph.DBPath(root)
 	if _, statErr := os.Stat(graphDBPath); statErr == nil {
