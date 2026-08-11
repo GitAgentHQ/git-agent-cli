@@ -124,6 +124,18 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
 	}
+
+	// Auto-infer model Co-Authored-By from active Model ID if not explicitly supplied
+	domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
+	if projCfg != nil {
+		domains = append(domains, projCfg.ModelCoAuthorDomains...)
+	}
+	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && providerCfg.Model != "" {
+		if inferred, ok := commit.InferModelCoAuthor(providerCfg.Model); ok {
+			trailers = append(trailers, inferred)
+		}
+	}
+
 	skipAttribution := providerCfg.NoGitAgentCoAuthor || (projCfg != nil && projCfg.NoGitAgentCoAuthor)
 	if !skipAttribution {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
