@@ -234,6 +234,22 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	return runCommit(cmd, args)
 }
 
+func dirInitials(dir string) string {
+	parts := strings.FieldsFunc(dir, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	if len(parts) <= 1 {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if len(p) > 0 {
+			b.WriteByte(p[0])
+		}
+	}
+	return b.String()
+}
+
 func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 	if len(scopes) == 0 {
 		return true
@@ -248,10 +264,11 @@ func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 			continue
 		}
 		covered := false
+		initials := dirInitials(topDir)
 		for _, s := range scopes {
 			name := strings.ToLower(s.Name)
 			desc := strings.ToLower(s.Description)
-			if name == topDir || strings.HasPrefix(topDir, name) || strings.HasPrefix(name, topDir) || strings.Contains(desc, topDir) {
+			if name == topDir || (initials != "" && name == initials) || strings.Contains(desc, topDir) {
 				covered = true
 				break
 			}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/cmd"
+	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 )
 
@@ -50,5 +51,30 @@ func TestProviderConfigError_DirectRequiresBaseURLAndModel(t *testing.T) {
 	}
 	if got := cmd.ProviderConfigErrorForTest(complete); got != "" {
 		t.Errorf("expected complete direct config to pass, got error: %q", got)
+	}
+}
+
+func TestHasUncoveredDirs(t *testing.T) {
+	existingScopes := []project.Scope{
+		{Name: "git", Description: "git package"},
+		{Name: "pi", Description: "pi agent package"},
+	}
+
+	// 1. Files in git-agent directory should be detected as UNCOVERED when scope is git
+	files := []string{"git-agent/package.json", "git-agent/skills/commit/SKILL.md"}
+	if !cmd.HasUncoveredDirsForTest(files, existingScopes) {
+		t.Errorf("expected git-agent/ files to be detected as uncovered when scopes only contain git and pi")
+	}
+
+	// 2. Files in git/ directory should be detected as COVERED
+	gitFiles := []string{"git/skills/commit/SKILL.md"}
+	if cmd.HasUncoveredDirsForTest(gitFiles, existingScopes) {
+		t.Errorf("expected git/ files to be covered by existing git scope")
+	}
+
+	// 3. Files in hyphenated directory matching scope initials should be COVERED
+	scopesWithGA := append(existingScopes, project.Scope{Name: "ga", Description: "git-agent plugin"})
+	if cmd.HasUncoveredDirsForTest(files, scopesWithGA) {
+		t.Errorf("expected git-agent/ files to be covered when scope 'ga' is present")
 	}
 }

@@ -31,6 +31,10 @@ func OpenAIHeartbeatIntervalForTest(c *infraOpenAI.Client) time.Duration {
 	return c.HeartbeatInterval()
 }
 
+func HasUncoveredDirsForTest(allFiles []string, scopes []project.Scope) bool {
+	return hasUncoveredDirs(allFiles, scopes)
+}
+
 // OpenAICloudflareAIGatewayIDForTest reports the gateway ID wired from user config.
 func OpenAICloudflareAIGatewayIDForTest(c *infraOpenAI.Client) string {
 	return c.CloudflareAIGatewayID()
