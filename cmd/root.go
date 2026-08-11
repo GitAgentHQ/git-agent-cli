@@ -192,14 +192,15 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 
 	// 2. Autonomous check for Scope configuration (.git-agent/config.yml)
 	projCfgPath := infraConfig.ProjectConfigPath(root)
+	existingScopes := application.ReadScopes(projCfgPath)
 	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
-	var mergedScopes []domainProject.Scope
+
+	allAvailableScopes := append([]domainProject.Scope{}, existingScopes...)
 	if projCfg != nil {
-		mergedScopes = projCfg.Scopes
+		allAvailableScopes = append(allAvailableScopes, projCfg.Scopes...)
 	}
 
-	if hasUncoveredDirs(allFiles, mergedScopes) {
-		existingScopes := application.ReadScopes(projCfgPath)
+	if hasUncoveredDirs(allFiles, allAvailableScopes) {
 		scopeSvc := application.NewScopeService(llmClient, gitClient)
 		scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
 		if err != nil {
