@@ -53,12 +53,9 @@ Feature: Multi-Commit Service
     And a ScopeService is configured
     When CommitService.Commit is called
     Then ScopeService.Generate is called
-    And the generated scopes are written to .git-agent/config.yml
-    And the scopes are used for commit message generation
+    And the generated scopes are used in memory without writing to disk
 
-  Scenario: Auto-gitignore when .gitignore is missing
+  Scenario: Auto-gitignore is not executed during explicit commit
     Given no .gitignore file exists in the repository
-    And a GitignoreService is configured
     When CommitService.Commit is called
-    Then GitignoreService.Generate is called
-    And a .gitignore file is written to the repository root
+    Then no .gitignore file is written to the repository root

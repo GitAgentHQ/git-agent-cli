@@ -331,7 +331,55 @@ func containsDomain(normalized []string, want string) bool {
 	return false
 }
 
-// InferModelCoAuthor infers a Co-Authored-By trailer from a model ID string.
+// ModelProviderInfo defines a recognized AI provider's model naming pattern & domain metadata.
+type ModelProviderInfo struct {
+	MatchKeyword string // Substring to identify provider (e.g. "gemini", "claude", "deepseek")
+	Domain       string // Canonical email domain (e.g. "google.com")
+}
+
+// knownProviders is the table-driven registry of recognized AI model providers used for co-author inference.
+var knownProviders = []ModelProviderInfo{
+	{MatchKeyword: "gemini", Domain: "google.com"},
+	{MatchKeyword: "claude", Domain: "anthropic.com"},
+	{MatchKeyword: "gpt", Domain: "openai.com"},
+	{MatchKeyword: "codex", Domain: "openai.com"},
+	{MatchKeyword: "o1", Domain: "openai.com"},
+	{MatchKeyword: "o3", Domain: "openai.com"},
+	{MatchKeyword: "deepseek", Domain: "deepseek.com"},
+	{MatchKeyword: "qwen", Domain: "qwen.ai"},
+	{MatchKeyword: "glm", Domain: "zhipuai.cn"},
+	{MatchKeyword: "kimi", Domain: "moonshot.ai"},
+	{MatchKeyword: "moonshot", Domain: "moonshot.ai"},
+	{MatchKeyword: "grok", Domain: "x.ai"},
+}
+
+// ignoredTierSuffixes is an ordered table of routing, reasoning, and tier suffixes to strip.
+// Longer composite suffixes (e.g. "non-reasoning") precede shorter sub-tokens ("reasoning").
+var ignoredTierSuffixes = []string{
+	"non-reasoning",
+	"reasoning",
+	"thinking",
+	"high",
+	"medium",
+	"low",
+	"minimal",
+	"xhigh",
+}
+
+// knownBrandCasings defines canonical display casings for common model terminology.
+var knownBrandCasings = map[string]string{
+	"gpt":      "GPT",
+	"glm":      "GLM",
+	"ai":       "AI",
+	"deepseek": "DeepSeek",
+	"qwen":     "Qwen",
+	"kimi":     "Kimi",
+	"grok":     "Grok",
+	"claude":   "Claude",
+	"gemini":   "Gemini",
+}
+
+// InferModelCoAuthor infers a Co-Authored-By trailer from a model ID string using a table-driven design.
 // Returns (Trailer{}, false) if the model ID cannot be matched to a known provider domain.
 func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	modelID = strings.TrimSpace(modelID)
@@ -339,43 +387,35 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 		return Trailer{}, false
 	}
 
-	// Strip provider routing prefixes (e.g. "opencode/", "bailian/", "ark/", "loli/")
+	// 1. Strip provider routing prefixes (e.g. "opencode/", "bailian/", "ark/", "loli/")
 	cleaned := modelID
 	if idx := strings.LastIndex(cleaned, "/"); idx != -1 {
 		cleaned = cleaned[idx+1:]
 	}
 
-	lower := strings.ToLower(cleaned)
-	var domain string
+	lowerClean := strings.ToLower(cleaned)
 
-	switch {
-	case strings.Contains(lower, "gemini"):
-		domain = "google.com"
-	case strings.Contains(lower, "claude"):
-		domain = "anthropic.com"
-	case strings.HasPrefix(lower, "gpt") || strings.HasPrefix(lower, "codex") || strings.HasPrefix(lower, "o1") || strings.HasPrefix(lower, "o3"):
-		domain = "openai.com"
-	case strings.Contains(lower, "deepseek"):
-		domain = "deepseek.com"
-	case strings.Contains(lower, "qwen"):
-		domain = "qwen.ai"
-	case strings.Contains(lower, "glm"):
-		domain = "zhipuai.cn"
-	case strings.Contains(lower, "kimi") || strings.HasPrefix(lower, "moonshot"):
-		domain = "moonshot.ai"
-	case strings.Contains(lower, "grok"):
-		domain = "x.ai"
-	default:
+	// 2. Table lookup for known provider matching
+	var matchedProvider *ModelProviderInfo
+	for i := range knownProviders {
+		p := &knownProviders[i]
+		if strings.Contains(lowerClean, p.MatchKeyword) {
+			matchedProvider = p
+			break
+		}
+	}
+	if matchedProvider == nil {
 		return Trailer{}, false
 	}
 
-	// Strip trailing date or tier/reasoning components
+	// 3. Strip trailing reasoning/tier suffixes and date tags (-YYYYMMDD or -MMDD)
 	for {
 		changed := false
-		lowerClean := strings.ToLower(cleaned)
-		for _, suffix := range []string{"-non-reasoning", "-reasoning", "-thinking", "-high", "-medium", "-low", "-minimal", "-xhigh"} {
-			if strings.HasSuffix(lowerClean, suffix) {
-				cleaned = cleaned[:len(cleaned)-len(suffix)]
+		lower := strings.ToLower(cleaned)
+		for _, suffix := range ignoredTierSuffixes {
+			hyphenSuffix := "-" + suffix
+			if strings.HasSuffix(lower, hyphenSuffix) {
+				cleaned = cleaned[:len(cleaned)-len(hyphenSuffix)]
 				changed = true
 				break
 			}
@@ -393,32 +433,25 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 		break
 	}
 
-	// Format human-readable title from cleaned model ID.
+	// 4. Tokenize and format canonical display title using brand casing table
 	parts := strings.FieldsFunc(cleaned, func(r rune) bool {
 		return r == '-' || r == '_'
 	})
 
 	for i, p := range parts {
 		pLower := strings.ToLower(p)
-		switch {
-		case pLower == "gpt":
-			parts[i] = "GPT"
-		case pLower == "glm":
-			parts[i] = "GLM"
-		case pLower == "ai":
-			parts[i] = "AI"
-		case pLower == "deepseek":
-			parts[i] = "DeepSeek"
-		case strings.HasPrefix(pLower, "qwen") && len(pLower) > 4:
+		if c, ok := knownBrandCasings[pLower]; ok {
+			parts[i] = c
+		} else if strings.HasPrefix(pLower, "qwen") && len(pLower) > 4 {
 			parts[i] = "Qwen " + pLower[4:]
-		case len(pLower) >= 2 && pLower[0] == 'v' && isDigits(pLower[1:]):
+		} else if len(pLower) >= 2 && pLower[0] == 'v' && isDigits(pLower[1:]) {
 			parts[i] = "V" + pLower[1:]
-		default:
+		} else {
 			parts[i] = capitalize(p)
 		}
 	}
 
-	// Join adjacent numbers with '.' if model ID used '-' between version digits (e.g. claude-3-5 -> Claude 3.5)
+	// 5. Join adjacent numbers with '.' if model ID used '-' between version digits (e.g. claude-3-5 -> Claude 3.5)
 	var mergedParts []string
 	for i := 0; i < len(parts); i++ {
 		if i > 0 && isDigits(parts[i-1]) && isDigits(parts[i]) {
@@ -431,7 +464,7 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	title := strings.Join(mergedParts, " ")
 	return Trailer{
 		Key:   "Co-Authored-By",
-		Value: fmt.Sprintf("%s <noreply@%s>", title, domain),
+		Value: fmt.Sprintf("%s <noreply@%s>", title, matchedProvider.Domain),
 	}, true
 }
 

@@ -49,5 +49,6 @@ func (s *InitService) Init(ctx context.Context, req InitRequest) error {
 		return err
 	}
 
-	return scopeSvc.MergeAndSave(ctx, req.ProjectYMLPath, scopes)
+	_, err = scopeSvc.MergeAndSave(ctx, req.ProjectYMLPath, scopes)
+	return err
 }

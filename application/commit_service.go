@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -185,7 +183,8 @@ func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
 	s.coChange = provider
 }
 
-// SetGitignoreService sets an optional gitignore service for auto-gitignore generation during commit.
+// SetGitignoreService is a no-op kept for backward compatibility.
+// Auto-gitignore generation is handled autonomously by the root agent, not during explicit commit execution.
 func (s *CommitService) SetGitignoreService(svc *GitignoreService) {
 	s.gitignoreSvc = svc
 }
@@ -245,26 +244,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		return s.commitAmend(ctx, req)
 	}
 
-	// Ensure req.Config is non-nil up front so auto-scope and auto-gitignore can run
+	// Ensure req.Config is non-nil up front so auto-scope can run
 	if req.Config == nil {
 		req.Config = &project.Config{}
-	}
-
-	// Auto-gitignore when .gitignore does not exist in repo root
-	if s.gitignoreSvc != nil {
-		root, err := s.git.RepoRoot(ctx)
-		if err == nil {
-			gitignorePath := filepath.Join(root, ".gitignore")
-			if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-				s.out(req, "Generating .gitignore...")
-				techs, err := s.gitignoreSvc.Generate(ctx, GitignoreRequest{})
-				if err != nil {
-					s.out(req, "Warning: failed to generate .gitignore, continuing without .gitignore (%v)", err)
-				} else {
-					s.vlog(req, ".gitignore generated: %v", strings.Join(techs, ", "))
-				}
-			}
-		}
 	}
 
 	var staged, unstaged *diff.StagedDiff
@@ -357,15 +339,9 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			if err != nil {
 				s.out(req, "Warning: failed to generate scopes, continuing without scopes (%v)", err)
 			} else {
-				configPath := req.ProjectConfigPath
-				if configPath == "" {
-					configPath = ".git-agent/project.yml"
-				}
-				if err := s.scopeSvc.MergeAndSave(ctx, configPath, scopes); err != nil {
-					s.vlog(req, "save scopes (non-fatal): %v", err)
-				}
+				// Auto-scope in memory only: do not persist to disk during explicit CommitService.Commit
 				req.Config.Scopes = scopes
-				s.vlog(req, "scopes: %v", req.Config.ScopeNames())
+				s.vlog(req, "scopes (in-memory): %v", req.Config.ScopeNames())
 			}
 		}
 	}
@@ -439,15 +415,8 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			if err != nil {
 				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
 			} else {
-				configPath := req.ProjectConfigPath
-				if configPath == "" {
-					configPath = ".git-agent/project.yml"
-				}
-				if err := s.scopeSvc.MergeAndSave(ctx, configPath, newScopes); err != nil {
-					s.vlog(req, "save scopes (non-fatal): %v", err)
-				}
 				req.Config.Scopes = newScopes
-				s.out(req, "Scopes updated: %v, re-planning...", req.Config.ScopeNames())
+				s.out(req, "Scopes updated (in-memory): %v, re-planning...", req.Config.ScopeNames())
 				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
 					StagedDiff:    staged,
 					UnstagedDiff:  unstaged,

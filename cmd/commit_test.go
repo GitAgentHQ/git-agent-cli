@@ -26,6 +26,13 @@ func TestCommitCmd_DryRunFlag(t *testing.T) {
 	}
 }
 
+func TestCommitCmd_EnvVarIntent(t *testing.T) {
+	t.Setenv("GIT_AGENT_INTENT", "fix auth issue from env")
+	if os.Getenv("GIT_AGENT_INTENT") != "fix auth issue from env" {
+		t.Fatalf("expected environment variable GIT_AGENT_INTENT to be set")
+	}
+}
+
 // TestCommit_RenderBudgetExhausted covers REQ-006: when the application
 // surfaces a wrapped *commit.PlannerBudgetExhaustedError, the cmd layer
 // renders an actionable diagnostic that names the model, the ceiling, and

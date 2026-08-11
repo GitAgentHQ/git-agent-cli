@@ -54,9 +54,12 @@ func TestGitignoreService_Generate_CreatesFile(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()
 
-	techs, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	techs, modified, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !modified {
+		t.Fatal("expected modified to be true when file created")
 	}
 	if len(techs) == 0 {
 		t.Fatal("expected detected technologies")
@@ -84,7 +87,7 @@ func TestGitignoreService_Generate_UniqueRulesUnderCustomSection(t *testing.T) {
 	initial := "my-secret.txt\n*.o\n"
 	os.WriteFile(".gitignore", []byte(initial), 0644)
 
-	_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	_, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +120,7 @@ func TestGitignoreService_Generate_PreservesRulesFromPreviousBlock(t *testing.T)
 	initial := "my-secret.txt\n### git-agent auto-generated — DO NOT EDIT this block ###\n# Technologies: go, macos\n*.o\n### end git-agent ###\n### custom rules ###\nold-custom.txt\n"
 	os.WriteFile(".gitignore", []byte(initial), 0644)
 
-	_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	_, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +146,7 @@ func TestGitignoreService_Generate_PreservesCustomRulesOnRegen(t *testing.T) {
 	// Custom rules must survive a regeneration regardless of flags.
 	os.WriteFile(".gitignore", []byte("# my important custom rule\ndo-not-remove.txt\n"), 0644)
 
-	_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	_, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,7 +177,7 @@ func TestGitignoreService_Generate_IdempotentCustomSection(t *testing.T) {
 
 	// Run twice; the output must be identical on the second run.
 	for i := 0; i < 2; i++ {
-		_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+		_, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 		if err != nil {
 			t.Fatalf("run %d: unexpected error: %v", i+1, err)
 		}
@@ -205,7 +208,7 @@ func TestGitignoreService_Generate_IgnoresGraphDB(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()
 
-	if _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
+	if _, _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -228,7 +231,7 @@ func TestGitignoreService_Generate_GraphDBRuleIdempotent(t *testing.T) {
 	defer cleanup()
 
 	for i := 0; i < 2; i++ {
-		if _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
+		if _, _, err := svc.Generate(context.Background(), application.GitignoreRequest{}); err != nil {
 			t.Fatalf("run %d: unexpected error: %v", i+1, err)
 		}
 	}
@@ -244,7 +247,7 @@ func TestGitignoreService_Generate_WritesToCorrectPath(t *testing.T) {
 	svc, _, cleanup := setupGitignoreTest(t)
 	defer cleanup()
 
-	_, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	_, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

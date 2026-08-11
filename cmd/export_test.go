@@ -31,6 +31,10 @@ func OpenAIHeartbeatIntervalForTest(c *infraOpenAI.Client) time.Duration {
 	return c.HeartbeatInterval()
 }
 
+func HasUncoveredDirsForTest(allFiles []string, scopes []project.Scope) bool {
+	return hasUncoveredDirs(allFiles, scopes)
+}
+
 // OpenAICloudflareAIGatewayIDForTest reports the gateway ID wired from user config.
 func OpenAICloudflareAIGatewayIDForTest(c *infraOpenAI.Client) string {
 	return c.CloudflareAIGatewayID()
@@ -46,6 +50,20 @@ func OpenAIMaxInputTokensForTest(c *infraOpenAI.Client) int {
 // / direct / no-provider validation modes can be unit-tested in isolation.
 func ProviderConfigErrorForTest(cfg *infraConfig.ProviderConfig) string {
 	return providerConfigError(cfg)
+}
+
+// ResetRootFlags resets root command flags to their default empty state.
+func ResetRootFlags() {
+	_ = rootCmd.Flags().Set("api-key", "")
+	_ = rootCmd.Flags().Set("base-url", "")
+	_ = rootCmd.Flags().Set("model", "")
+	_ = rootCmd.Flags().Set("free", "false")
+	_ = rootCmd.Flags().Set("verbose", "false")
+	_ = rootCmd.PersistentFlags().Set("api-key", "")
+	_ = rootCmd.PersistentFlags().Set("base-url", "")
+	_ = rootCmd.PersistentFlags().Set("model", "")
+	_ = rootCmd.PersistentFlags().Set("free", "false")
+	_ = rootCmd.PersistentFlags().Set("verbose", "false")
 }
 
 // CommitServiceHeuristicPlannerForTest returns the service's fallback planner

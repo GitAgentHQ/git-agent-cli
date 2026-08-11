@@ -34,7 +34,7 @@ func runGitignore(cmd *cobra.Command, out io.Writer) error {
 	toptalClient := infraGitignore.NewToptalClient()
 	svc := application.NewGitignoreService(openaiClient, toptalClient, gitClient)
 
-	techs, err := svc.Generate(cmd.Context(), application.GitignoreRequest{})
+	techs, _, err := svc.Generate(cmd.Context(), application.GitignoreRequest{})
 	if err != nil {
 		return err
 	}

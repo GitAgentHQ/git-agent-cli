@@ -40,15 +40,16 @@ func NewGitignoreService(
 type GitignoreRequest struct{}
 
 // Generate detects technologies, fetches .gitignore content, and writes .gitignore.
-func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) ([]string, error) {
+// Returns detected technologies, whether .gitignore was modified on disk, and error.
+func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) ([]string, bool, error) {
 	dirs, err := s.git.TopLevelDirs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("reading dirs: %w", err)
+		return nil, false, fmt.Errorf("reading dirs: %w", err)
 	}
 
 	files, err := s.git.ProjectFiles(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("reading project files: %w", err)
+		return nil, false, fmt.Errorf("reading project files: %w", err)
 	}
 
 	osName := runtimeOS()
@@ -59,12 +60,12 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 		Files: files,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("detecting technologies: %w", err)
+		return nil, false, fmt.Errorf("detecting technologies: %w", err)
 	}
 
 	generated, err := s.generator.Generate(ctx, techs)
 	if err != nil {
-		return nil, fmt.Errorf("generating gitignore content: %w", err)
+		return nil, false, fmt.Errorf("generating gitignore content: %w", err)
 	}
 
 	// Use the technology list actually reflected in the Toptal response URL,
@@ -80,7 +81,7 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 	// (mirroring the cwd-independence of the git client methods).
 	root, err := s.git.RepoRoot(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("repo root: %w", err)
+		return nil, false, fmt.Errorf("repo root: %w", err)
 	}
 	gitignorePath := filepath.Join(root, ".gitignore")
 
@@ -97,11 +98,14 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 	// regeneration even when the Toptal content omits them.
 	final = EnsureMandatoryIgnoreRules(final)
 
-	if err := os.WriteFile(gitignorePath, []byte(final), 0644); err != nil {
-		return nil, fmt.Errorf("writing .gitignore: %w", err)
+	modified := string(existing) != final
+	if modified {
+		if err := os.WriteFile(gitignorePath, []byte(final), 0644); err != nil {
+			return nil, false, fmt.Errorf("writing .gitignore: %w", err)
+		}
 	}
 
-	return techs, nil
+	return techs, modified, nil
 }
 
 // toptalTechs extracts the technology list from the "# Created by" line in a
