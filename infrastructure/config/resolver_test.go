@@ -47,6 +47,8 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
+	t.Setenv("PI_MODEL", "")
+	t.Setenv("MODEL", "")
 	flags := config.ProviderConfig{}
 	got, err := config.Resolve(context.Background(), flags, "")
 	if err != nil {
@@ -57,6 +59,18 @@ func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
 	}
 	if got.Model != "" {
 		t.Errorf("expected empty Model, got %q", got.Model)
+	}
+}
+
+func TestResolve_PIModelEnvFallback(t *testing.T) {
+	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
+	flags := config.ProviderConfig{}
+	got, err := config.Resolve(context.Background(), flags, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Model != "gemini-3.6-flash-high" {
+		t.Errorf("expected Model from PI_MODEL env %q, got %q", "gemini-3.6-flash-high", got.Model)
 	}
 }
 

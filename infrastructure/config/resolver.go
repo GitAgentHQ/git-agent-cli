@@ -105,6 +105,10 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.Model = gitModel
 	} else if file.Model != "" {
 		result.Model = file.Model
+	} else if piModel := os.Getenv("PI_MODEL"); piModel != "" {
+		result.Model = piModel
+	} else if envModel := os.Getenv("MODEL"); envModel != "" {
+		result.Model = envModel
 	}
 	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
 
