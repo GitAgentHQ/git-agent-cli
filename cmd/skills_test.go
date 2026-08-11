@@ -26,6 +26,26 @@ func TestSkillsGet_CorePrintsMainGuide(t *testing.T) {
 	}
 }
 
+func TestSkillsGet_CoreDocumentsScopeAndGitignoreOptimization(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{Use: "get"}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&buf)
+	if err := runSkillsGet(cmd, []string{"core"}); err != nil {
+		t.Fatalf("skills get core: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"Optimize scopes and .gitignore",
+		"init --scope --force",
+		"init --gitignore",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected core guide to mention %q for scope/.gitignore optimization", want)
+		}
+	}
+}
+
 func TestSkillsGet_CliPrintsCommandReference(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := &cobra.Command{Use: "get"}

@@ -18,6 +18,7 @@ import (
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
+	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
@@ -446,6 +447,8 @@ func buildCommitDeps(
 		infraDiff.NewLineTruncator(),
 		heuristicPlanner,
 	)
+	toptalClient := infraGitignore.NewToptalClient()
+	svc.SetGitignoreService(application.NewGitignoreService(llmClient, toptalClient, gitClient))
 	return llmClient, svc
 }
 

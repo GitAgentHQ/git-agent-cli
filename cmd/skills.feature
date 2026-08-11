@@ -11,6 +11,11 @@ Feature: Skills Command Serves Embedded Documentation
     And the output contains the heading "# Git Agent CLI"
     And the output mentions "skills get cli" for the full command reference
 
+  Scenario: core guide documents scope and gitignore optimization
+    When skills get is run with "core"
+    Then the output documents regenerating scopes with init --scope --force
+    And the output documents refreshing .gitignore with init --gitignore
+
   Scenario: skills get cli prints the full command reference
     When skills get is run with "cli"
     Then the output is the embedded command reference
