@@ -64,6 +64,9 @@ Configuration resolution (highest to lowest priority):
 
 func runCommit(cmd *cobra.Command, args []string) error {
 	intent, _ := cmd.Flags().GetString("intent")
+	if intent == "" {
+		intent = os.Getenv("GIT_AGENT_INTENT")
+	}
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
 	noGitAgentCoAuthor, _ := cmd.Flags().GetBool("no-attribution")
