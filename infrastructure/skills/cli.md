@@ -200,6 +200,13 @@ Exit 0 = allow, non-zero = block.
 
 To reconfigure hooks after init: `git-agent config set hook <value>` (when setting a file path, the script is copied to `.git-agent/hooks/pre-commit` automatically)
 
+### Regenerating after init
+
+As the project layout or tech stack changes, regenerate the derived config:
+
+- **Scopes** — `git-agent init --scope --force` re-derives scopes from the latest commit history and directory tree, replacing the `scopes` entry while preserving other keys (e.g. `hook`). `--force` is required once `.git-agent/config.yml` exists; without it `init --scope` errors (config-write guard).
+- **`.gitignore`** — `git-agent init --gitignore` re-detects project technologies and merges the new rules with any existing `### custom rules ###`. No `--force` needed.
+
 ---
 
 ## git-agent config

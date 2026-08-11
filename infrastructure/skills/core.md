@@ -15,6 +15,8 @@ Reach for git-agent at these moments. Each situation maps to one command:
 | Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; a full rebuild is `git-agent related <file> --reindex`) |
 | Ready to commit staged changes | `git-agent commit --intent "..."` |
 | New repo, or no scopes configured | `git-agent init` |
+| Regenerate scopes from latest history | `git-agent init --scope --force` |
+| Refresh / improve the `.gitignore` | `git-agent init --gitignore` |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
 If the situation isn't listed, run `git-agent --help`. Every `related` and
@@ -221,6 +223,44 @@ git-agent automatically splits staged changes into multiple atomic commits (up t
 
 If no scopes are configured for the project, git-agent generates scopes from git history automatically before planning. Each scope is a structured object with a `name` and an optional `description` (used as LLM context during commit message generation). To trigger scope generation manually: `git-agent init --scope`.
 
+## Optimize scopes and .gitignore
+
+Scopes and `.gitignore` are generated once at `init`, but they drift as the
+project grows. Regenerate them when the layout or tech stack changes.
+
+**Regenerate commit scopes** from the current git history and directory tree:
+
+```
+git-agent init --scope --force
+```
+
+`--force` is required when `.git-agent/config.yml` already exists — without it,
+`init --scope` errors, because init guards config writes (plain `init --scope`
+is meant for a fresh repo). The command re-derives the scope list from the
+latest commits and layout, each scope carrying a description the planner reads
+when choosing scopes, and replaces the `scopes` entry while preserving other
+keys (e.g. `hook`). Verify by reading `.git-agent/config.yml`:
+
+```yaml
+scopes:
+  - name: cli
+    description: CLI commands and flags
+  - name: docs
+    description: Documentation
+```
+
+**Refresh the `.gitignore`** by re-detecting project technologies:
+
+```
+git-agent init --gitignore
+```
+
+It runs the technology detector, appends the generated rules, and preserves
+anything you hand-wrote under the `### custom rules ###` section. The mandatory
+rules (`.git-agent/graph.db`, `*.db-shm`/`*.db-wal`/`*.db-journal`,
+`.git-agent/config.local.yml`) are re-injected idempotently. No `--force`
+needed — the merge never clobbers custom rules.
+
 ## Require model co-author
 
 Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain. The default Git Agent attribution trailer alone does not satisfy this.
@@ -281,7 +321,8 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 | `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json`. Auto-indexes git history on first run; `--reindex` forces a full rebuild |
 | `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, last indexed commit, db size) |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
-| `git-agent init --scope` | Regenerate scopes only |
+| `git-agent init --scope [--force]` | Regenerate scopes only (`--force` required once `.git-agent/config.yml` exists) |
+| `git-agent init --gitignore` | Regenerate `.gitignore` via AI (merges, preserves `### custom rules ###`) |
 | `git-agent init --user --hook <value>` | Configure a hook in user-level config (`~/.config/git-agent/config.yml`), independent of any project config |
 | `git-agent config show` | Show resolved provider configuration |
 | `git-agent config set <key> <value>` | Set a config value (auto-selects scope) |
