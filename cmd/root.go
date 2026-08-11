@@ -15,7 +15,6 @@ import (
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
-	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
 )
@@ -133,7 +132,7 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(allFiles) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] No changes detected. Repository working tree is clean.")
+		fmt.Fprintln(cmd.OutOrStdout(), "No changes detected. Repository working tree is clean.")
 		return nil
 	}
 
@@ -165,11 +164,11 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
 		} else {
-			fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Generated .gitignore (%s)\n", strings.Join(techs, ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "Generated .gitignore (%s)\n", strings.Join(techs, ", "))
 			if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
 				allFiles = updatedFiles
 				if len(allFiles) == 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
+					fmt.Fprintln(cmd.OutOrStdout(), "Working tree is clean after applying .gitignore updates.")
 					return nil
 				}
 			}
@@ -178,11 +177,11 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 		updated := application.EnsureMandatoryIgnoreRules(string(existingGitignore))
 		if updated != string(existingGitignore) {
 			if err := os.WriteFile(gitignorePath, []byte(updated), 0644); err == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Updated .gitignore with mandatory ignore rules.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Updated .gitignore with mandatory ignore rules.")
 				if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
 					allFiles = updatedFiles
 					if len(allFiles) == 0 {
-						fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Working tree is clean after applying .gitignore updates.")
+						fmt.Fprintln(cmd.OutOrStdout(), "Working tree is clean after applying .gitignore updates.")
 						return nil
 					}
 				}
@@ -214,32 +213,15 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 					addedNames[i] = s.Name
 				}
 				if len(existingScopes) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Updated scopes in %s (added: %s)\n", projCfgPath, strings.Join(addedNames, ", "))
+					fmt.Fprintf(cmd.OutOrStdout(), "Updated scopes in %s (added: %s)\n", projCfgPath, strings.Join(addedNames, ", "))
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "[Autonomous Agent] Initialized scopes in %s (%s)\n", projCfgPath, strings.Join(addedNames, ", "))
+					fmt.Fprintf(cmd.OutOrStdout(), "Initialized scopes in %s (%s)\n", projCfgPath, strings.Join(addedNames, ", "))
 				}
 			}
 		}
 	}
 
-	// 3. Changed files & Co-change analysis
-	// Query co-change context for modified files
-	graphDBPath := infraGraph.DBPath(root)
-	if _, statErr := os.Stat(graphDBPath); statErr == nil {
-		if graphClient, err := openGraphDBConn(cmd.Context(), graphDBPath); err == nil {
-			defer graphClient.Close()
-			graphRepo := infraGraph.NewSQLiteRepository(graphClient)
-			coChangeProvider := application.NewGraphCoChangeProvider(graphRepo)
-			if hints, err := coChangeProvider.GetHintsForFiles(cmd.Context(), allFiles); err == nil && len(hints) > 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "[Autonomous Agent] Co-change context for modified files:")
-				for _, hint := range hints {
-					fmt.Fprintf(cmd.OutOrStdout(), "  - %s <-> %s (strength: %.2f)\n", hint.FileA, hint.FileB, hint.Strength)
-				}
-			}
-		}
-	}
-
-	// 4. Delegate to runCommit to execute planning and commit
+	// 3. Delegate to runCommit to execute planning and commit
 	return runCommit(cmd, args)
 }
 
