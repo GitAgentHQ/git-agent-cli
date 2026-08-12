@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Remove the agent-session environment-variable fallback (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`, ...) from model resolution: the generation model now comes only from the `--model` flag, `git config --local git-agent.model`, or the user config file. A session-injected model could previously silently override the configured endpoint model — e.g. swapping a fast config model for a slow reasoning model routed through a local proxy, stalling every commit in length-retry loops (cli)
+
 ## [0.11.1] - 2026-08-11
 
 ### Fixed

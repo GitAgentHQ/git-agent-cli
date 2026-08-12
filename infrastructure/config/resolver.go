@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -102,13 +101,16 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	// Model resolution precedence:
 	// 1. CLI flag (--model)
-	// 2. Active agent session environment variables (pi, Claude Code, Codex, generic)
-	// 3. git config --local git-agent.model
-	// 4. YAML config file (~/.config/git-agent/config.yml)
+	// 2. git config --local git-agent.model
+	// 3. YAML config file (~/.config/git-agent/config.yml)
+	//
+	// Agent-session environment variables (PI_MODEL, CLAUDE_CODE_MODEL,
+	// CODEX_MODEL, MODEL, ...) are deliberately NOT part of this chain: a
+	// session-injected model must not silently override the endpoint model the
+	// user configured (flag / local git config / user config), which would send
+	// unexpected model names to a BYOK proxy or the shared gateway.
 	if flags.Model != "" {
 		result.Model = flags.Model
-	} else if sessionModel := getSessionModelEnv(); sessionModel != "" {
-		result.Model = sessionModel
 	} else if gitModel != "" {
 		result.Model = gitModel
 	} else if file.Model != "" {
@@ -143,26 +145,6 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
 
 	return result, nil
-}
-
-// getSessionModelEnv checks active AI agent session environment variables
-// in priority order: pi > Claude Code / Anthropic > Codex / OpenAI > generic MODEL.
-func getSessionModelEnv() string {
-	envs := []string{
-		"PI_MODEL",
-		"CLAUDE_CODE_MODEL",
-		"CLAUDE_MODEL",
-		"ANTHROPIC_MODEL",
-		"CODEX_MODEL",
-		"OPENAI_MODEL",
-		"MODEL",
-	}
-	for _, env := range envs {
-		if val := strings.TrimSpace(os.Getenv(env)); val != "" {
-			return val
-		}
-	}
-	return ""
 }
 
 // resolveDuration applies the precedence chain flag > file YAML > default,
