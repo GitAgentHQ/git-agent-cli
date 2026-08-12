@@ -47,8 +47,10 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
-	t.Setenv("PI_MODEL", "")
-	t.Setenv("MODEL", "")
+	// Session env vars are never auto-read: even when the pi/Claude Code/Codex
+	// runtime injects a session model, zero-config resolution stays empty.
+	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
+	t.Setenv("MODEL", "gpt-5")
 	flags := config.ProviderConfig{}
 	got, err := config.Resolve(context.Background(), flags, "")
 	if err != nil {
@@ -62,15 +64,32 @@ func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
 	}
 }
 
-func TestResolve_PIModelEnvFallback(t *testing.T) {
-	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
-	flags := config.ProviderConfig{}
-	got, err := config.Resolve(context.Background(), flags, "")
+// TestResolve_SessionEnvModelIgnored locks in the contract that agent-session
+// environment variables (PI_MODEL, CLAUDE_CODE_MODEL, CODEX_MODEL, MODEL, ...)
+// NEVER influence the generation model: it resolves only from the --model flag,
+// git config --local git-agent.model, or the user config file. A session-injected
+// model must not silently override a configured endpoint model — e.g. swapping a
+// fast config model for a slow reasoning model routed through a local proxy.
+func TestResolve_SessionEnvModelIgnored(t *testing.T) {
+	for _, env := range []string{
+		"PI_MODEL",
+		"CLAUDE_CODE_MODEL",
+		"CLAUDE_MODEL",
+		"ANTHROPIC_MODEL",
+		"CODEX_MODEL",
+		"OPENAI_MODEL",
+		"MODEL",
+	} {
+		t.Setenv(env, "opencode/deepseek-v4-flash")
+	}
+	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.Model != "gemini-3.6-flash-high" {
-		t.Errorf("expected Model from PI_MODEL env %q, got %q", "gemini-3.6-flash-high", got.Model)
+	if got.Model != "gpt-4" {
+		t.Errorf("expected config model %q to win over session env, got %q", "gpt-4", got.Model)
 	}
 }
 
