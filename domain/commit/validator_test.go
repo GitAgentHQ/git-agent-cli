@@ -668,3 +668,54 @@ func TestInferModelCoAuthor(t *testing.T) {
 		})
 	}
 }
+
+func TestInferModelCoAuthorFirstMatch(t *testing.T) {
+	cases := []struct {
+		name       string
+		candidates []string
+		wantVal    string
+		wantOk     bool
+	}{
+		{
+			name:       "first candidate wins",
+			candidates: []string{"gemini-3.6-flash-high", "gpt-5.6-luna"},
+			wantVal:    "Gemini 3.6 Flash <noreply@google.com>",
+			wantOk:     true,
+		},
+		{
+			name:       "unmappable primary falls back to secondary",
+			candidates: []string{"o4-mini", "gpt-5.6-luna"},
+			wantVal:    "GPT 5.6 Luna <noreply@openai.com>",
+			wantOk:     true,
+		},
+		{
+			name:       "empty candidates",
+			candidates: nil,
+			wantOk:     false,
+		},
+		{
+			name:       "no candidate maps",
+			candidates: []string{"o4-mini", "llama3.2"},
+			wantOk:     false,
+		},
+		{
+			name:       "blank string candidates are skipped",
+			candidates: []string{"", "", "gemini-3.6-flash-high"},
+			wantVal:    "Gemini 3.6 Flash <noreply@google.com>",
+			wantOk:     true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := commit.InferModelCoAuthorFirstMatch(tc.candidates...)
+			if ok != tc.wantOk {
+				t.Fatalf("InferModelCoAuthorFirstMatch(%v) ok = %v, want %v", tc.candidates, ok, tc.wantOk)
+			}
+			if ok && got.Value != tc.wantVal {
+				t.Errorf("InferModelCoAuthorFirstMatch(%v).Value = %q, want %q", tc.candidates, got.Value, tc.wantVal)
+			}
+		})
+	}
+}
