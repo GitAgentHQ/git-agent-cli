@@ -47,8 +47,9 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
-	// Session env vars are never auto-read: even when the pi/Claude Code/Codex
-	// runtime injects a session model, zero-config resolution stays empty.
+	// Session env vars never set the generation model: even when the pi/Claude
+	// Code/Codex runtime injects a session model, zero-config resolution keeps
+	// Model empty (the session model is captured separately in SessionModel).
 	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
 	t.Setenv("MODEL", "gpt-5")
 	flags := config.ProviderConfig{}
