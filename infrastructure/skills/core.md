@@ -266,12 +266,12 @@ needed — the merge never clobbers custom rules.
 Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain.
 
 ### Automatic Model Co-Author Inference
-`git-agent` automatically derives the `Co-Authored-By` trailer from the configured model ID — the `--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml` (highest to lowest). Agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`) never influence the generation model or the inferred co-author: the model resolves only from explicit CLI flag, local git config, or the user config file.
+`git-agent` derives the `Co-Authored-By` trailer from the active LLM session model when present — the model that actually produced the change, read from agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`) — and falls back to the configured model (`--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml`) when no session env is set.
 - **Reasoning Tier & Date Suffixes** (`-high`, `-thinking`, `-non-reasoning`, `-20241022`) are automatically stripped.
 - **Model Variants** (`Flash`, `Max`, `Pro`, `Opus`, `Sonnet`) are preserved.
 - **Example**: `gemini-3.6-flash-high` $\rightarrow$ `Co-Authored-By: Gemini 3.6 Flash <noreply@google.com>`.
 
-**Note for Coding Agents**: the generation model resolves only from the `--model` flag, `git config --local git-agent.model`, or `model:` in the user config file — in that precedence order. Agent-session environment variables are ignored, so an injected session model can never silently override the endpoint model you configured.
+**Note for Coding Agents**: attribution and inference are separate. The generation model resolves only from the `--model` flag, `git config --local git-agent.model`, or `model:` in the user config file — in that precedence order — and is never displaced by a session-injected model. The session model (`PI_MODEL`, etc.) only supplies the `Co-Authored-By` trailer identifying who produced the change.
 
 Built-in domains (no `model_co_author_domains` config needed): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Only custom / lesser-known providers need `model_co_author_domains:`.
 
