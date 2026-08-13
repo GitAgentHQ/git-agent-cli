@@ -5,10 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-08-13
+
+### Added
+- Show the resolved session model in `config` output, so agents can see which model will be attributed as the co-author (cli)
+
+### Changed
+- Clarify co-author model precedence and the zero-config session model in the skill guides (skills)
 
 ### Fixed
 - Remove the agent-session environment-variable fallback (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, `MODEL`, ...) from model resolution: the generation model now comes only from the `--model` flag, `git config --local git-agent.model`, or the user config file. A session-injected model could previously silently override the configured endpoint model — e.g. swapping a fast config model for a slow reasoning model routed through a local proxy, stalling every commit in length-retry loops (cli)
+- Attribute commit authorship to the session model rather than the inference model (#19) (infra)
+- Exclude the generic model from co-author attribution when a session model is present (infra)
+- Restore the co-author model fallback when the session model cannot be mapped to a known provider (cli)
 
 ## [0.11.1] - 2026-08-11
 
@@ -314,7 +323,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.0...v0.10.1
