@@ -91,6 +91,28 @@ func TestResolve_SessionEnvModelIgnored(t *testing.T) {
 	if got.Model != "gpt-4" {
 		t.Errorf("expected config model %q to win over session env, got %q", "gpt-4", got.Model)
 	}
+	if got.SessionModel != "opencode/deepseek-v4-flash" {
+		t.Errorf("expected SessionModel from PI_MODEL env %q, got %q", "opencode/deepseek-v4-flash", got.SessionModel)
+	}
+}
+
+// TestResolve_SessionModelFeedsAttributionOnly locks in the split: the session
+// model is captured for Co-Authored-By attribution but must never displace the
+// configured inference model. With no file config, Model stays empty while
+// SessionModel carries the PI_MODEL value.
+func TestResolve_SessionModelFeedsAttributionOnly(t *testing.T) {
+	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Model != "" {
+		t.Errorf("expected empty inference Model, got %q", got.Model)
+	}
+	if got.SessionModel != "gemini-3.6-flash-high" {
+		t.Errorf("expected SessionModel %q, got %q", "gemini-3.6-flash-high", got.SessionModel)
+	}
 }
 
 // TestResolve_BuildBaseURLFallback locks in the zero-config free-gateway
