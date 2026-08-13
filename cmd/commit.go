@@ -128,13 +128,18 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
 	}
 
-	// Auto-infer model Co-Authored-By from active Model ID if not explicitly supplied
+	// Auto-infer model Co-Authored-By from the active session model, falling
+	// back to the configured inference model when no session env is present.
 	domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
 	if projCfg != nil {
 		domains = append(domains, projCfg.ModelCoAuthorDomains...)
 	}
-	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && providerCfg.Model != "" {
-		if inferred, ok := commit.InferModelCoAuthor(providerCfg.Model); ok {
+	attributionModel := providerCfg.SessionModel
+	if attributionModel == "" {
+		attributionModel = providerCfg.Model
+	}
+	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && attributionModel != "" {
+		if inferred, ok := commit.InferModelCoAuthor(attributionModel); ok {
 			trailers = append(trailers, inferred)
 		}
 	}
