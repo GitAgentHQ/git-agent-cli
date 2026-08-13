@@ -129,17 +129,21 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Auto-infer model Co-Authored-By from the active session model, falling
-	// back to the configured inference model when no session env is present.
+	// back to the configured inference model when no session env is present or
+	// the session model cannot be mapped to a known provider.
 	domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
 	if projCfg != nil {
 		domains = append(domains, projCfg.ModelCoAuthorDomains...)
 	}
-	attributionModel := providerCfg.SessionModel
-	if attributionModel == "" {
-		attributionModel = providerCfg.Model
+	var attributionCandidates []string
+	if providerCfg.SessionModel != "" {
+		attributionCandidates = append(attributionCandidates, providerCfg.SessionModel)
 	}
-	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && attributionModel != "" {
-		if inferred, ok := commit.InferModelCoAuthor(attributionModel); ok {
+	if providerCfg.Model != "" && providerCfg.Model != providerCfg.SessionModel {
+		attributionCandidates = append(attributionCandidates, providerCfg.Model)
+	}
+	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
+		if inferred, ok := commit.InferModelCoAuthorFirstMatch(attributionCandidates...); ok {
 			trailers = append(trailers, inferred)
 		}
 	}
