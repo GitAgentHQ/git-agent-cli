@@ -152,8 +152,10 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 // getSessionModelEnv reads the active AI agent session model for Co-Authored-By
 // attribution (the model that produced the change), in priority order:
-// pi > Claude Code / Anthropic > Codex / OpenAI > generic MODEL.
-// It is intentionally separate from the inference routing model.
+// pi > Claude Code / Anthropic > Codex / OpenAI.
+// It is intentionally separate from the inference routing model. The generic
+// MODEL variable is deliberately excluded: shells, CI, and unrelated tooling
+// set it freely, so it cannot reliably identify the producing agent.
 func getSessionModelEnv() string {
 	envs := []string{
 		"PI_MODEL",
@@ -162,7 +164,6 @@ func getSessionModelEnv() string {
 		"ANTHROPIC_MODEL",
 		"CODEX_MODEL",
 		"OPENAI_MODEL",
-		"MODEL",
 	}
 	for _, env := range envs {
 		if val := strings.TrimSpace(os.Getenv(env)); val != "" {
