@@ -200,6 +200,9 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 			"model":    cfg.Model,
 			"base_url": cfg.BaseURL,
 		}
+		if cfg.SessionModel != "" {
+			result["session_model"] = cfg.SessionModel
+		}
 		if cfg.CloudflareAIGatewayID != "" {
 			result["cloudflare_ai_gateway_id"] = cfg.CloudflareAIGatewayID
 		}
@@ -208,6 +211,9 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(cmd.OutOrStdout(), "api_key:  %s\n", maskAPIKey(cfg.APIKey))
 	fmt.Fprintf(cmd.OutOrStdout(), "model:    %s\n", cfg.Model)
+	if cfg.SessionModel != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "session_model: %s\n", cfg.SessionModel)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url: %s\n", cfg.BaseURL)
 	if cfg.CloudflareAIGatewayID != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "cloudflare_ai_gateway_id: %s\n", cfg.CloudflareAIGatewayID)

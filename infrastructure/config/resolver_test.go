@@ -47,8 +47,9 @@ func TestResolve_FileAPIKeyUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
-	// Session env vars are never auto-read: even when the pi/Claude Code/Codex
-	// runtime injects a session model, zero-config resolution stays empty.
+	// Session env vars never set the generation model: even when the pi/Claude
+	// Code/Codex runtime injects a session model, zero-config resolution keeps
+	// Model empty (the session model is captured separately in SessionModel).
 	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
 	t.Setenv("MODEL", "gpt-5")
 	flags := config.ProviderConfig{}
@@ -65,7 +66,7 @@ func TestResolve_ZeroConfigDoesNotGuessProvider(t *testing.T) {
 }
 
 // TestResolve_SessionEnvModelIgnored locks in the contract that agent-session
-// environment variables (PI_MODEL, CLAUDE_CODE_MODEL, CODEX_MODEL, MODEL, ...)
+// environment variables (PI_MODEL, CLAUDE_CODE_MODEL, CODEX_MODEL, ...)
 // NEVER influence the generation model: it resolves only from the --model flag,
 // git config --local git-agent.model, or the user config file. A session-injected
 // model must not silently override a configured endpoint model — e.g. swapping a
@@ -90,6 +91,56 @@ func TestResolve_SessionEnvModelIgnored(t *testing.T) {
 	}
 	if got.Model != "gpt-4" {
 		t.Errorf("expected config model %q to win over session env, got %q", "gpt-4", got.Model)
+	}
+	if got.SessionModel != "opencode/deepseek-v4-flash" {
+		t.Errorf("expected SessionModel from PI_MODEL env %q, got %q", "opencode/deepseek-v4-flash", got.SessionModel)
+	}
+}
+
+// TestResolve_SessionModelFeedsAttributionOnly locks in the split: the session
+// model is captured for Co-Authored-By attribution but must never displace the
+// configured inference model. With no file config, Model stays empty while
+// SessionModel carries the PI_MODEL value.
+func TestResolve_SessionModelFeedsAttributionOnly(t *testing.T) {
+	t.Setenv("PI_MODEL", "gemini-3.6-flash-high")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Model != "" {
+		t.Errorf("expected empty inference Model, got %q", got.Model)
+	}
+	if got.SessionModel != "gemini-3.6-flash-high" {
+		t.Errorf("expected SessionModel %q, got %q", "gemini-3.6-flash-high", got.SessionModel)
+	}
+}
+
+// TestResolve_GenericModelEnvNotCapturedForAttribution locks in that the bare
+// MODEL variable (set freely by shells, CI, and unrelated tooling) never feeds
+// Co-Authored-By attribution — only agent-scoped session env vars do.
+func TestResolve_GenericModelEnvNotCapturedForAttribution(t *testing.T) {
+	for _, env := range []string{
+		"PI_MODEL",
+		"CLAUDE_CODE_MODEL",
+		"CLAUDE_MODEL",
+		"ANTHROPIC_MODEL",
+		"CODEX_MODEL",
+		"OPENAI_MODEL",
+	} {
+		t.Setenv(env, "")
+	}
+	t.Setenv("MODEL", "gpt-5")
+
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.SessionModel != "" {
+		t.Errorf("expected empty SessionModel (generic MODEL excluded), got %q", got.SessionModel)
+	}
+	if got.Model != "" {
+		t.Errorf("expected empty Model, got %q", got.Model)
 	}
 }
 

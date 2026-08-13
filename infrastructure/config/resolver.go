@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,7 @@ type ProviderConfig struct {
 	APIKey                string
 	BaseURL               string
 	Model                 string
+	SessionModel          string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
 	CloudflareAIGatewayID string
 	RequestTimeout        time.Duration // 0 = use DefaultRequestTimeout
 	HeartbeatInterval     time.Duration // 0 = use DefaultHeartbeatInterval
@@ -116,6 +118,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	} else if file.Model != "" {
 		result.Model = file.Model
 	}
+	result.SessionModel = getSessionModelEnv()
 	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
 
 	// --free forces routing through the embedded shared gateway: clear api_key
@@ -145,6 +148,29 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
 
 	return result, nil
+}
+
+// getSessionModelEnv reads the active AI agent session model for Co-Authored-By
+// attribution (the model that produced the change), in priority order:
+// pi > Claude Code / Anthropic > Codex / OpenAI.
+// It is intentionally separate from the inference routing model. The generic
+// MODEL variable is deliberately excluded: shells, CI, and unrelated tooling
+// set it freely, so it cannot reliably identify the producing agent.
+func getSessionModelEnv() string {
+	envs := []string{
+		"PI_MODEL",
+		"CLAUDE_CODE_MODEL",
+		"CLAUDE_MODEL",
+		"ANTHROPIC_MODEL",
+		"CODEX_MODEL",
+		"OPENAI_MODEL",
+	}
+	for _, env := range envs {
+		if val := strings.TrimSpace(os.Getenv(env)); val != "" {
+			return val
+		}
+	}
+	return ""
 }
 
 // resolveDuration applies the precedence chain flag > file YAML > default,
