@@ -1,8 +1,9 @@
 # Git Agent CLI
 
-Pick the right git-agent command for the situation —
-do **not** default to `git-agent commit`. Use the trigger table below to map
-what is happening to the command that serves it.
+Use the bare `git-agent` command by default. It is the agent-oriented entry
+point: pass the user's intent with `--intent` and let it autonomously inspect
+the repository and run the commit workflow. Use subcommands only for specific
+cases.
 
 ## When to use git-agent
 
@@ -13,7 +14,7 @@ Reach for git-agent at these moments. Each situation maps to one command:
 | About to start multi-file work / modify a feature — find what else changes | `git-agent related [files...]` |
 | Deciding which tests to run after a change | `git-agent related <files...> --tests` |
 | Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; a full rebuild is `git-agent related <file> --reindex`) |
-| Ready to commit staged changes | `git-agent commit --intent "..."` |
+| Ready to commit changes | `git-agent --intent "..."` |
 | New repo, or no scopes configured | `git-agent init` |
 | Regenerate scopes from latest history | `git-agent init --scope --force` |
 | Refresh / improve the `.gitignore` | `git-agent init --gitignore` |
@@ -112,11 +113,12 @@ probably noise.
 
 1. **Intent** — derive a one-sentence intent from the conversation. If no signal exists, run `git diff --stat` to understand what changed, then form the intent from that.
 
-2. **Commit** — run:
+2. **Commit** — run the bare agent command:
    ```
-   git-agent commit --intent "..."
+   git-agent --intent "..."
    ```
-   No provider flags on the first attempt.
+   No provider flags on the first attempt. Use `git-agent commit` only when the
+   explicit commit subcommand is specifically needed.
 
 3. **On auth error (401 / missing key)** — official release binaries already
    route through the free shared gateway with zero config. If an auth error
@@ -149,7 +151,7 @@ When you need to read the result back programmatically (which commits were
 created, their SHAs, whether a hook ran), add `-o json`:
 
 ```
-git-agent commit --intent "..." -o json
+git-agent --intent "..." -o json
 ```
 
 It prints a single object:
@@ -279,10 +281,11 @@ Manual `--co-author "Name <email@domain>"` flags remain available for custom hum
 
 ## Hook failures
 
-If the commit is blocked (exit code `2`), retry with a more specific `--intent`:
+If the commit is blocked (exit code `2`), retry with a more specific
+`--intent`:
 
 ```
-git-agent commit --intent "update module path"
+git-agent --intent "update module path"
 ```
 
 Hook exit codes (the hook script's own contract): `0` = allow, non-zero = block.
