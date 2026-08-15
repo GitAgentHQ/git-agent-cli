@@ -88,12 +88,20 @@ git ls-files .git-agent/graph.db        # 应无输出（未追踪）
 git check-ignore .git-agent/graph.db    # 输出路径，exit 0（已忽略）
 ```
 
-### `git-agent commit`
+### `git-agent`（裸命令）
 
-读取暂存和未暂存的变更，将其拆分为原子组，为每组生成提交信息，并依次提交。
+面向 agent 的默认入口。它会检查仓库，执行常规的自动检查，将变更拆分为原子组，生成提交信息并依次提交。
 
 ```bash
-git-agent commit                              # 提交所有变更
+git-agent --intent "fix auth bug"           # 默认 agent 工作流
+```
+
+### `git-agent commit`
+
+当不需要 autonomous root 工作流时使用的显式提交子命令。它读取暂存和未暂存的变更，将其拆分为原子组，为每组生成提交信息，并依次提交。
+
+```bash
+git-agent commit                              # 显式提交路径
 git-agent commit --dry-run                    # 仅打印提交信息，不执行提交
 git-agent commit --no-stage                   # 仅提交已暂存的变更
 git-agent commit --amend                      # 重新生成并修改最后一次提交

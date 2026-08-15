@@ -94,12 +94,24 @@ git ls-files .git-agent/graph.db        # must print nothing (untracked)
 git check-ignore .git-agent/graph.db    # prints the path, exit 0 (ignored)
 ```
 
-### `git-agent commit`
+### `git-agent` (bare command)
 
-Reads staged and unstaged changes, splits them into atomic groups, generates a commit message for each group, and commits them in sequence.
+The default agent-oriented entry point. It inspects the repository, performs
+normal autonomous checks, splits changes into atomic groups, generates commit
+messages, and commits them in sequence.
 
 ```bash
-git-agent commit                              # commit all changes
+git-agent --intent "fix auth bug"           # default agent workflow
+```
+
+### `git-agent commit`
+
+Explicit commit subcommand for cases where the autonomous root workflow is not
+wanted. It reads staged and unstaged changes, splits them into atomic groups,
+generates a commit message for each group, and commits them in sequence.
+
+```bash
+git-agent commit                              # explicit commit path
 git-agent commit --dry-run                    # print messages without committing
 git-agent commit --no-stage                   # commit already-staged changes only
 git-agent commit --amend                      # regenerate and amend the last commit
