@@ -63,6 +63,7 @@ type rawProjectConfig struct {
 	MaxInputTokens          *int       `yaml:"max_input_tokens,omitempty"`
 	MaxPlanFiles            *int       `yaml:"max_plan_files,omitempty"`
 	PlanFallback            string     `yaml:"plan_fallback,omitempty"`
+	Language                string     `yaml:"language,omitempty"`
 	RequireGitAgentCoAuthor *bool      `yaml:"require_git_agent_co_author,omitempty"`
 	RequireModelCoAuthor    *bool      `yaml:"require_model_co_author,omitempty"`
 	GraphAutobuild          *bool      `yaml:"graph_autobuild,omitempty"`
@@ -153,6 +154,12 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.PlanFallback != "" {
 		merged.PlanFallback = local.PlanFallback
 	}
+	// language: local > project > user
+	if local.Language != "" {
+		merged.Language = local.Language
+	} else if merged.Language == "" && user.Language != "" {
+		merged.Language = user.Language
+	}
 	if local.RequireGitAgentCoAuthor != nil {
 		merged.RequireGitAgentCoAuthor = local.RequireGitAgentCoAuthor
 	}
@@ -166,6 +173,7 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
 		merged.MaxDiffBytes == nil && merged.MaxInputTokens == nil && merged.MaxPlanFiles == nil && merged.PlanFallback == "" &&
 		merged.RequireGitAgentCoAuthor == nil &&
+		merged.Language == "" &&
 		merged.RequireModelCoAuthor == nil &&
 		merged.GraphAutobuild == nil {
 		return nil
@@ -180,6 +188,7 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 		Scopes:       scopes,
 		Hooks:        merged.Hooks,
 		PlanFallback: merged.PlanFallback,
+		Language:     merged.Language,
 	}
 	if merged.MaxDiffLines != nil {
 		cfg.MaxDiffLines = *merged.MaxDiffLines
