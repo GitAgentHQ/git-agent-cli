@@ -118,7 +118,6 @@ git-agent commit --amend                      # regenerate and amend the last co
 git-agent commit --intent "fix auth bug"      # provide a context hint to the LLM
 git-agent commit --co-author "Name <email>"  # add a co-author trailer
 git-agent commit --trailer "Fixes: #123"     # add an arbitrary git trailer
-git-agent commit --no-attribution             # omit the default Git Agent trailer
 git-agent commit -o json                      # structured result (titles, SHAs, hook outcome)
 ```
 
@@ -331,7 +330,6 @@ Custom hooks receive a JSON payload on stdin (`diff`, `commitMessage`, `intent`,
 | `--intent` | Describe the intent of the change |
 | `--co-author` | Add a co-author trailer (repeatable) |
 | `--trailer` | Add an arbitrary git trailer, format `Key: Value` (repeatable) |
-| `--no-attribution` | Omit the default Git Agent co-author trailer |
 | `--max-diff-lines` | Maximum diff lines sent to the model (default: 0, no line limit; a byte cap always applies) |
 | `--max-diff-bytes` | Maximum diff bytes sent to the model (default: 0, falls back to the built-in ~384 KiB cap; pass a positive value to override) |
 | `--max-plan-files` | Maximum file paths listed individually in the planner prompt before collapsing to directory summaries (default: 0, falls back to the built-in cap of 150) |

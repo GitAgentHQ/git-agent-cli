@@ -69,9 +69,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
-	noGitAgentCoAuthor, _ := cmd.Flags().GetBool("no-attribution")
-	noGitAgentLegacy, _ := cmd.Flags().GetBool("no-git-agent")
-	noGitAgent := noGitAgentCoAuthor || noGitAgentLegacy
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
@@ -85,7 +82,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	providerCfg.NoGitAgentCoAuthor = providerCfg.NoGitAgentCoAuthor || noGitAgent
 
 	if configErr := providerConfigError(providerCfg); configErr != "" {
 		return agentErrors.NewExitCodeError(1, configErr)
@@ -101,24 +97,22 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
 
 	// Hook executor reads policy off projCfg, so fold user-scope values in.
-	if providerCfg.RequireModelCoAuthor || len(providerCfg.ModelCoAuthorDomains) > 0 {
+	if providerCfg.RequireGitAgentCoAuthor {
 		if projCfg == nil {
 			projCfg = &project.Config{}
 		}
-		if providerCfg.RequireModelCoAuthor {
-			projCfg.RequireModelCoAuthor = true
+		projCfg.RequireGitAgentCoAuthor = true
+	}
+	if providerCfg.RequireModelCoAuthor {
+		if projCfg == nil {
+			projCfg = &project.Config{}
 		}
-		if len(providerCfg.ModelCoAuthorDomains) > 0 {
-			projCfg.ModelCoAuthorDomains = append(projCfg.ModelCoAuthorDomains, providerCfg.ModelCoAuthorDomains...)
-		}
+		projCfg.RequireModelCoAuthor = true
 	}
 
-	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
 	var trailers []commit.Trailer
-	if !skipCoAuthor {
-		for _, a := range coAuthors {
-			trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
-		}
+	for _, a := range coAuthors {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
 	}
 	for _, t := range trailerFlags {
 		key, value, ok := strings.Cut(t, ": ")
@@ -128,13 +122,15 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
 	}
 
+	// Auto-append Git Agent co-author when opt-in via require_git_agent_co_author.
+	if projCfg != nil && projCfg.RequireGitAgentCoAuthor {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
+	}
+
 	// Auto-infer model Co-Authored-By from the active session model, falling
 	// back to the configured inference model when no session env is present or
 	// the session model cannot be mapped to a known provider.
-	domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
-	if projCfg != nil {
-		domains = append(domains, projCfg.ModelCoAuthorDomains...)
-	}
+	domains := project.DefaultModelCoAuthorDomains
 	var attributionCandidates []string
 	if providerCfg.SessionModel != "" {
 		attributionCandidates = append(attributionCandidates, providerCfg.SessionModel)
@@ -142,33 +138,22 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if providerCfg.Model != "" && providerCfg.Model != providerCfg.SessionModel {
 		attributionCandidates = append(attributionCandidates, providerCfg.Model)
 	}
-	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
+	if !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
 		if inferred, ok := commit.InferModelCoAuthorFirstMatch(attributionCandidates...); ok {
 			trailers = append(trailers, inferred)
 		}
-	}
-
-	skipAttribution := providerCfg.NoGitAgentCoAuthor || (projCfg != nil && projCfg.NoGitAgentCoAuthor)
-	if !skipAttribution {
-		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
 	// Fail fast before calling the LLM: the model cannot be trusted to emit
 	// the trailer correctly (wrong casing, wrong placement). Caller must
 	// supply --co-author / --trailer explicitly.
 	if projCfg != nil && projCfg.RequireModelCoAuthor {
-		if skipCoAuthor {
-			return agentErrors.NewExitCodeError(1,
-				"error: require_model_co_author and no_model_co_author are both set — they contradict\nhint: unset one in your git-agent config")
-		}
-		domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
-		domains = append(domains, projCfg.ModelCoAuthorDomains...)
-		if !commit.HasModelCoAuthor(trailers, domains) {
+		if !commit.HasModelCoAuthor(trailers, project.DefaultModelCoAuthorDomains) {
 			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
 				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
 					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"\n"+
 					"         git-agent commit --co-author \"GPT-5 <noreply@openai.com>\"",
-				strings.Join(domains, ", "),
+				strings.Join(project.DefaultModelCoAuthorDomains, ", "),
 			))
 		}
 	}
@@ -481,9 +466,6 @@ func init() {
 	commitCmd.Flags().String("intent", "", "describe the intent of the change")
 	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
 	commitCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
-	commitCmd.Flags().Bool("no-attribution", false, "omit the default Git Agent co-author trailer")
-	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
-	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
 	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
 	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
 	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")

@@ -265,28 +265,6 @@ func TestCompositeExecutor_RequireModelCoAuthor_BuiltInGrokTrailerPasses(t *test
 	}
 }
 
-func TestCompositeExecutor_RequireModelCoAuthor_UserExtendedDomainPasses(t *testing.T) {
-	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Acme Bot <bot@acme.ai>"
-	exec := infraHook.NewCompositeHookExecutor()
-
-	input := domainHook.HookInput{
-		CommitMessage: msg,
-		StagedFiles:   []string{"auth.go"},
-		Config: domainProject.Config{
-			RequireModelCoAuthor: true,
-			ModelCoAuthorDomains: []string{"acme.ai"},
-		},
-	}
-
-	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.ExitCode != 0 {
-		t.Errorf("expected user-extended domain to pass, got exit %d; stderr: %s", result.ExitCode, result.Stderr)
-	}
-}
-
 func TestCompositeExecutor_RequireModelCoAuthor_RunsWithEmptyHooks(t *testing.T) {
 	msg := "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Git Agent <noreply@git-agent.dev>"
 	exec := infraHook.NewCompositeHookExecutor()

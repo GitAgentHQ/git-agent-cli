@@ -266,9 +266,8 @@ func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
 // domain is in allowedDomains (case-insensitive). Malformed Co-Authored-By
 // lines are ignored here — ValidateConventional already reports them.
 //
-// The allowedDomains slice is taken as-is; callers are expected to merge
-// project.DefaultModelCoAuthorDomains with any user-configured extensions
-// before calling.
+// The allowedDomains slice is taken as-is; callers typically pass
+// project.DefaultModelCoAuthorDomains directly.
 func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResult {
 	result := &ValidationResult{}
 	normalized := normalizeDomains(allowedDomains)

@@ -22,8 +22,7 @@ func gitLogBody(t *testing.T, dir string) string {
 // TestCommitCmd_CoAuthorTrailer locks in the `git-agent commit --co-author`
 // contract: each flag appends a Co-Authored-By trailer to the committed
 // message, and the flag is repeatable. Without the flag the commit carries no
-// such trailer (the only other trailer in this fixture is suppressed by
-// --no-attribution).
+// explicit Co-Authored-By trailer.
 func TestCommitCmd_CoAuthorTrailer(t *testing.T) {
 	server := newFastLLMServer(t, 0)
 	defer server.Close()
@@ -39,7 +38,6 @@ func TestCommitCmd_CoAuthorTrailer(t *testing.T) {
 		"--base-url", server.URL,
 		"--model", "test-model",
 		"--no-stage",
-		"--no-attribution",
 		"--co-author", "Alice <alice@example.com>",
 		"--co-author", "Bob <bob@example.com>",
 	)
@@ -90,7 +88,6 @@ func TestAutonomousRoot_CoAuthorTrailer(t *testing.T) {
 		"--api-key", "test-key",
 		"--base-url", server.URL,
 		"--model", "test-model",
-		"--no-attribution",
 		"--co-author", "Carol <carol@example.com>",
 	)
 	c.Dir = dir

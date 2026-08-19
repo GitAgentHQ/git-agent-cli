@@ -108,7 +108,6 @@ git-agent commit --amend                      # 重新生成并修改最后一�
 git-agent commit --intent "fix auth bug"      # 向 LLM 提供上下文提示
 git-agent commit --co-author "Name <email>"  # 添加 co-author trailer
 git-agent commit --trailer "Fixes: #123"     # 添加任意 git trailer
-git-agent commit --no-attribution             # 省略默认的 Git Agent trailer
 git-agent commit -o json                      # 结构化结果（标题、SHA、钩子结果）
 ```
 
@@ -307,7 +306,6 @@ hook:
 | `--intent` | 描述本次变更的意图 |
 | `--co-author` | 添加 co-author trailer（可重复） |
 | `--trailer` | 添加任意 git trailer，格式为 `Key: Value`（可重复） |
-| `--no-attribution` | 省略默认的 Git Agent co-author trailer |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制行数；字节上限始终生效） |
 | `--max-diff-bytes` | 发送给模型的最大 diff 字节数（默认：0，使用内置约 384 KiB 上限；传正值可覆盖） |
 | `--max-plan-files` | 规划提示中单独列出的最大文件路径数，超出后按目录折叠（默认：0，使用内置上限 150） |
