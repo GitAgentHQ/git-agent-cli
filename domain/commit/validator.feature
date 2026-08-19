@@ -9,6 +9,51 @@ Feature: Conventional commit message validation
     When ValidateConventional is called
     Then it returns a ValidationResult
 
+  # --- language-aware passing ---
+
+  Scenario: Explicit non-English language preserves natural capitalization
+    Given the commit message is:
+      """
+      feat: 修复登录问题
+
+      - 添加登录端点
+
+      这个修复处理了登录失败。
+      """
+    And the configured language is "Chinese"
+    Then HasErrors returns false
+
+  Scenario: Auto language detects non-ASCII intent
+    Given the commit message is:
+      """
+      feat: Ändere die Anmeldung
+
+      - Füge den Login-Endpunkt hinzu
+
+      Die Anmeldung unterstützt jetzt neue Tokens.
+      """
+    And the configured language is "auto"
+    And the intent is "Ändere die Anmeldung"
+    Then HasErrors returns false
+
+  Scenario: Auto language without a clear intent keeps English rules
+    Given the commit message is:
+      """
+      feat: Add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+      """
+    And the configured language is "auto"
+    And the intent is ""
+    Then HasErrors returns false
+
+  Scenario: Non-English title length counts Unicode runes
+    Given the commit message has a non-English title longer than 50 UTF-8 bytes but at most 50 runes
+    And the configured language is "Japanese"
+    Then HasErrors returns false
+
   # --- passing ---
 
   Scenario: Valid full message
@@ -102,6 +147,19 @@ Feature: Conventional commit message validation
     Then HasErrors returns true
 
   # --- error: description lowercase (Rule 2) ---
+
+  Scenario: Explicit English language still rejects uppercase descriptions
+    Given the commit message is:
+      """
+      feat: Add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+      """
+    And the configured language is "en-US"
+    Then HasErrors returns true
+    And Errors contains "lowercase"
 
   Scenario: Uppercase letter in description
     Given the commit message is:

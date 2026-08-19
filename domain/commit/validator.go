@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Severity indicates how serious a validation issue is.
@@ -69,10 +71,18 @@ var (
 	}
 )
 
-// ValidateConventional validates a raw commit message against Conventional
-// Commits 1.0.0 and project-specific rules. When allowedScopes is non-empty,
-// any scope used in the header must be in the list. It never returns nil.
+// ValidateConventional validates a raw commit message using the default
+// English rules. It is retained for callers that do not have language context.
 func ValidateConventional(raw string, allowedScopes []string) *ValidationResult {
+	return ValidateConventionalWithLanguage(raw, allowedScopes, "English", "")
+}
+
+// ValidateConventionalWithLanguage validates a raw commit message against
+// Conventional Commits and project-specific rules. An explicit English
+// language keeps the historical lowercase and byte-count rules. For auto,
+// an intent containing a non-ASCII letter selects non-English rules; an empty
+// or otherwise undetectable intent remains English.
+func ValidateConventionalWithLanguage(raw string, allowedScopes []string, language, intent string) *ValidationResult {
 	result := &ValidationResult{}
 
 	if strings.TrimSpace(raw) == "" {
@@ -81,12 +91,35 @@ func ValidateConventional(raw string, allowedScopes []string) *ValidationResult 
 	}
 
 	lines := strings.Split(raw, "\n")
-	checkHeader(result, lines[0], allowedScopes)
+	nonEnglish := isNonEnglishLanguage(language, intent)
+	checkHeader(result, lines[0], allowedScopes, nonEnglish)
 	checkBody(result, lines)
 	return result
 }
 
-func checkHeader(result *ValidationResult, header string, allowedScopes []string) {
+func isNonEnglishLanguage(language, intent string) bool {
+	language = strings.TrimSpace(language)
+	if language == "" || strings.EqualFold(language, "auto") {
+		for _, r := range intent {
+			if r > unicode.MaxASCII && unicode.IsLetter(r) {
+				return true
+			}
+		}
+		return false
+	}
+	return !isEnglishLanguage(language)
+}
+
+func isEnglishLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
+		return true
+	default:
+		return false
+	}
+}
+
+func checkHeader(result *ValidationResult, header string, allowedScopes []string, nonEnglish bool) {
 	// Rule 1: format
 	if !headerRe.MatchString(header) {
 		result.Issues = append(result.Issues, ValidationIssue{
@@ -117,11 +150,16 @@ func checkHeader(result *ValidationResult, header string, allowedScopes []string
 		}
 	}
 
-	// Rule 3: title <=50 chars
-	if len(header) > 50 {
+	// Rule 3: title <=50 characters. UTF-8 bytes are the historical English
+	// behavior; natural-language output uses Unicode runes.
+	titleLength := len(header)
+	if nonEnglish {
+		titleLength = utf8.RuneCountInString(header)
+	}
+	if titleLength > 50 {
 		result.Issues = append(result.Issues, ValidationIssue{
 			SeverityError,
-			fmt.Sprintf("title must be 50 characters or less (got %d)", len(header)),
+			fmt.Sprintf("title must be 50 characters or less (got %d)", titleLength),
 		})
 	}
 
@@ -136,8 +174,9 @@ func checkHeader(result *ValidationResult, header string, allowedScopes []string
 	}
 	desc := header[colonIdx+2:]
 
-	// Rule 2: description must be all lowercase
-	if desc != strings.ToLower(desc) {
+	// Rule 2: English descriptions must be all lowercase. Other languages
+	// retain their natural capitalization and orthography.
+	if !nonEnglish && desc != strings.ToLower(desc) {
 		result.Issues = append(result.Issues, ValidationIssue{SeverityError, "description must be all lowercase"})
 	}
 
