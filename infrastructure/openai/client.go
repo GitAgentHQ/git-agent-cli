@@ -290,7 +290,7 @@ func languageInstruction(language, intent string) string {
 
 func isEnglishLanguage(language string) bool {
 	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "english", "en", "en-us", "en-gb", "auto-english":
+	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
 		return true
 	default:
 		return false

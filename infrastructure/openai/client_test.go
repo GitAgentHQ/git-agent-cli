@@ -86,6 +86,27 @@ func TestClient_GenerateAutoEnglishLanguagePrompt(t *testing.T) {
 	}
 }
 
+func TestClient_EnglishLocaleAliasesUseEnglishPrompt(t *testing.T) {
+	for _, language := range []string{"en-au", "en-ca"} {
+		t.Run(language, func(t *testing.T) {
+			prompt := languageInstruction(language, "")
+			for _, want := range []string{
+				"Write the title description, bullets, and explanation in English",
+				"title description ALL LOWERCASE",
+				"bullet with an UPPERCASE first letter",
+				"explanation in sentence case",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("English locale %q prompt missing %q: %q", language, want, prompt)
+				}
+			}
+			if strings.Contains(prompt, "natural capitalization") {
+				t.Errorf("English locale %q prompt must not use natural-language capitalization guidance: %q", language, prompt)
+			}
+		})
+	}
+}
+
 func TestClient_GenerateEnglishLanguagePrompt(t *testing.T) {
 	var system, user string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

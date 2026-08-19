@@ -17,6 +17,18 @@ Feature: Commit message language preference
     And the English title description is requested in lowercase
     And English bullets are requested with an uppercase first letter
 
+  Scenario Outline: English locale aliases preserve hook-compatible case rules
+    Given the language preference is <language>
+    When a commit message is generated
+    Then English is requested for the title, bullets, and explanation
+    And the English title description is requested in lowercase
+    And English bullets are requested with an uppercase first letter
+
+    Examples:
+      | language |
+      | "en-au"  |
+      | "en-ca"  |
+
   Scenario: Explicit language applies to messages, retries, and plans
     Given the language preference is "Japanese"
     When a commit message is generated or a multi-file plan is requested
