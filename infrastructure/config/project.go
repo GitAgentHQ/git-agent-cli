@@ -55,17 +55,17 @@ func (s *rawScope) UnmarshalYAML(value *yaml.Node) error {
 
 // rawProjectConfig is the YAML shape for project/local config files.
 type rawProjectConfig struct {
-	Scopes               []rawScope `yaml:"scopes,omitempty"`
-	Hooks                []string   `yaml:"hook,omitempty"`
-	HookTypeLegacy       string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
-	MaxDiffLines         *int       `yaml:"max_diff_lines,omitempty"`
-	MaxDiffBytes         *int       `yaml:"max_diff_bytes,omitempty"`
-	MaxInputTokens       *int       `yaml:"max_input_tokens,omitempty"`
-	MaxPlanFiles         *int       `yaml:"max_plan_files,omitempty"`
-	PlanFallback         string     `yaml:"plan_fallback,omitempty"`
-	RequireGitAgentCoAuthor *bool   `yaml:"require_git_agent_co_author,omitempty"`
-	RequireModelCoAuthor *bool      `yaml:"require_model_co_author,omitempty"`
-	GraphAutobuild       *bool      `yaml:"graph_autobuild,omitempty"`
+	Scopes                  []rawScope `yaml:"scopes,omitempty"`
+	Hooks                   []string   `yaml:"hook,omitempty"`
+	HookTypeLegacy          string     `yaml:"hook_type,omitempty"` // backward compat: migrated to hook on load
+	MaxDiffLines            *int       `yaml:"max_diff_lines,omitempty"`
+	MaxDiffBytes            *int       `yaml:"max_diff_bytes,omitempty"`
+	MaxInputTokens          *int       `yaml:"max_input_tokens,omitempty"`
+	MaxPlanFiles            *int       `yaml:"max_plan_files,omitempty"`
+	PlanFallback            string     `yaml:"plan_fallback,omitempty"`
+	RequireGitAgentCoAuthor *bool      `yaml:"require_git_agent_co_author,omitempty"`
+	RequireModelCoAuthor    *bool      `yaml:"require_model_co_author,omitempty"`
+	GraphAutobuild          *bool      `yaml:"graph_autobuild,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {

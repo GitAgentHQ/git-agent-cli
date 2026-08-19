@@ -27,27 +27,27 @@ const DefaultRequestTimeout = 90 * time.Second
 const DefaultHeartbeatInterval = 15 * time.Second
 
 type ProviderConfig struct {
-	APIKey                string
-	BaseURL               string
-	Model                 string
-	SessionModel          string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
-	CloudflareAIGatewayID string
-	RequestTimeout        time.Duration // 0 = use DefaultRequestTimeout
-	HeartbeatInterval     time.Duration // 0 = use DefaultHeartbeatInterval
-	ForceFreeGateway      bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
-	RequireGitAgentCoAuthor bool      // When true, append Co-Authored-By: Git Agent trailer (opt-in)
-	RequireModelCoAuthor  bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	APIKey                  string
+	BaseURL                 string
+	Model                   string
+	SessionModel            string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
+	CloudflareAIGatewayID   string
+	RequestTimeout          time.Duration // 0 = use DefaultRequestTimeout
+	HeartbeatInterval       time.Duration // 0 = use DefaultHeartbeatInterval
+	ForceFreeGateway        bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
+	RequireGitAgentCoAuthor bool          // When true, append Co-Authored-By: Git Agent trailer (opt-in)
+	RequireModelCoAuthor    bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
 }
 
 type fileConfig struct {
-	APIKey                string   `yaml:"api_key"`
-	BaseURL               string   `yaml:"base_url"`
-	Model                 string   `yaml:"model"`
-	CloudflareAIGatewayID string   `yaml:"cloudflare_ai_gateway_id"`
-	RequestTimeout        string   `yaml:"request_timeout"`
-	HeartbeatInterval     string   `yaml:"heartbeat_interval"`
+	APIKey                  string `yaml:"api_key"`
+	BaseURL                 string `yaml:"base_url"`
+	Model                   string `yaml:"model"`
+	CloudflareAIGatewayID   string `yaml:"cloudflare_ai_gateway_id"`
+	RequestTimeout          string `yaml:"request_timeout"`
+	HeartbeatInterval       string `yaml:"heartbeat_interval"`
 	RequireGitAgentCoAuthor bool   `yaml:"require_git_agent_co_author"`
-	RequireModelCoAuthor  bool     `yaml:"require_model_co_author"`
+	RequireModelCoAuthor    bool   `yaml:"require_model_co_author"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -131,8 +131,6 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 
 	result.RequireGitAgentCoAuthor = flags.RequireGitAgentCoAuthor || file.RequireGitAgentCoAuthor
 	result.RequireModelCoAuthor = flags.RequireModelCoAuthor || file.RequireModelCoAuthor
-
-
 
 	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
