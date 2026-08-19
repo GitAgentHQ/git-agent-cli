@@ -136,6 +136,8 @@ git-agent config get <key>         # show resolved value and source scope for a 
 git-agent config set <key> <value> # write a config value to the appropriate scope
 git-agent config set --user api-key sk-xxx   # write to user scope
 git-agent config set --project hook empty     # write to project scope
+git-agent config set language auto             # follow --intent language, else English
+git-agent config set --local language Japanese # override language locally
 git-agent config set --local max-diff-lines 1000  # write to local scope
 git-agent config set --local max-diff-bytes 524288 # raise the byte cap (e.g., 512 KiB for direct endpoints)
 git-agent config set --local max-plan-files 300     # raise the planner file-list cap before it collapses to directory summaries
@@ -150,6 +152,14 @@ git-agent config set --local max-plan-files 300     # raise the planner file-lis
 | `--local` | `.git-agent/config.local.yml` | Personal override, gitignored |
 
 When no scope flag is given, provider keys default to `--user` and all others to `--project`.
+
+Generated commit messages use `language: auto` by default: the title description,
+bullets, and explanation follow the language of a clear `--intent` directive,
+falling back to English when no clear language is present. Set an explicit
+language such as `git-agent config set language Japanese` to use it consistently.
+The local config overrides project config, which overrides user config. Conventional
+commit type and scope tokens keep their standard syntax; only natural-language
+text is translated.
 
 ### `git-agent completion`
 
@@ -304,6 +314,7 @@ scopes:
   - infra
 hook:
   - conventional
+language: auto # or an explicit language such as Japanese
 ```
 
 ### Hooks

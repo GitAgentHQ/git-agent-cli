@@ -125,6 +125,8 @@ git-agent config get <key>         # 显示某配置项的解析值及来源作�
 git-agent config set <key> <value> # 将配置值写入对应作用域
 git-agent config set --user api-key sk-xxx   # 写入用户作用域
 git-agent config set --project hook empty     # 写入项目作用域
+git-agent config set language auto             # 跟随 --intent 语言，否则使用英文
+git-agent config set --local language Japanese # 在本地覆盖语言
 git-agent config set --local max-diff-lines 1000  # 写入本地作用域
 git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直连端点放宽到 512 KiB）
 git-agent config set --local max-plan-files 300     # 提高规划阶段文件列表上限（超出后按目录折叠）
@@ -139,6 +141,11 @@ git-agent config set --local max-plan-files 300     # 提高规划阶段文件�
 | `--local` | `.git-agent/config.local.yml` | 本地覆盖，gitignore |
 
 未指定作用域参数时，提供商密钥默认写入 `--user`，其他配置项默认写入 `--project`。
+
+生成的提交信息默认使用 `language: auto`：标题描述、要点和说明会跟随清晰的
+`--intent` 指令语言；如果无法识别指令语言，则使用英文。也可以显式设置语言，
+例如 `git-agent config set language Japanese`。本地配置优先于项目配置，项目配置
+优先于用户配置。Conventional Commit 的类型和作用域保持标准语法，只翻译自然语言文本。
 
 ### `git-agent completion`
 
@@ -280,6 +287,7 @@ scopes:
   - infra
 hook:
   - conventional
+language: auto # 或显式指定语言，例如 Japanese
 ```
 
 ### 钩子
