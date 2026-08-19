@@ -2,11 +2,31 @@
 # conventional commit hook - validates commit message format
 # receives JSON payload on stdin: {"commitMessage": "...", ...}
 
-# --- extract commitMessage from JSON payload ---
+# --- extract commitMessage and language context from JSON payload ---
+PAYLOAD=$(cat)
 if command -v python3 >/dev/null 2>&1; then
-  MSG=$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("commitMessage",""))')
+  MSG=$(printf '%s' "$PAYLOAD" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("commitMessage",""))')
+  LANGUAGE_KIND=$(printf '%s' "$PAYLOAD" | python3 -c '
+import sys, json, unicodedata
+p = json.load(sys.stdin)
+language = str(p.get("config", {}).get("language", "")).strip().lower()
+if language in ("", "auto"):
+    text = str(p.get("intent", ""))
+    non_english = any(ord(c) > 127 and unicodedata.category(c).startswith("L") for c in text)
+else:
+    non_english = language not in ("english", "en", "en-us", "en-gb", "en-au", "en-ca")
+print("nonenglish" if non_english else "english")')
 elif command -v jq >/dev/null 2>&1; then
-  MSG=$(jq -r '.commitMessage')
+  MSG=$(printf '%s' "$PAYLOAD" | jq -r '.commitMessage // ""')
+  LANGUAGE=$(printf '%s' "$PAYLOAD" | jq -r '.config.language // ""' | tr '[:upper:]' '[:lower:]')
+  INTENT=$(printf '%s' "$PAYLOAD" | jq -r '.intent // ""')
+  case "$LANGUAGE" in
+    ""|auto)
+      if printf '%s' "$INTENT" | LC_ALL=C grep -q '[^ -~]'; then LANGUAGE_KIND=nonenglish; else LANGUAGE_KIND=english; fi
+      ;;
+    english|en|en-us|en-gb|en-au|en-ca) LANGUAGE_KIND=english ;;
+    *) LANGUAGE_KIND=nonenglish ;;
+  esac
 else
   echo "git-agent: pre-commit hook requires python3 or jq" >&2
   exit 1
@@ -30,8 +50,13 @@ if ! printf '%s' "$HEADER" | grep -qE \
   ERRORS=$((ERRORS + 1))
 fi
 
-# Rule 3: title <=50 chars
-HEADER_LEN=$(printf '%s' "$HEADER" | awk '{print length}')
+# Rule 3: title <=50 characters. Count Unicode characters for non-English
+# messages; retain the historical byte-oriented behavior for English.
+if [ "$LANGUAGE_KIND" = "nonenglish" ] && command -v python3 >/dev/null 2>&1; then
+  HEADER_LEN=$(python3 -c 'import sys; print(len(sys.argv[1]))' "$HEADER")
+else
+  HEADER_LEN=$(printf '%s' "$HEADER" | awk '{print length}')
+fi
 if [ "$HEADER_LEN" -gt 50 ]; then
   printf 'git-agent: title must be 50 characters or less (got %d)\n' "$HEADER_LEN" >&2
   ERRORS=$((ERRORS + 1))
@@ -45,10 +70,11 @@ case "$HEADER" in
     ;;
 esac
 
-# Rule 2: description must be all lowercase
+# Rule 2: English descriptions must be lowercase. Other languages retain
+# their natural capitalization and orthography.
 DESC="${HEADER#*: }"
 DESC_LOWER=$(printf '%s' "$DESC" | tr '[:upper:]' '[:lower:]')
-if [ "$DESC" != "$DESC_LOWER" ]; then
+if [ "$LANGUAGE_KIND" != "nonenglish" ] && [ "$DESC" != "$DESC_LOWER" ]; then
   echo "git-agent: description must be all lowercase" >&2
   ERRORS=$((ERRORS + 1))
 fi
