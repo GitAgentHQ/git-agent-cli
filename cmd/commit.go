@@ -79,6 +79,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	maxPlanFilesFlag, _ := cmd.Flags().GetInt("max-plan-files")
 	maxPlanFilesFlagChanged := cmd.Flags().Changed("max-plan-files")
 	providerCfg, err := resolveProviderConfig(cmd)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 
 	if configErr := providerConfigError(providerCfg); configErr != "" {
 		return agentErrors.NewExitCodeError(1, configErr)

@@ -78,9 +78,8 @@ Generate and create commit(s) with AI-generated messages. Auto-stages all change
 | `--dry-run` | bool | false | Print commit message without committing |
 | `--no-stage` | bool | false | Skip auto-staging; only commit already-staged changes |
 | `--amend` | bool | false | Regenerate and amend the most recent commit |
-| `--co-author` | stringArray | | Add a co-author trailer (repeatable); skipped if `no_model_co_author` is set in config |
+| `--co-author` | stringArray | | Add a co-author trailer (repeatable) |
 | `--trailer` | stringArray | | Add an arbitrary git trailer, format `"Key: Value"` (repeatable) |
-| `--no-attribution` | bool | false | Omit the default `Co-Authored-By: Git Agent <noreply@git-agent.dev>` trailer (`--no-git-agent` is a deprecated alias) |
 | `--max-diff-lines` | int | 0 | Maximum diff lines to send to the model (0 = no line limit; a byte cap always applies) |
 | `--max-diff-bytes` | int | 0 | Maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override) |
 | `--max-plan-files` | int | 0 | Maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150) |
@@ -266,8 +265,8 @@ Set a configuration value in the specified scope. Keys accept both snake_case an
 | `max-diff-lines` | `max_diff_lines` |
 | `max-diff-bytes` | `max_diff_bytes` |
 | `max-plan-files` | `max_plan_files` |
-| `no-git-agent-co-author` | `no_git_agent_co_author` |
-| `no-model-co-author` | `no_model_co_author` |
+| `require-git-agent-co-author` | `require_git_agent_co_author` |
+| `require-model-co-author` | `require_model_co_author` |
 
 ### Scopes
 
