@@ -148,7 +148,7 @@ Feature: Conventional commit message validation
 
   # --- error: description lowercase (Rule 2) ---
 
-  Scenario: Explicit English language still rejects uppercase descriptions
+  Scenario Outline: English locale aliases reject uppercase descriptions
     Given the commit message is:
       """
       feat: Add login endpoint
@@ -157,9 +157,15 @@ Feature: Conventional commit message validation
 
       This adds the login route.
       """
-    And the configured language is "en-US"
+    And the configured language is <language>
     Then HasErrors returns true
     And Errors contains "lowercase"
+
+    Examples:
+      | language |
+      | "en-US"  |
+      | "en-au"  |
+      | "en-ca"  |
 
   Scenario: Uppercase letter in description
     Given the commit message is:

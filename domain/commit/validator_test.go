@@ -24,9 +24,9 @@ func TestValidateConventionalLanguageAware(t *testing.T) {
 	}
 
 	english := "feat: Add login endpoint\n\n- add route handler\n\nThis adds the login route."
-	for _, language := range []string{"", "auto", "English", "en", "en-US"} {
+	for _, language := range []string{"", "auto", "English", "en", "en-US", "en-au", "en-ca"} {
 		result := commit.ValidateConventionalWithLanguage(english, nil, language, "")
-		if language == "English" || language == "en" || language == "en-US" || language == "" || language == "auto" {
+		if language == "English" || language == "en" || language == "en-US" || language == "en-au" || language == "en-ca" || language == "" || language == "auto" {
 			if !result.HasErrors() {
 				t.Errorf("language %q should retain English lowercase validation", language)
 			}
