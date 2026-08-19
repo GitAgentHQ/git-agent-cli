@@ -34,6 +34,35 @@ func TestCompositeExecutor_ValidMessage_NoShellHook(t *testing.T) {
 	}
 }
 
+func TestCompositeExecutor_NonEnglishLanguage_PassesNaturalCase(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+	input := compositeInput("feat: 修复登录问题\n\n- 添加登录端点\n\n这个修复处理了登录失败。")
+	input.Intent = "修复登录问题"
+	input.Config.Language = "auto"
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected auto non-English validation to pass, got %d: %s", result.ExitCode, result.Stderr)
+	}
+}
+
+func TestCompositeExecutor_ExplicitEnglishLanguage_RetainsLowercaseRule(t *testing.T) {
+	exec := infraHook.NewCompositeHookExecutor()
+	input := compositeInput("feat: Add login endpoint\n\n- add route handler\n\nThis adds the login route.")
+	input.Config.Language = "en-US"
+
+	result, err := exec.Execute(context.Background(), []string{"conventional"}, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode == 0 || !strings.Contains(result.Stderr, "lowercase") {
+		t.Fatalf("expected English lowercase validation error, got %d: %s", result.ExitCode, result.Stderr)
+	}
+}
+
 func TestCompositeExecutor_InvalidMessage_Blocked(t *testing.T) {
 	exec := infraHook.NewCompositeHookExecutor()
 
