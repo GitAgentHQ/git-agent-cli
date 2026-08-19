@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	goopenai "github.com/sashabaranov/go-openai"
 
@@ -263,17 +264,48 @@ const generateSystemPromptScoped = `You are an expert software engineer. Generat
 
 const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert. Bullets are imperative, ≤72 chars per entry. Explanation is a closing paragraph. All text targets ≤72 characters per line.`
 
+const englishCaseInstruction = "For English output, keep the title description ALL LOWERCASE, start each bullet with an UPPERCASE first letter, and write the explanation in sentence case."
+
 // languageInstruction tells the model which prose language to use without
-// translating the conventional commit type or scope tokens.
+// translating the conventional commit type or scope tokens. English output
+// keeps the case rules enforced by the conventional commit validator; other
+// languages keep their natural capitalization and orthography.
 func languageInstruction(language, intent string) string {
 	language = strings.TrimSpace(language)
 	if language == "" || strings.EqualFold(language, "auto") {
 		if strings.TrimSpace(intent) != "" {
-			return "Write the title description, bullets, and explanation in the same language as the PRIMARY DIRECTIVE. If the directive has no clear language, use English."
+			instruction := "Write the title description, bullets, and explanation in the same language as the PRIMARY DIRECTIVE."
+			if isLikelyEnglish(intent) {
+				return instruction + " " + englishCaseInstruction
+			}
+			return instruction + " Preserve that language's natural capitalization and orthography."
 		}
-		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language."
+		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
 	}
-	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text.", language)
+	if isEnglishLanguage(language) {
+		return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
+	}
+	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", language)
+}
+
+func isEnglishLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "english", "en", "en-us", "en-gb", "auto-english":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLikelyEnglish(text string) bool {
+	for _, r := range text {
+		if unicode.IsLetter(r) && r > unicode.MaxASCII {
+			return false
+		}
+	}
+	// Directives without letters have no detectable language, so preserve the
+	// English fallback used when no directive is provided.
+	return true
 }
 
 func languageForConfig(cfg *project.Config) string {
