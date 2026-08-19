@@ -37,10 +37,8 @@ var KeyRegistry = map[string]KeyDef{
 	"max_input_tokens":         {Name: "max_input_tokens", Type: "int", AllowProject: true, AllowLocal: true},
 	"max_plan_files":           {Name: "max_plan_files", Type: "int", AllowProject: true, AllowLocal: true},
 	"plan_fallback":            {Name: "plan_fallback", Type: "string", AllowProject: true, AllowLocal: true},
-	"no_git_agent_co_author":   {Name: "no_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"no_model_co_author":       {Name: "no_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"require_git_agent_co_author": {Name: "require_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_model_co_author":  {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"model_co_author_domains":  {Name: "model_co_author_domains", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"graph_autobuild":          {Name: "graph_autobuild", Type: "bool", AllowProject: true, AllowLocal: true},
 }
 
@@ -55,10 +53,8 @@ var KeyAliases = map[string]string{
 	"max-diff-bytes":           "max_diff_bytes",
 	"max-plan-files":           "max_plan_files",
 	"plan-fallback":            "plan_fallback",
-	"no-git-agent-co-author":   "no_git_agent_co_author",
-	"no-model-co-author":       "no_model_co_author",
+	"require-git-agent-co-author": "require_git_agent_co_author",
 	"require-model-co-author":  "require_model_co_author",
-	"model-co-author-domains":  "model_co_author_domains",
 	"graph-autobuild":          "graph_autobuild",
 }
 

@@ -264,7 +264,6 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 		"--base-url", server.URL,
 		"--model", "test-model",
 		"--no-stage",
-		"--no-attribution",
 	)
 	c.Dir = dir
 	c.Env = []string{
@@ -339,7 +338,6 @@ func TestCommitCmd_JSONOutput(t *testing.T) {
 		"--base-url", server.URL,
 		"--model", "test-model",
 		"--no-stage",
-		"--no-attribution",
 		"-o", "json",
 	)
 	c.Dir = dir
@@ -410,7 +408,7 @@ func TestCommitCmd_JSONDryRun(t *testing.T) {
 
 	cmd := exec.Command(agentBin, "commit",
 		"--api-key", "test-key", "--base-url", server.URL, "--model", "test-model",
-		"--no-stage", "--no-attribution", "--dry-run", "-o", "json",
+		"--no-stage", "--dry-run", "-o", "json",
 	)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "XDG_CONFIG_HOME=" + t.TempDir()}
@@ -486,7 +484,6 @@ func TestCommitCmd_NoReasoningEffortSent(t *testing.T) {
 		"--base-url", server.URL,
 		"--model", "o3", // formerly triggered reasoning_effort=low
 		"--no-stage",
-		"--no-attribution",
 	)
 	c.Dir = dir
 	c.Env = []string{
@@ -541,7 +538,6 @@ func commitOneFile(t *testing.T, dir, serverURL, configYML string) {
 		"--base-url", serverURL,
 		"--model", "test-model",
 		"--no-stage",
-		"--no-attribution",
 	)
 	c.Dir = dir
 	c.Env = []string{
@@ -666,7 +662,6 @@ func TestAutonomousRoot_AutoInitScopeAndGitignore(t *testing.T) {
 		"--api-key", "test-key",
 		"--base-url", server.URL,
 		"--model", "test-model",
-		"--no-attribution",
 	)
 	c.Dir = dir
 	c.Env = []string{
@@ -734,7 +729,6 @@ func TestCommitCmd_SkippedAutoInitOnDisk(t *testing.T) {
 		"--api-key", "test-key",
 		"--base-url", server.URL,
 		"--model", "test-model",
-		"--no-attribution",
 	)
 	c.Dir = dir
 	c.Env = []string{

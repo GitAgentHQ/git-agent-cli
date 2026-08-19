@@ -66,10 +66,7 @@ func (e *compositeHookExecutor) Execute(ctx context.Context, hooks []string, inp
 }
 
 func (e *compositeHookExecutor) runModelCoAuthorCheck(input domainHook.HookInput) *domainHook.HookResult {
-	domains := append([]string(nil), domainProject.DefaultModelCoAuthorDomains...)
-	domains = append(domains, input.Config.ModelCoAuthorDomains...)
-
-	validation := domainCommit.ValidateModelCoAuthor(input.CommitMessage, domains)
+	validation := domainCommit.ValidateModelCoAuthor(input.CommitMessage, domainProject.DefaultModelCoAuthorDomains)
 	if !validation.HasErrors() {
 		return &domainHook.HookResult{ExitCode: 0}
 	}
