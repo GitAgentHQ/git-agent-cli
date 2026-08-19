@@ -27,10 +27,12 @@ type CoChangeHint struct {
 
 // PlanRequest carries all context needed to produce a CommitPlan.
 type PlanRequest struct {
-	StagedDiff    *diff.StagedDiff
-	UnstagedDiff  *diff.StagedDiff
-	Intent        string
-	Config        *project.Config
+	StagedDiff   *diff.StagedDiff
+	UnstagedDiff *diff.StagedDiff
+	Intent       string
+	Config       *project.Config
+	// Language overrides Config.Language when set; empty means use config/auto.
+	Language      string
 	CoChangeHints []CoChangeHint
 	MaxPlanFiles  int // 0 = DefaultMaxPlanFiles; caps prompt file-list size, see SummarizeFileList
 }
