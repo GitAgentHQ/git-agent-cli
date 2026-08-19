@@ -9,10 +9,12 @@ import (
 
 // GenerateRequest contains everything needed to generate a commit message.
 type GenerateRequest struct {
-	Diff    *diff.StagedDiff
-	Intent  string
-	Config  *project.Config
-	Verbose bool
+	Diff   *diff.StagedDiff
+	Intent string
+	Config *project.Config
+	// Language overrides Config.Language when set; empty means use config/auto.
+	Language string
+	Verbose  bool
 	// HookFeedback carries the rejection reason from a previous hook block,
 	// so the LLM can correct the message on retry.
 	HookFeedback string

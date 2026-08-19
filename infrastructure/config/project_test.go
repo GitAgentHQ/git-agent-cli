@@ -45,6 +45,39 @@ func TestLoadProjectConfig_RequireModelCoAuthor_DefaultFalse(t *testing.T) {
 	}
 }
 
+func TestLoadProjectConfig_LanguagePrecedence(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "language: Spanish\n")
+	userPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(userPath, []byte("language: French\n"), 0o600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git-agent", "config.local.yml"), []byte("language: Japanese\n"), 0o600); err != nil {
+		t.Fatalf("write local config: %v", err)
+	}
+
+	cfg := config.LoadProjectConfig(dir, userPath)
+	if cfg == nil || cfg.Language != "Japanese" {
+		t.Fatalf("expected local language to win, got %#v", cfg)
+	}
+
+	if err := os.Remove(filepath.Join(dir, ".git-agent", "config.local.yml")); err != nil {
+		t.Fatalf("remove local config: %v", err)
+	}
+	cfg = config.LoadProjectConfig(dir, userPath)
+	if cfg == nil || cfg.Language != "Spanish" {
+		t.Fatalf("expected project language to win over user, got %#v", cfg)
+	}
+
+	if err := os.Remove(filepath.Join(dir, ".git-agent", "config.yml")); err != nil {
+		t.Fatalf("remove project config: %v", err)
+	}
+	cfg = config.LoadProjectConfig(dir, userPath)
+	if cfg == nil || cfg.Language != "French" {
+		t.Fatalf("expected user language fallback, got %#v", cfg)
+	}
+}
+
 func TestLoadProjectConfig_LocalOverridesProject(t *testing.T) {
 	dir := t.TempDir()
 	writeProjectConfig(t, dir, "require_model_co_author: false\n")

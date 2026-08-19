@@ -27,6 +27,345 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestClient_GenerateLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"修复: 修复问题","bullets":["修复问题"],"explanation":"修复说明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "修复登录问题",
+		Config: &project.Config{Language: "auto"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(system, "ALL LOWERCASE") || strings.Contains(system, "UPPERCASE first letter") {
+		t.Errorf("system prompt still imposes English case rules: %q", system)
+	}
+	if !strings.Contains(user, "same language as the PRIMARY DIRECTIVE") || !strings.Contains(user, "Preserve that language's natural capitalization and orthography") {
+		t.Errorf("auto Chinese language instruction missing: %q", user)
+	}
+	if strings.Contains(user, "ALL LOWERCASE") || strings.Contains(user, "UPPERCASE first letter") {
+		t.Errorf("auto Chinese prompt must not impose English case rules: %q", user)
+	}
+}
+
+func TestClient_GenerateAutoEnglishLanguagePrompt(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: add login","bullets":["Add login"],"explanation":"Adds login."}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "add login support",
+		Config: &project.Config{Language: "auto"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, want := range []string{
+		"same language as the PRIMARY DIRECTIVE",
+		"title description ALL LOWERCASE",
+		"bullet with an UPPERCASE first letter",
+		"explanation in sentence case",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("auto English prompt missing %q: %q", want, user)
+		}
+	}
+}
+
+func TestClient_EnglishLocaleAliasesUseEnglishPrompt(t *testing.T) {
+	for _, language := range []string{"en-au", "en-ca"} {
+		t.Run(language, func(t *testing.T) {
+			prompt := languageInstruction(language, "")
+			for _, want := range []string{
+				"Write the title description, bullets, and explanation in English",
+				"title description ALL LOWERCASE",
+				"bullet with an UPPERCASE first letter",
+				"explanation in sentence case",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("English locale %q prompt missing %q: %q", language, want, prompt)
+				}
+			}
+			if strings.Contains(prompt, "natural capitalization") {
+				t.Errorf("English locale %q prompt must not use natural-language capitalization guidance: %q", language, prompt)
+			}
+		})
+	}
+}
+
+func TestClient_GenerateEnglishLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: add login","bullets":["Add login support"],"explanation":"Adds login support."}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "add login support",
+		Config: &project.Config{Language: "English"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if system != generateSystemPrompt {
+		t.Errorf("unscoped generation must use the ordinary system prompt, got: %q", system)
+	}
+	for _, want := range []string{
+		"Write the title description, bullets, and explanation in English",
+		"title description ALL LOWERCASE",
+		"bullet with an UPPERCASE first letter",
+		"explanation in sentence case",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("English prompt missing %q: %q", want, user)
+		}
+	}
+	if strings.Contains(user, "natural capitalization") {
+		t.Errorf("English prompt must not use natural-language capitalization guidance: %q", user)
+	}
+}
+
+func TestClient_GenerateScopedEnglishLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix(auth): add login","bullets":["Add login support"],"explanation":"Adds login support."}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "add login support",
+		Config: &project.Config{
+			Language: "English",
+			Scopes:   []project.Scope{{Name: "auth", Description: "authentication code"}},
+		},
+		Diff: &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if system != generateSystemPromptScoped {
+		t.Errorf("scoped generation must use the scoped system prompt, got: %q", system)
+	}
+	if !strings.Contains(user, "title description ALL LOWERCASE") || !strings.Contains(user, "UPPERCASE first letter") {
+		t.Errorf("scoped English prompt must preserve case rules: %q", user)
+	}
+}
+
+func TestClient_GenerateLanguagePromptAndHookRetry(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: 修复问题","bullets":["修复问题"],"explanation":"修复说明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		PreviousMessage: "fix: old message\n\nOld explanation.",
+		HookFeedback:    "title must use the configured language",
+		Config:          &project.Config{Language: "Japanese"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if system != retrySystemPrompt {
+		t.Errorf("retry must use the retry system prompt, got: %q", system)
+	}
+	for _, want := range []string{
+		"fix: old message",
+		"title must use the configured language",
+		"Write the title description, bullets, and explanation in Japanese",
+		"Preserve that language's natural capitalization and orthography",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("retry prompt missing %q: %q", want, user)
+		}
+	}
+	if strings.Contains(user, "ALL LOWERCASE") || strings.Contains(user, "UPPERCASE first letter") {
+		t.Errorf("Japanese retry prompt must not impose English case rules: %q", user)
+	}
+}
+
+func TestClient_GenerateEnglishHookRetryPrompt(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: add login","bullets":["Add login"],"explanation":"Adds login."}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		PreviousMessage: "fix: Add login\n\nAdd login.",
+		HookFeedback:    "description must be all lowercase",
+		Config:          &project.Config{Language: "English"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, want := range []string{
+		"Write the title description, bullets, and explanation in English",
+		"title description ALL LOWERCASE",
+		"bullet with an UPPERCASE first letter",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("English retry prompt missing %q: %q", want, user)
+		}
+	}
+}
+
+func TestClient_PlanEnglishLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups":[{"files":["main.go"],"title":"feat: add","bullets":["Add"],"explanation":"Add it."}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		Intent:       "add feature",
+		Config:       &project.Config{Language: "English"},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if system != planSystemPrompt {
+		t.Errorf("unscoped plan must use ordinary system prompt, got: %q", system)
+	}
+	for _, want := range []string{
+		"Write the title description, bullets, and explanation in English",
+		"title description ALL LOWERCASE",
+		"bullet with an UPPERCASE first letter",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("English plan prompt missing %q: %q", want, user)
+		}
+	}
+}
+
+func TestClient_PlanScopedEnglishLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups":[{"files":["main.go"],"title":"feat(app): add","bullets":["Add"],"explanation":"Add it."}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		Intent: "add feature",
+		Config: &project.Config{
+			Language: "English",
+			Scopes:   []project.Scope{{Name: "app", Description: "application code"}},
+		},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if system != planSystemPromptScoped {
+		t.Errorf("scoped plan must use scoped system prompt, got: %q", system)
+	}
+	if !strings.Contains(user, "title description ALL LOWERCASE") || !strings.Contains(user, "UPPERCASE first letter") {
+		t.Errorf("scoped English plan must preserve case rules: %q", user)
+	}
+}
+
+func TestClient_PlanAutoChineseLanguagePrompt(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups":[{"files":["main.go"],"title":"feat: 添加功能","bullets":["添加功能"],"explanation":"说明。"}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		Intent:       "添加功能",
+		Config:       &project.Config{Language: "auto"},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !strings.Contains(user, "same language as the PRIMARY DIRECTIVE") || !strings.Contains(user, "Preserve that language's natural capitalization and orthography") {
+		t.Errorf("auto Chinese plan instruction missing: %q", user)
+	}
+	if strings.Contains(user, "ALL LOWERCASE") || strings.Contains(user, "UPPERCASE first letter") {
+		t.Errorf("auto Chinese plan must not impose English case rules: %q", user)
+	}
+}
+
+func TestClient_PlanLanguagePromptAndRetry(t *testing.T) {
+	var users []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user := requestMessages(t, r)
+		users = append(users, user)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups":[{"files":["main.go"],"title":"feat: add","bullets":["Add"],"explanation":"Add it."}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		Intent:       "添加功能",
+		Config:       &project.Config{Language: "Korean"},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(users) != 1 || !strings.Contains(users[0], "title description, bullets, and explanation in Korean") {
+		t.Fatalf("explicit language instruction missing: %v", users)
+	}
+}
+
+// requestMessages decodes the system and user prompts from an inbound request.
+func requestMessages(t *testing.T, r *http.Request) (string, string) {
+	t.Helper()
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if len(req.Messages) < 2 {
+		t.Fatalf("expected system+user messages, got %d", len(req.Messages))
+	}
+	return req.Messages[0].Content, req.Messages[1].Content
+}
+
 func TestClient_CloudflareAIGatewayHeaders(t *testing.T) {
 	var requestBody map[string]any
 	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {

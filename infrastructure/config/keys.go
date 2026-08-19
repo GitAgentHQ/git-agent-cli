@@ -37,6 +37,7 @@ var KeyRegistry = map[string]KeyDef{
 	"max_input_tokens":            {Name: "max_input_tokens", Type: "int", AllowProject: true, AllowLocal: true},
 	"max_plan_files":              {Name: "max_plan_files", Type: "int", AllowProject: true, AllowLocal: true},
 	"plan_fallback":               {Name: "plan_fallback", Type: "string", AllowProject: true, AllowLocal: true},
+	"language":                    {Name: "language", Type: "string", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_git_agent_co_author": {Name: "require_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_model_co_author":     {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"graph_autobuild":             {Name: "graph_autobuild", Type: "bool", AllowProject: true, AllowLocal: true},

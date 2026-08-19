@@ -38,6 +38,7 @@ type Config struct {
 	MaxInputTokens          int      `json:"maxInputTokens"`           // 0 = built-in default preflight ceiling (1M tokens)
 	MaxPlanFiles            int      `json:"maxPlanFiles"`             // 0 = built-in default cap
 	PlanFallback            string   `json:"planFallback"`             // PlanFallbackNone | PlanFallbackHeuristic; empty = none
+	Language                string   `json:"language"`                 // Generated commit message language; empty = auto
 	RequireGitAgentCoAuthor bool     `json:"requireGitAgentCoAuthor"`  // When true, append Co-Authored-By: Git Agent trailer
 	RequireModelCoAuthor    bool     `json:"requireModelCoAuthor"`     // When true, every commit must carry a Co-Authored-By from a built-in AI-provider domain
 	GraphAutobuild          *bool    `json:"graphAutobuild,omitempty"` // nil = default on; commit bootstraps and maintains the code graph unless set false

@@ -25,17 +25,23 @@ func TestConventionalHook(t *testing.T) {
 		Intent        string   `json:"intent"`
 		StagedFiles   []string `json:"stagedFiles"`
 		Config        struct {
-			Scopes []string `json:"scopes"`
+			Scopes   []string `json:"scopes"`
+			Language string   `json:"language"`
 		} `json:"config"`
 	}
 
-	makeInput := func(msg string) string {
+	makeInputWithLanguage := func(msg, language, intent string) string {
 		p := payload{
 			CommitMessage: msg,
+			Intent:        intent,
 			StagedFiles:   []string{},
 		}
+		p.Config.Language = language
 		b, _ := json.Marshal(p)
 		return string(b)
+	}
+	makeInput := func(msg string) string {
+		return makeInputWithLanguage(msg, "", "")
 	}
 
 	fullMsg := func(header, bullets, explanation string) string {
@@ -176,4 +182,32 @@ func TestConventionalHook(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("non-English natural capitalization", func(t *testing.T) {
+		msg := "feat: 修复登录问题\n\n- 添加登录端点\n\n这个修复处理了登录失败。"
+		cmd := exec.Command("sh", scriptPath)
+		cmd.Stdin = strings.NewReader(makeInputWithLanguage(msg, "auto", "修复登录问题"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("non-English hook failed: %v, output: %s", err, out)
+		}
+	})
+
+	t.Run("explicit English retains lowercase", func(t *testing.T) {
+		msg := fullMsg("feat: Add login endpoint", "- add route handler", "This adds the route.")
+		cmd := exec.Command("sh", scriptPath)
+		cmd.Stdin = strings.NewReader(makeInputWithLanguage(msg, "en-US", ""))
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "lowercase") {
+			t.Fatalf("expected English lowercase failure, err=%v output=%s", err, out)
+		}
+	})
+
+	t.Run("non-English title counts runes", func(t *testing.T) {
+		msg := fullMsg("feat: ログイン機能を追加して認証処理を改善します", "- ログイン処理を更新", "認証の動作を改善します。")
+		cmd := exec.Command("sh", scriptPath)
+		cmd.Stdin = strings.NewReader(makeInputWithLanguage(msg, "Japanese", ""))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("non-English title length should count runes, err=%v output=%s", err, out)
+		}
+	})
 }

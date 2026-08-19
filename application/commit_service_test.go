@@ -676,6 +676,30 @@ func TestCommitService_NoStage_NothingStaged_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestCommitService_Amend_PassesLanguageConfigToGenerator(t *testing.T) {
+	gen := &recordingGenerator{msgs: []*commit.CommitMessage{defaultMsg()}}
+	git := &mockCommitGitClient{lastCommitDiff: defaultDiff()}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+	language := "Japanese"
+	if _, err := svc.Commit(context.Background(), application.CommitRequest{
+		Amend:  true,
+		Config: &project.Config{Language: language},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(gen.reqs) != 1 {
+		t.Fatalf("expected 1 Generate call, got %d", len(gen.reqs))
+	}
+	if gen.reqs[0].Config == nil {
+		t.Fatal("expected Generate request config")
+	}
+	if got := gen.reqs[0].Config.Language; got != language {
+		t.Errorf("Generate request Config.Language = %q, want %q", got, language)
+	}
+}
+
 func TestCommitService_Amend_CallsAmendCommit(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	git := &mockCommitGitClient{

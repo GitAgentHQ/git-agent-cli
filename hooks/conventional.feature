@@ -9,6 +9,22 @@ Feature: Conventional Commits validation hook
     Given the hook receives a JSON payload on stdin
     And the payload contains a "commit_message" field
 
+  # --- language-aware passing ---
+
+  Scenario: Non-English message keeps natural capitalization
+    Given the commit message is "feat: 修复登录问题\n\n- 添加登录端点\n\n这个修复处理了登录失败。"
+    And the payload config language is "auto"
+    And the payload intent is "修复登录问题"
+    When the hook runs
+    Then it exits with code 0
+
+  Scenario: Explicit English still requires lowercase
+    Given the commit message is "feat: Add login endpoint\n\n- add route handler\n\nThis adds the route."
+    And the payload config language is "en-US"
+    When the hook runs
+    Then it exits with code 1
+    And stderr contains "lowercase"
+
   # --- passing ---
 
   Scenario: Valid full message
