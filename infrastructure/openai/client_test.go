@@ -27,6 +27,106 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestClient_GenerateLanguagePrompt(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"修复: 修复问题","bullets":["修复问题"],"explanation":"修复说明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "修复登录问题",
+		Config: &project.Config{Language: "auto"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(system, "ALL LOWERCASE") || strings.Contains(system, "UPPERCASE first letter") {
+		t.Errorf("prompt still imposes English case rules: %q", system)
+	}
+	if !strings.Contains(user, "same language as the PRIMARY DIRECTIVE") || !strings.Contains(user, "If the directive has no clear language, use English") {
+		t.Errorf("auto language instruction missing: %q", user)
+	}
+}
+
+func TestClient_GenerateLanguagePromptAndHookRetry(t *testing.T) {
+	var system, user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		system, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: 修复问题","bullets":["修复问题"],"explanation":"修复说明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		PreviousMessage: "fix: old message\n\nOld explanation.",
+		HookFeedback:    "title must use the configured language",
+		Config:          &project.Config{Language: "Japanese"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if system != retrySystemPrompt {
+		t.Errorf("retry must use the retry system prompt, got: %q", system)
+	}
+	for _, want := range []string{
+		"fix: old message",
+		"title must use the configured language",
+		"Write the title description, bullets, and explanation in Japanese",
+	} {
+		if !strings.Contains(user, want) {
+			t.Errorf("retry prompt missing %q: %q", want, user)
+		}
+	}
+}
+
+func TestClient_PlanLanguagePromptAndRetry(t *testing.T) {
+	var users []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user := requestMessages(t, r)
+		users = append(users, user)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"groups":[{"files":["main.go"],"title":"feat: add","bullets":["Add"],"explanation":"Add it."}]}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Plan(context.Background(), commit.PlanRequest{
+		Intent:       "添加功能",
+		Config:       &project.Config{Language: "Korean"},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(users) != 1 || !strings.Contains(users[0], "title description, bullets, and explanation in Korean") {
+		t.Fatalf("explicit language instruction missing: %v", users)
+	}
+}
+
+// requestMessages decodes the system and user prompts from an inbound request.
+func requestMessages(t *testing.T, r *http.Request) (string, string) {
+	t.Helper()
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if len(req.Messages) < 2 {
+		t.Fatalf("expected system+user messages, got %d", len(req.Messages))
+	}
+	return req.Messages[0].Content, req.Messages[1].Content
+}
+
 func TestClient_CloudflareAIGatewayHeaders(t *testing.T) {
 	var requestBody map[string]any
 	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {

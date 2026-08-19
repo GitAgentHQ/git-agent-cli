@@ -257,11 +257,38 @@ func unmarshalLLMJSON(raw, wrapKey string, dest any) error {
 	return nil
 }
 
-const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; scope is optional, omit if no clear scope applies; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
+const generateSystemPrompt = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert; scope is optional, omit if no clear scope applies; bullets is an array of strings in imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph; all text targets ≤72 characters per line.`
 
-const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert — ALL LOWERCASE ≤50 chars imperative mood; REQUIRED scope — you MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name; if no listed scope covers the change, omit the scope rather than using a mismatched one; bullets is an array of strings each starting with an UPPERCASE first letter, imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph in sentence case; all text targets ≤72 characters per line.`
+const generateSystemPromptScoped = `You are an expert software engineer. Generate a conventional commit message from the provided git diff. Respond ONLY with valid JSON in this exact format: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Rules: title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert; REQUIRED scope — you MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name; if no listed scope covers the change, omit the scope rather than using a mismatched one; bullets is an array of strings in imperative mood, targeting ≤72 chars per entry; explanation is a closing paragraph; all text targets ≤72 characters per line.`
 
-const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title: conventional commits format ALL LOWERCASE ≤50 chars imperative mood. Bullets: array of strings each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry. Explanation: closing paragraph, sentence case. All text targets ≤72 characters per line.`
+const retrySystemPrompt = `You are an expert software engineer. Fix the commit message to satisfy the hook requirement. Respond ONLY with valid JSON: {"title": "...", "bullets": ["Bullet one", "Bullet two"], "explanation": "Explanation paragraph."}. Title uses conventional commits format with one of these types: feat, fix, docs, style, refactor, perf, test, chore, build, ci, revert. Bullets are imperative, ≤72 chars per entry. Explanation is a closing paragraph. All text targets ≤72 characters per line.`
+
+// languageInstruction tells the model which prose language to use without
+// translating the conventional commit type or scope tokens.
+func languageInstruction(language, intent string) string {
+	language = strings.TrimSpace(language)
+	if language == "" || strings.EqualFold(language, "auto") {
+		if strings.TrimSpace(intent) != "" {
+			return "Write the title description, bullets, and explanation in the same language as the PRIMARY DIRECTIVE. If the directive has no clear language, use English."
+		}
+		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language."
+	}
+	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text.", language)
+}
+
+func languageForConfig(cfg *project.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Language
+}
+
+func effectiveLanguage(override string, cfg *project.Config) string {
+	if strings.TrimSpace(override) != "" {
+		return override
+	}
+	return languageForConfig(cfg)
+}
 
 const planSystemPrompt = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
 
@@ -274,10 +301,10 @@ Some entries look like "path/to/dir/ (N files)" instead of a real file path — 
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
 
-Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+Rules for title: conventional commits format; the type token remains lowercase, ≤50 chars, imperative mood.
 Scope is optional; omit if no clear scope applies.
-Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
-Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
+Rules for bullets: array of strings in imperative mood, ≤72 chars per entry.
+Rules for explanation: closing paragraph, ≤72 chars per line.`
 
 const planSystemPromptScoped = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
 
@@ -290,10 +317,10 @@ Some entries look like "path/to/dir/ (N files)" instead of a real file path — 
 Respond ONLY with valid JSON:
 {"groups": [{"files": ["..."], "title": "type(scope): description", "bullets": ["Bullet one"], "explanation": "Explanation."}]}
 
-Rules for title: conventional commits format, ALL LOWERCASE, ≤50 chars, imperative mood.
+Rules for title: conventional commits format; the type token remains lowercase, ≤50 chars, imperative mood.
 REQUIRED scope — every title MUST use one of the scopes listed in the user message; choose by reading each scope's DESCRIPTION to see what it covers, not by keyword similarity with the scope name. Files that map to different scopes MUST be placed in separate groups — never mix scopes within one group. If NO listed scope covers a group's files (e.g. documentation-only changes), omit the scope for that group rather than forcing a mismatched one. Never return an empty groups array when files are provided.
-Rules for bullets: array of strings, each starting with UPPERCASE first letter, imperative mood, ≤72 chars per entry.
-Rules for explanation: closing paragraph, sentence case, ≤72 chars per line.`
+Rules for bullets: array of strings in imperative mood, ≤72 chars per entry.
+Rules for explanation: closing paragraph, ≤72 chars per line.`
 
 const detectTechSystemPrompt = `You are an expert software engineer. Analyze the project's OS, directories, and files to detect which technologies are used.
 
@@ -549,6 +576,7 @@ func classifyAPIError(err error) *agentErrors.APIError {
 
 func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	var systemPrompt, userPrompt string
+	language := effectiveLanguage(req.Language, req.Config)
 
 	if req.PreviousMessage != "" && req.HookFeedback != "" {
 		systemPrompt = retrySystemPrompt
@@ -557,6 +585,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			req.PreviousMessage,
 			req.HookFeedback,
 		)
+		userPrompt += "\n\n" + languageInstruction(language, req.Intent)
 	} else {
 		hasScopes := req.Config != nil && len(req.Config.Scopes) > 0
 		if hasScopes {
@@ -577,6 +606,7 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			strings.Join(req.Diff.Files, ", "),
 		))
 		userPrompt = strings.Join(promptParts, "\n\n")
+		userPrompt += "\n\n" + languageInstruction(language, req.Intent)
 		if req.HookFeedback != "" {
 			userPrompt += "\n\nPrevious attempt was rejected by the commit hook. Reason:\n" + req.HookFeedback + "\nFix the commit message to satisfy the requirement above."
 		}
@@ -693,6 +723,7 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 			strings.Join(labels, "\n"),
 		))
 	}
+	planParts = append(planParts, languageInstruction(effectiveLanguage(req.Language, req.Config), req.Intent))
 	if len(req.CoChangeHints) > 0 {
 		var lines []string
 		for _, h := range req.CoChangeHints {
