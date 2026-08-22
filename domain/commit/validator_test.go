@@ -180,15 +180,21 @@ func TestValidateConventional(t *testing.T) {
 		},
 
 		// --- Rule 9: Co-Authored-By format ---
+		// Git accepts trailers as free-form text, so any non-empty value is
+		// valid — with or without an email.
 		{
-			name:        "co-authored-by missing angle brackets",
-			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot bot@example.com",
-			wantErrors:  true,
-			errContains: "Co-Authored-By",
+			name:       "co-authored-by with name only",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: OX Alpha",
+			wantErrors: false,
 		},
 		{
-			name:        "co-authored-by missing email",
-			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot",
+			name:       "co-authored-by with bare email and no brackets",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot bot@example.com",
+			wantErrors: false,
+		},
+		{
+			name:        "co-authored-by empty value",
+			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By:",
 			wantErrors:  true,
 			errContains: "Co-Authored-By",
 		},

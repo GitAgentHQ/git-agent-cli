@@ -60,8 +60,12 @@ func (r *ValidationResult) Warnings() []string {
 }
 
 var (
-	headerRe   = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
-	scopeRe    = regexp.MustCompile(`^\w+\(([a-z0-9_-]+)\)`)
+	headerRe = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
+	scopeRe  = regexp.MustCompile(`^\w+\(([a-z0-9_-]+)\)`)
+	// coAuthorRe matches the strict "Name <email@domain>" form. Git itself
+	// treats trailers as free-form text (Rule 9 accepts any non-empty value);
+	// this stricter pattern is only needed where an email is semantically
+	// required, i.e. model-domain attribution policy.
 	coAuthorRe = regexp.MustCompile(`^Co-Authored-By: .+ <[^>]+@[^>]+>$`)
 	footerRe   = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): `)
 	pastVerbs  = []string{
@@ -287,15 +291,15 @@ func checkBodyLineLength(result *ValidationResult, bodyLines []string) {
 }
 
 func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
-	// Rule 9: Co-Authored-By format, when present
+	// Rule 9: git commits any trailer text, so a Co-Authored-By line is valid
+	// with a plain name or with the Name <email@domain> form; only an empty
+	// value is malformed.
 	for _, line := range bodyLines {
-		if strings.HasPrefix(line, "Co-Authored-By:") {
-			if !coAuthorRe.MatchString(line) {
-				result.Issues = append(result.Issues, ValidationIssue{
-					SeverityError,
-					"Co-Authored-By must be: Co-Authored-By: Name <email@domain>",
-				})
-			}
+		if strings.HasPrefix(line, "Co-Authored-By:") && strings.TrimSpace(line[len("Co-Authored-By:"):]) == "" {
+			result.Issues = append(result.Issues, ValidationIssue{
+				SeverityError,
+				"Co-Authored-By must have a value: Co-Authored-By: Name or Co-Authored-By: Name <email@domain>",
+			})
 		}
 	}
 }
