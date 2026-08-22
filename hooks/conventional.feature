@@ -156,11 +156,19 @@ Feature: Conventional Commits validation hook
     Then it exits with code 1
     And stderr contains "explanation paragraph"
 
-  # --- error: Co-Authored-By malformed ---
+  # --- Co-Authored-By format ---
+  # Git treats trailers as free-form text and commits name-only co-authors
+  # without complaint, so only an empty value is malformed.
 
-  Scenario: Co-Authored-By missing email angle brackets
+  Scenario: Co-Authored-By with name only passes
     Given the commit message is:
-      "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By: Bot bot@example.com"
+      "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By: OX Alpha"
+    When the hook runs
+    Then it exits with code 0
+
+  Scenario: Co-Authored-By with empty value fails
+    Given the commit message is:
+      "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By:"
     When the hook runs
     Then it exits with code 1
     And stderr contains "Co-Authored-By"
