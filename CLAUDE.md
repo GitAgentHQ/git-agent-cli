@@ -42,7 +42,15 @@ cmd → application → domain ← infrastructure
 - **`infrastructure/`** — adapters: git CLI wrappers, OpenAI client, config resolver, Toptal API client
 - **`cmd/`** — Cobra wiring only, no business logic
 - **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 and 4 = retired/unused)
+- **`hooks/`** — conventional-commit validators (Go) plus shell-hook scripts and templates
 - **`e2e/`** — full binary tests via subprocess
+- **`docs/`** — design docs, plans, and retrospectives (`docs/plans/`, `docs/retros/`)
+
+## Skill & Memory Files
+
+`skills/using-git-agent/SKILL.md` is the distributed discovery stub (`npx skills add ... --skill using-git-agent`). Local agent installs are symlinked to this file, so edits here apply immediately to linked installs and ship with the next release — never patch a home-directory copy separately. The detailed guides live in `infrastructure/skills/{core,cli}.md`, embed into the binary, and serve at runtime via `git-agent skills get`; keep the stub and served docs consistent when changing workflows.
+
+`.memory/` holds durable agent-decision notes (frontmatter plus Why / How-to-apply sections). It is tracked but is not application code; update it only to record decisions that outlive a single session.
 
 ## Key Design Decisions
 
@@ -94,8 +102,10 @@ There are currently no hidden commands (the `capture` hook target was removed wi
 
 ## Commit Conventions
 
-Enforced via pre-tool hook. Commit messages must:
+Enforced via pre-tool hook (`conventional` mode validates against this repo's own `.git-agent/config.yml`). Commit messages must:
 - Title: `type(scope): description` — all lowercase, ≤50 characters
-- Valid scopes: `docs`, `plans`, `design`, `cli`
+- Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`
+- Valid scopes come from `.git-agent/config.yml` (currently `app`, `cli`, `domain`, `e2e`, `hooks`, `infra`, `pkg`, `skills`); add a scope entry there when introducing a new top-level area
 - Body: bullet points (imperative verbs) + closing explanation paragraph
 - Body lines ≤72 characters
+- Branches mirror commit types: `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`
