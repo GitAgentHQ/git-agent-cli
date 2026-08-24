@@ -148,3 +148,80 @@ func TestAutonomousRoot_CoAuthorTrailer(t *testing.T) {
 		t.Errorf("commit message missing Co-Authored-By trailer, got:\n%s", msg)
 	}
 }
+
+// TestDirectRun_InferenceModelDoesNotAddCoAuthorTrailer ensures that when a user
+// runs git-agent directly with an inference model (e.g. gemini-3.1-flash-lite),
+// no Co-Authored-By trailer is added for the inference model.
+func TestDirectRun_InferenceModelDoesNotAddCoAuthorTrailer(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "gemini-3.1-flash-lite",
+		"--no-stage",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if strings.Contains(msg, "Co-Authored-By: Gemini") || strings.Contains(msg, "google.com") {
+		t.Errorf("expected no model Co-Authored-By trailer from inference model, got:\n%s", msg)
+	}
+}
+
+// TestAgentSession_SessionModelAddsCoAuthorTrailer ensures that when git-agent
+// runs inside an active agent session (PI_MODEL is set), a Co-Authored-By trailer
+// is inferred from the session model.
+func TestAgentSession_SessionModelAddsCoAuthorTrailer(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "test-model",
+		"--no-stage",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+		"PI_MODEL=gemini-3.1-flash-lite",
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if !strings.Contains(msg, "Co-Authored-By: Gemini 3.1 Flash Lite <noreply@google.com>") {
+		t.Errorf("expected session model Co-Authored-By trailer, got:\n%s", msg)
+	}
+}

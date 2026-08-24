@@ -267,7 +267,7 @@ needed — the merge never clobbers custom rules.
 Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain.
 
 ### Automatic Model Co-Author Inference
-`git-agent` derives the `Co-Authored-By` trailer from the active LLM session model when present — the model that actually produced the change, read from agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`) — and falls back to the configured model (`--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml`) when no session env is set.
+`git-agent` derives the `Co-Authored-By` trailer solely from the active LLM session model when present — the model that actually produced the code change, read from agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`). The model configured for `git-agent`'s own inference (`--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml`) is strictly used for commit planning/drafting and is never attributed as a co-author.
 - **Reasoning Tier & Date Suffixes** (`-high`, `-thinking`, `-non-reasoning`, `-20241022`) are automatically stripped.
 - **Model Variants** (`Flash`, `Max`, `Pro`, `Opus`, `Sonnet`) are preserved.
 - **Example**: `gemini-3.6-flash-high` $\rightarrow$ `Co-Authored-By: Gemini 3.6 Flash <noreply@google.com>`.
