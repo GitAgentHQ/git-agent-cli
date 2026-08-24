@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-24
+
+### Changed
+- Default the agent workflow to the bare `git-agent` command (skills)
+- Default agents to the bare `git-agent` workflow (skills)
+- Clarify the default agent workflow
+
 ## [0.12.0] - 2026-08-13
 
 ### Added
@@ -323,7 +330,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt validation prevents prompt injection
 - Model identity masking in proxy responses
 
-[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/GitAgentHQ/git-agent-cli/compare/v0.10.1...v0.11.0
