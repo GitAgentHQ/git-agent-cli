@@ -42,7 +42,7 @@ cmd → application → domain ← infrastructure
 - **`infrastructure/`** — adapters: git CLI wrappers, OpenAI client, config resolver, Toptal API client
 - **`cmd/`** — Cobra wiring only, no business logic
 - **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 and 4 = retired/unused)
-- **`hooks/`** — conventional-commit validators (Go) plus shell-hook scripts and templates
+- **`hooks/`** — embedded shell-hook scripts and templates; Go-native commit validation lives in `domain/commit/validator.go`
 - **`e2e/`** — full binary tests via subprocess
 - **`docs/`** — design docs, plans, and retrospectives (`docs/plans/`, `docs/retros/`)
 
@@ -88,7 +88,7 @@ Every read command takes a single `-o, --output {auto,json,text}` flag, register
 
 ### Flag policy
 
-Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--depth`, `--top`, `--kind`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are config keys (`git-agent config set <key> <value>`), never flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver.
+Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--depth`, `--top`, `--kind`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are canonical config keys (`git-agent config set <key> <value>`). The legacy provider override flags (`--api-key`, `--model`, `--base-url`) remain supported for one-off invocations and must continue to resolve ahead of config; do not add new provider flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver.
 
 ### Short descriptions
 
