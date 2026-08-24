@@ -510,20 +510,6 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	}, true
 }
 
-// InferModelCoAuthorFirstMatch returns the first trailer InferModelCoAuthor can
-// map from the given candidate model IDs (highest priority first). This lets
-// callers prefer the session model for attribution while still falling back to
-// the configured inference model when the session model is unmappable (e.g. a
-// self-hosted or unrecognized model string).
-func InferModelCoAuthorFirstMatch(candidates ...string) (Trailer, bool) {
-	for _, id := range candidates {
-		if trailer, ok := InferModelCoAuthor(id); ok {
-			return trailer, true
-		}
-	}
-	return Trailer{}, false
-}
-
 func isDigits(s string) bool {
 	for _, r := range s {
 		if r < '0' || r > '9' {
