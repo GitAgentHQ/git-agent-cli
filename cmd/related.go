@@ -79,7 +79,7 @@ func runRelated(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	dbPath, client, err := openGraphDB(ctx, root)
+	_, client, err := openGraphDB(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func runRelated(cmd *cobra.Command, args []string) error {
 	defer client.Close()
 
 	indexSvc := application.NewIndexService(repo, graphGit)
-	ensureIndexSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit, dbPath)
+	ensureIndexSvc := application.NewEnsureIndexService(indexSvc, repo, graphGit)
 
 	indexReq := graph.IndexRequest{Force: reindex, MaxFilesPerCommit: 50}
 	indexResult, err := ensureIndexSvc.EnsureIndex(ctx, indexReq)
