@@ -39,7 +39,7 @@ func (e *shellHookExecutor) execute(ctx context.Context, hookPath string, input 
 	info, err := os.Stat(hookPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &domainHook.HookResult{ExitCode: 0}, nil
+			return nil, fmt.Errorf("hook does not exist: %s", hookPath)
 		}
 		return nil, err
 	}
