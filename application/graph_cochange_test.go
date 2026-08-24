@@ -264,7 +264,7 @@ func TestCoChange_Incremental(t *testing.T) {
 	repo := openTestDBAt(t, dbPath)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 
 	ctx := context.Background()
 

@@ -12,6 +12,39 @@ func validMsg() string {
 	return "feat: add user authentication\n\n- add login endpoint\n- add jwt token generation\n\nThis introduces basic authentication support.\n\nCo-Authored-By: Bot <bot@example.com>"
 }
 
+func TestValidateConventionalLanguageAware(t *testing.T) {
+	chinese := "feat: 修复登录问题\n\n- 添加登录端点\n\n这个修复处理了登录失败。"
+	if result := commit.ValidateConventionalWithLanguage(chinese, nil, "Chinese", ""); result.HasErrors() {
+		t.Fatalf("explicit non-English message should pass: %v", result.Errors())
+	}
+
+	german := "feat: Ändere die Anmeldung\n\n- Füge den Login-Endpunkt hinzu\n\nDie Anmeldung unterstützt jetzt neue Tokens."
+	if result := commit.ValidateConventionalWithLanguage(german, nil, "auto", "Ändere die Anmeldung"); result.HasErrors() {
+		t.Fatalf("auto-detected non-English message should pass: %v", result.Errors())
+	}
+
+	english := "feat: Add login endpoint\n\n- add route handler\n\nThis adds the login route."
+	for _, language := range []string{"", "auto", "English", "en", "en-US", "en-au", "en-ca"} {
+		result := commit.ValidateConventionalWithLanguage(english, nil, language, "")
+		if language == "English" || language == "en" || language == "en-US" || language == "en-au" || language == "en-ca" || language == "" || language == "auto" {
+			if !result.HasErrors() {
+				t.Errorf("language %q should retain English lowercase validation", language)
+			}
+		}
+	}
+
+	japanese := "feat: ログイン機能を追加して認証処理を改善します\n\n- ログイン処理を更新\n\n認証の動作を改善します。"
+	if got := len([]rune(strings.Split(japanese, "\n")[0])); got > 50 {
+		t.Fatalf("test title must be at most 50 runes, got %d", got)
+	}
+	if got := len(strings.Split(japanese, "\n")[0]); got <= 50 {
+		t.Fatalf("test title must exceed 50 UTF-8 bytes, got %d", got)
+	}
+	if result := commit.ValidateConventionalWithLanguage(japanese, nil, "Japanese", ""); result.HasErrors() {
+		t.Fatalf("non-English title length should count runes: %v", result.Errors())
+	}
+}
+
 func TestValidateConventional(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -147,15 +180,21 @@ func TestValidateConventional(t *testing.T) {
 		},
 
 		// --- Rule 9: Co-Authored-By format ---
+		// Git accepts trailers as free-form text, so any non-empty value is
+		// valid — with or without an email.
 		{
-			name:        "co-authored-by missing angle brackets",
-			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot bot@example.com",
-			wantErrors:  true,
-			errContains: "Co-Authored-By",
+			name:       "co-authored-by with name only",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: OX Alpha",
+			wantErrors: false,
 		},
 		{
-			name:        "co-authored-by missing email",
-			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot",
+			name:       "co-authored-by with bare email and no brackets",
+			msg:        "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By: Bot bot@example.com",
+			wantErrors: false,
+		},
+		{
+			name:        "co-authored-by empty value",
+			msg:         "feat: add login endpoint\n\n- add route handler\n\nThis adds the login route.\n\nCo-Authored-By:",
 			wantErrors:  true,
 			errContains: "Co-Authored-By",
 		},

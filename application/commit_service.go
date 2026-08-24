@@ -66,19 +66,18 @@ type CommitGitClient interface {
 }
 
 type CommitRequest struct {
-	Intent            string
-	Trailers          []commit.Trailer
-	DryRun            bool
-	NoStage           bool
-	Amend             bool
-	Config            *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
-	MaxLines          int
-	MaxBytes          int // 0 = DefaultMaxDiffBytes
-	MaxPlanFiles      int // 0 = commit.DefaultMaxPlanFiles; caps planner prompt file-list size
-	Verbose           bool
-	LogWriter         io.Writer // verbose-only output
-	OutWriter         io.Writer // always-visible output (hook block context, retries)
-	ProjectConfigPath string    // path to .git-agent/project.yml; empty = use default
+	Intent       string
+	Trailers     []commit.Trailer
+	DryRun       bool
+	NoStage      bool
+	Amend        bool
+	Config       *project.Config // nil = trigger auto-scope if scopeSvc provided; Config.Hooks drives hook dispatch
+	MaxLines     int
+	MaxBytes     int // 0 = DefaultMaxDiffBytes
+	MaxPlanFiles int // 0 = commit.DefaultMaxPlanFiles; caps planner prompt file-list size
+	Verbose      bool
+	LogWriter    io.Writer // verbose-only output
+	OutWriter    io.Writer // always-visible output (hook block context, retries)
 }
 
 type CommitService struct {
@@ -87,7 +86,6 @@ type CommitService struct {
 	git              CommitGitClient
 	hookExec         hook.HookExecutor
 	scopeSvc         *ScopeService           // nil = no auto-scope
-	gitignoreSvc     *GitignoreService       // nil = no auto-gitignore
 	filter           diff.DiffFilter         // nil = no filtering
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
@@ -103,12 +101,7 @@ func NewCommitService(
 	filter diff.DiffFilter,
 	truncator diff.DiffTruncator,
 	heuristicPlanner commit.HeuristicPlanner,
-	coChange ...CoChangeProvider,
 ) *CommitService {
-	var cp CoChangeProvider
-	if len(coChange) > 0 {
-		cp = coChange[0]
-	}
 	return &CommitService{
 		gen:              gen,
 		planner:          planner,
@@ -118,7 +111,6 @@ func NewCommitService(
 		filter:           filter,
 		truncator:        truncator,
 		heuristicPlanner: heuristicPlanner,
-		coChange:         cp,
 	}
 }
 
@@ -183,12 +175,6 @@ func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
 	s.coChange = provider
 }
 
-// SetGitignoreService is a no-op kept for backward compatibility.
-// Auto-gitignore generation is handled autonomously by the root agent, not during explicit commit execution.
-func (s *CommitService) SetGitignoreService(svc *GitignoreService) {
-	s.gitignoreSvc = svc
-}
-
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
 	if req.Verbose && req.LogWriter != nil {
 		fmt.Fprintf(req.LogWriter, format+"\n", args...)
@@ -239,213 +225,207 @@ func truncationLimitDesc(maxLines, maxBytes int) string {
 	return fmt.Sprintf("max %d bytes", maxBytes)
 }
 
-func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *CommitResult, retErr error) {
+func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitResult, error) {
 	if req.Amend {
 		return s.commitAmend(ctx, req)
 	}
-
-	// Ensure req.Config is non-nil up front so auto-scope can run
 	if req.Config == nil {
 		req.Config = &project.Config{}
 	}
+	return s.commitWorkflow(ctx, req)
+}
 
-	var staged, unstaged *diff.StagedDiff
-
-	if req.NoStage {
-		fullStagedDiff, err := s.git.StagedDiff(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("staged diff: %w", err)
-		}
-		if len(fullStagedDiff.Files) == 0 {
-			return nil, fmt.Errorf("no staged changes (hint: stage files with git add, or remove --no-stage)")
-		}
-		staged = fullStagedDiff
-		unstaged = &diff.StagedDiff{}
-	} else {
-		// Capture which files the user pre-staged so they anchor group 0.
-		// Only the file list is preserved — partial-hunk staging is collapsed
-		// when the per-group loop re-stages the working tree.
-		preStagedDiff, err := s.git.StagedDiff(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("staged diff: %w", err)
-		}
-		userStagedFiles := make(map[string]bool, len(preStagedDiff.Files))
-		for _, f := range preStagedDiff.Files {
-			userStagedFiles[f] = true
-		}
-
-		// Get all changed files WITHOUT modifying the index.
-		allFiles, err := s.git.AllChangedFiles(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("listing changed files: %w", err)
-		}
-		if len(allFiles) == 0 {
-			return nil, fmt.Errorf("no changes")
-		}
-
-		// Split into staged (user intent = group 0) vs unstaged (free to split).
-		// If the user had nothing pre-staged, treat everything as unstaged so the
-		// planner can create multiple atomic commits without the "group 0" constraint.
-		if len(userStagedFiles) == 0 {
-			staged = &diff.StagedDiff{}
-			unstaged = &diff.StagedDiff{Files: allFiles}
-		} else {
-			var userFiles []string
-			var autoFiles []string
-			for _, f := range allFiles {
-				if userStagedFiles[f] {
-					userFiles = append(userFiles, f)
-				} else {
-					autoFiles = append(autoFiles, f)
-				}
-			}
-			staged = &diff.StagedDiff{Files: userFiles}
-			if len(autoFiles) > 0 {
-				unstaged = &diff.StagedDiff{Files: autoFiles}
-			} else {
-				unstaged = &diff.StagedDiff{}
-			}
-		}
+func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (*CommitResult, error) {
+	staged, unstaged, err := s.collectChanges(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-
-	// staged and unstaged carry only file lists at this point — the planner
-	// reads .Files only, and per-group filter/truncate runs on groupDiff
-	// inside the commit loop where actual diff content is available.
-
+	allowed := allowedFiles(staged, unstaged)
 	s.vlog(req, "staged files: %v", staged.Files)
 	s.vlog(req, "unstaged files: %v", unstaged.Files)
 
-	// Build the allowed-files set for planner output validation.
-	allowed := make(map[string]bool, len(staged.Files)+len(unstaged.Files))
-	for _, f := range staged.Files {
-		allowed[f] = true
+	if err := s.ensureScopes(ctx, req); err != nil {
+		return nil, err
 	}
-	for _, f := range unstaged.Files {
-		allowed[f] = true
+	allFiles := sortedKeys(allowed)
+	coChangeHints := s.coChangeHints(ctx, req, allFiles)
+	renamed, err := s.detectRenames(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-
-	// Ensure req.Config is non-nil up front so auto-scope can mutate Scopes
-	// in place and the per-group loop can read Hooks / co-author policy.
-	if req.Config == nil {
-		req.Config = &project.Config{}
+	plan, err := s.buildPlan(ctx, req, staged, unstaged, allowed, renamed, coChangeHints)
+	if err != nil {
+		return nil, err
 	}
+	return s.commitGroups(ctx, req, plan, allowed, renamed, coChangeHints)
+}
 
-	// Auto-scope when no scopes provided — assign Scopes in place so Hooks,
-	// MaxDiffLines, MaxDiffBytes, and co-author policy survive the refresh.
-	if len(req.Config.Scopes) == 0 {
-		if s.scopeSvc != nil {
-			s.out(req, "Generating scopes...")
-			scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
-			if err != nil {
-				s.out(req, "Warning: failed to generate scopes, continuing without scopes (%v)", err)
-			} else {
-				// Auto-scope in memory only: do not persist to disk during explicit CommitService.Commit
-				req.Config.Scopes = scopes
-				s.vlog(req, "scopes (in-memory): %v", req.Config.ScopeNames())
-			}
-		}
-	}
-
-	var (
-		plan *commit.CommitPlan
-		err  error
-	)
-
-	allFiles := make([]string, 0, len(allowed))
-	for f := range allowed {
-		allFiles = append(allFiles, f)
-	}
-
-	// Inject co-change hints if available.
-	var coChangeHints []commit.CoChangeHint
-	if s.coChange != nil {
-		hints, cerr := s.coChange.GetHintsForFiles(ctx, allFiles)
-		if cerr != nil {
-			s.vlog(req, "co-change lookup failed: %v", cerr)
-		} else if len(hints) > 0 {
-			coChangeHints = hints
-			s.vlog(req, "found %d co-change hints for planning", len(hints))
-		}
-	}
-
-	// Detect file moves before the per-group loop mutates the index. Each
-	// rename's two paths are forced into the same commit group after planning
-	// so a move commits atomically instead of splitting the deletion and the
-	// addition across separate commits.
-	renames, rerr := s.git.DetectRenames(ctx)
-	if rerr != nil {
-		s.vlog(req, "rename detection failed (non-fatal): %v", rerr)
-	} else if len(renames) > 0 {
-		s.vlog(req, "detected %d rename(s)", len(renames))
-	}
-
-	if len(allFiles) == 1 {
-		s.vlog(req, "single file — skipping planning phase")
-		plan = &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: allFiles}}}
-	} else {
-		s.out(req, "Planning commits...")
-		plan, err = s.runPlan(ctx, req, commit.PlanRequest{
-			StagedDiff:    staged,
-			UnstagedDiff:  unstaged,
-			Intent:        req.Intent,
-			Config:        req.Config,
-			CoChangeHints: coChangeHints,
-			MaxPlanFiles:  req.MaxPlanFiles,
-		})
+func (s *CommitService) collectChanges(ctx context.Context, req CommitRequest) (*diff.StagedDiff, *diff.StagedDiff, error) {
+	if req.NoStage {
+		staged, err := s.git.StagedDiff(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("plan commits: %w", err)
+			return nil, nil, fmt.Errorf("staged diff: %w", err)
 		}
-		if n := filterPlanFiles(plan, allowed); n > 0 {
-			s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
+		if len(staged.Files) == 0 {
+			return nil, nil, fmt.Errorf("no staged changes (hint: stage files with git add, or remove --no-stage)")
 		}
-		if len(plan.Groups) == 0 {
-			return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
-		}
-		if len(plan.Groups) > maxCommitGroups {
-			s.out(req, "Warning: commit plan exceeds group limit (%d > %d), capping", len(plan.Groups), maxCommitGroups)
-			plan.Groups = plan.Groups[:maxCommitGroups]
-		}
-		appendPassthroughFiles(plan, allowed)
-		coLocateRenames(plan, renames, allowed)
-
-		// If any group has no scope and we can update scopes, do so and re-plan once.
-		if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
-			s.out(req, "Refreshing scopes...")
-			newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
-			if err != nil {
-				s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
-			} else {
-				req.Config.Scopes = newScopes
-				s.out(req, "Scopes updated (in-memory): %v, re-planning...", req.Config.ScopeNames())
-				plan, err = s.runPlan(ctx, req, commit.PlanRequest{
-					StagedDiff:    staged,
-					UnstagedDiff:  unstaged,
-					Intent:        req.Intent,
-					Config:        req.Config,
-					CoChangeHints: coChangeHints,
-					MaxPlanFiles:  req.MaxPlanFiles,
-				})
-				if err != nil {
-					return nil, fmt.Errorf("re-plan after scope refresh: %w", err)
-				}
-				if n := filterPlanFiles(plan, allowed); n > 0 {
-					s.vlog(req, "dropped %d hallucinated file(s) from re-plan", n)
-				}
-				if len(plan.Groups) == 0 {
-					return nil, fmt.Errorf("re-plan produced no valid commit groups (all files were filtered out)")
-				}
-				if len(plan.Groups) > maxCommitGroups {
-					s.vlog(req, "re-plan has %d groups — capping to %d", len(plan.Groups), maxCommitGroups)
-					plan.Groups = plan.Groups[:maxCommitGroups]
-				}
-				appendPassthroughFiles(plan, allowed)
-				coLocateRenames(plan, renames, allowed)
-			}
+		return staged, &diff.StagedDiff{}, nil
+	}
+	preStaged, err := s.git.StagedDiff(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("staged diff: %w", err)
+	}
+	stagedSet := make(map[string]bool, len(preStaged.Files))
+	for _, file := range preStaged.Files {
+		stagedSet[file] = true
+	}
+	allFiles, err := s.git.AllChangedFiles(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing changed files: %w", err)
+	}
+	if len(allFiles) == 0 {
+		return nil, nil, fmt.Errorf("no changes")
+	}
+	if len(stagedSet) == 0 {
+		return &diff.StagedDiff{}, &diff.StagedDiff{Files: allFiles}, nil
+	}
+	var stagedFiles, unstagedFiles []string
+	for _, file := range allFiles {
+		if stagedSet[file] {
+			stagedFiles = append(stagedFiles, file)
+		} else {
+			unstagedFiles = append(unstagedFiles, file)
 		}
 	}
+	return &diff.StagedDiff{Files: stagedFiles}, &diff.StagedDiff{Files: unstagedFiles}, nil
+}
 
-	remaining := make([]commit.CommitGroup, len(plan.Groups))
-	copy(remaining, plan.Groups)
+func allowedFiles(staged, unstaged *diff.StagedDiff) map[string]bool {
+	allowed := make(map[string]bool, len(staged.Files)+len(unstaged.Files))
+	for _, file := range staged.Files {
+		allowed[file] = true
+	}
+	for _, file := range unstaged.Files {
+		allowed[file] = true
+	}
+	return allowed
+}
+
+func sortedKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (s *CommitService) ensureScopes(ctx context.Context, req CommitRequest) error {
+	if len(req.Config.Scopes) > 0 || s.scopeSvc == nil {
+		return nil
+	}
+	s.out(req, "Generating scopes...")
+	scopes, err := s.scopeSvc.Generate(ctx, 200, nil)
+	if err != nil {
+		s.out(req, "Warning: failed to generate scopes, continuing without scopes (%v)", err)
+		return nil
+	}
+	req.Config.Scopes = scopes
+	s.vlog(req, "scopes (in-memory): %v", req.Config.ScopeNames())
+	return nil
+}
+
+func (s *CommitService) coChangeHints(ctx context.Context, req CommitRequest, files []string) []commit.CoChangeHint {
+	if s.coChange == nil {
+		return nil
+	}
+	hints, err := s.coChange.GetHintsForFiles(ctx, files)
+	if err != nil {
+		s.vlog(req, "co-change lookup failed: %v", err)
+		return nil
+	}
+	if len(hints) > 0 {
+		s.vlog(req, "found %d co-change hints for planning", len(hints))
+	}
+	return hints
+}
+
+func (s *CommitService) detectRenames(ctx context.Context, req CommitRequest) ([]diff.Rename, error) {
+	renamed, err := s.git.DetectRenames(ctx)
+	if err != nil {
+		s.vlog(req, "rename detection failed (non-fatal): %v", err)
+		return nil, nil
+	}
+	if len(renamed) > 0 {
+		s.vlog(req, "detected %d rename(s)", len(renamed))
+	}
+	return renamed, nil
+}
+
+func (s *CommitService) buildPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename, hints []commit.CoChangeHint) (*commit.CommitPlan, error) {
+	files := sortedKeys(allowed)
+	if len(files) == 1 {
+		s.vlog(req, "single file — skipping planning phase")
+		return &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: files}}}, nil
+	}
+	s.out(req, "Planning commits...")
+	plan, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, CoChangeHints: hints, MaxPlanFiles: req.MaxPlanFiles})
+	if err != nil {
+		return nil, fmt.Errorf("plan commits: %w", err)
+	}
+	s.normalizePlan(plan, allowed, renamed, req)
+	if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
+		if err := s.refreshScopesAndPlan(ctx, req, staged, unstaged, allowed, renamed, hints, plan); err != nil {
+			return nil, err
+		}
+	}
+	if len(plan.Groups) == 0 {
+		return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
+	}
+	return plan, nil
+}
+
+func (s *CommitService) normalizePlan(plan *commit.CommitPlan, allowed map[string]bool, renamed []diff.Rename, req CommitRequest) {
+	if n := filterPlanFiles(plan, allowed); n > 0 {
+		s.vlog(req, "dropped %d hallucinated file(s) from plan", n)
+	}
+	if len(plan.Groups) > maxCommitGroups {
+		s.out(req, "Warning: commit plan exceeds group limit (%d > %d), capping", len(plan.Groups), maxCommitGroups)
+		plan.Groups = plan.Groups[:maxCommitGroups]
+	}
+	appendPassthroughFiles(plan, allowed)
+	coLocateRenames(plan, renamed, allowed)
+}
+
+func (s *CommitService) refreshScopesAndPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename, hints []commit.CoChangeHint, plan *commit.CommitPlan) error {
+	s.out(req, "Refreshing scopes...")
+	newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
+	if err != nil {
+		s.vlog(req, "scope refresh failed (continuing with current plan): %v", err)
+		return nil
+	}
+	req.Config.Scopes = newScopes
+	s.out(req, "Scopes updated (in-memory): %v, re-planning...", req.Config.ScopeNames())
+	updated, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, CoChangeHints: hints, MaxPlanFiles: req.MaxPlanFiles})
+	if err != nil {
+		return fmt.Errorf("re-plan after scope refresh: %w", err)
+	}
+	*plan = *updated
+	s.normalizePlan(plan, allowed, renamed, req)
+	return nil
+}
+
+type generatedGroupMessage struct {
+	msg          *commit.CommitMessage
+	assembled    string
+	preTrailer   string
+	hookFeedback string
+	hookOutcome  string
+	passed       bool
+}
+
+func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, plan *commit.CommitPlan, allowed map[string]bool, renames []diff.Rename, coChangeHints []commit.CoChangeHint) (_ *CommitResult, retErr error) {
+	remaining := append([]commit.CommitGroup(nil), plan.Groups...)
 	totalGroups := len(plan.Groups)
 	commitWord := "commits"
 	if totalGroups == 1 {
@@ -456,23 +436,11 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 	var committed []SingleCommitResult
 	committedFiles := make(map[string]bool)
 	rePlanCount := 0
-	var inheritedFeedback string // hook feedback carried into first attempt after re-plan
+	var inheritedFeedback string
 
-	// On error, best-effort re-stage uncommitted files so the index is not
-	// left in a partially-unstaged state from the UnstageAll/StageFiles loop.
 	defer func() {
-		if retErr == nil {
-			return
-		}
-		var toRestore []string
-		for f := range allowed {
-			if !committedFiles[f] {
-				toRestore = append(toRestore, f)
-			}
-		}
-		if len(toRestore) > 0 {
-			sort.Strings(toRestore)
-			_ = s.git.StageFiles(context.Background(), toRestore)
+		if retErr != nil {
+			s.restoreUncommittedFiles(allowed, committedFiles)
 		}
 	}()
 
@@ -482,209 +450,47 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 		remaining = remaining[1:]
 		groupIdx++
 
-		if err := s.git.UnstageAll(ctx); err != nil {
-			return nil, fmt.Errorf("unstage all: %w", err)
-		}
-		if err := s.git.StageFiles(ctx, group.Files); err != nil {
-			return nil, fmt.Errorf("stage files %v: %w", group.Files, err)
-		}
-
-		groupDiff, err := s.git.StagedDiff(ctx)
+		groupDiff, genDiff, err := s.prepareGroup(ctx, req, group, groupIdx, totalGroups)
 		if err != nil {
-			return nil, fmt.Errorf("staged diff for group: %w", err)
+			return nil, err
 		}
-		if len(groupDiff.Files) == 0 {
-			s.vlog(req, "skipping group (no diff after staging): %v", group.Files)
+		if groupDiff == nil {
 			continue
 		}
 
-		// Filter groupDiff content for LLM input only — keeps lock files and binaries
-		// out of the prompt while the hook still receives the full raw diff.
-		genDiff := groupDiff
-		if s.filter != nil {
-			if fd, ferr := s.filter.Filter(ctx, groupDiff); ferr == nil {
-				genDiff = fd
-			}
-		}
-		if s.truncator != nil {
-			maxBytes := effectiveMaxBytes(req.MaxBytes)
-			truncated, didTruncate, terr := s.truncator.Truncate(ctx, genDiff, req.MaxLines, maxBytes)
-			if terr != nil {
-				return nil, fmt.Errorf("truncate group diff: %w", terr)
-			}
-			if didTruncate {
-				s.vlog(req, "group diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
-			}
-			genDiff = truncated
-
-			// REQ-007 — saturation fallback. When a single-file diff saturates the
-			// byte cap, head-truncation produces a useless prompt (typically the
-			// file header repeated). Replace it with a compact DIFF-SYNOPSIS so
-			// the LLM still receives a meaningful commit context. The raw diff on
-			// groupDiff.Content is untouched so the hook continues to see the
-			// full payload.
-			if didTruncate && len(genDiff.Files) == 1 && len(genDiff.Content) == maxBytes {
-				stat, statErr := s.git.StagedDiffNumStat(ctx)
-				if statErr == nil {
-					synopsis := buildSynopsis(genDiff.Files[0], stat, len(groupDiff.Content), maxBytes)
-					genDiff = &diff.StagedDiff{
-						Files:   genDiff.Files,
-						Content: synopsis,
-						Lines:   strings.Count(synopsis, "\n"),
-					}
-					s.out(req, "Warning: commit %d/%d: falling back to diff synopsis for %s", groupIdx, totalGroups, genDiff.Files[0])
-				} else {
-					s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
-					s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
-				}
-			} else if didTruncate {
-				s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
-			}
-		}
-
-		// Seed hook feedback from previous re-plan failure so the first Generate
-		// call already knows the validation constraints that caused the re-plan.
-		// previousMessage is intentionally empty: we want the full diff path (not
-		// the retry-only path) so the LLM sees the diff AND the constraint hints.
-		hookFeedback := inheritedFeedback
+		attempt, err := s.generateGroupMessage(ctx, req, genDiff, groupDiff, groupIdx, totalGroups, inheritedFeedback)
 		inheritedFeedback = ""
-		var assembled string
-		var msg *commit.CommitMessage
-		hookPassed := false
-		hookOutcome := ""
-		var previousMessage string
-		var preTrailer string // assembled before trailers — used for HookBlockedError
-
-		for attempt := 1; attempt <= maxHookRetries; attempt++ {
-			if attempt == 1 {
-				s.out(req, "Drafting message: %d/%d...", groupIdx, totalGroups)
-			}
-
-			msg, err = s.gen.Generate(ctx, commit.GenerateRequest{
-				Diff:            genDiff,
-				Intent:          req.Intent,
-				Config:          req.Config,
-				HookFeedback:    hookFeedback,
-				PreviousMessage: previousMessage,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("generate commit message: %w", err)
-			}
-			s.vlog(req, "LLM response received")
-
-			assembled = msg.Title
-			if body := msg.Body(); body != "" {
-				assembled += "\n\n" + body
-			}
-			preTrailer = assembled
-
-			if len(req.Trailers) > 0 {
-				var err2 error
-				assembled, err2 = s.git.FormatTrailers(ctx, assembled, req.Trailers)
-				if err2 != nil {
-					return nil, fmt.Errorf("format trailers: %w", err2)
-				}
-			}
-
-			if len(req.Config.Hooks) == 0 && !req.Config.RequireModelCoAuthor {
-				hookPassed = true
-				hookOutcome = "skipped"
-				break
-			}
-
-			hookResult, err := s.hookExec.Execute(ctx, req.Config.Hooks, hook.HookInput{
-				Diff:          groupDiff.Content,
-				CommitMessage: assembled,
-				Intent:        req.Intent,
-				StagedFiles:   groupDiff.Files,
-				Config:        *req.Config,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("hook execute: %w", err)
-			}
-			if hookResult.ExitCode == 0 {
-				hookPassed = true
-				if hooksAreEffective(req.Config.Hooks) || req.Config.RequireModelCoAuthor {
-					hookOutcome = "passed"
-				} else {
-					hookOutcome = "skipped"
-				}
-				break
-			}
-
-			if attempt < maxHookRetries {
-				s.out(req, "Warning: hook rejected message, retrying... (attempt %d/%d)", attempt+1, maxHookRetries)
-			}
-			hookFeedback = hookResult.Stderr
-			previousMessage = preTrailer
+		if err != nil {
+			return nil, err
 		}
-
-		if !hookPassed {
-			// Re-plan failed group + remaining files together (up to maxRePlans times).
+		if !attempt.passed {
 			if rePlanCount >= maxRePlans {
-				return nil, &HookBlockedError{LastMessage: preTrailer, Reason: hookFeedback}
+				return nil, &HookBlockedError{LastMessage: attempt.preTrailer, Reason: attempt.hookFeedback}
 			}
-			// Carry the last hook feedback so the first Generate call of each
-			// re-planned group already knows why previous attempts were rejected.
-			inheritedFeedback = hookFeedback
+			inheritedFeedback = attempt.hookFeedback
 			rePlanCount++
-
-			// Collect all files that still need to be committed.
-			var allFiles []string
-			allFiles = append(allFiles, group.Files...)
-			for _, r := range remaining {
-				allFiles = append(allFiles, r.Files...)
-			}
-
-			// Route through runPlan so the heuristic fallback applies uniformly
-			// to all three plan/re-plan call sites (initial, scope-refresh, hook).
-			// CoChangeHints is preserved here for the same reason as the other
-			// re-plan: a rejected group needs structural coupling context to be
-			// re-bucketed correctly.
-			newPlan, err := s.runPlan(ctx, req, commit.PlanRequest{
-				StagedDiff:    &diff.StagedDiff{Files: allFiles},
-				Intent:        req.Intent,
-				Config:        req.Config,
-				CoChangeHints: coChangeHints,
-				MaxPlanFiles:  req.MaxPlanFiles,
-			})
+			newPlan, err := s.replanAfterHook(ctx, req, group, remaining, allowed, committedFiles, renames, coChangeHints)
 			if err != nil {
-				return nil, fmt.Errorf("re-plan commits: %w", err)
+				return nil, err
 			}
-			rePlanAllowed := make(map[string]bool, len(allowed))
-			for f := range allowed {
-				if !committedFiles[f] {
-					rePlanAllowed[f] = true
-				}
-			}
-			if n := filterPlanFiles(newPlan, rePlanAllowed); n > 0 {
-				s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
-			}
-			if len(newPlan.Groups) > maxCommitGroups {
-				s.vlog(req, "hook re-plan has %d groups — capping to %d", len(newPlan.Groups), maxCommitGroups)
-				newPlan.Groups = newPlan.Groups[:maxCommitGroups]
-			}
-			appendPassthroughFiles(newPlan, rePlanAllowed)
-			coLocateRenames(newPlan, renames, rePlanAllowed)
 			remaining = newPlan.Groups
 			continue
 		}
 
 		result := SingleCommitResult{
-			Title:       msg.Title,
-			Message:     preTrailer,
-			Explanation: msg.Explanation,
+			Title:       attempt.msg.Title,
+			Message:     attempt.preTrailer,
+			Explanation: attempt.msg.Explanation,
 			Files:       group.Files,
-			HookOutcome: hookOutcome,
+			HookOutcome: attempt.hookOutcome,
 		}
 		if req.DryRun {
 			committed = append(committed, result)
-			for _, f := range group.Files {
-				committedFiles[f] = true
-			}
+			markCommitted(committedFiles, group.Files)
 			continue
 		}
-		gitOut, err := s.git.Commit(ctx, assembled)
+
+		gitOut, err := s.git.Commit(ctx, attempt.assembled)
 		if err != nil {
 			if errors.Is(err, pkgerrors.ErrNothingToCommit) {
 				s.vlog(req, "skipping group (nothing to commit at commit time): %v", group.Files)
@@ -693,24 +499,178 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (_ *Commi
 			return nil, err
 		}
 		result.GitOutput = gitOut
-		// Promote the SHA to a first-class field (the raw git stdout in GitOutput
-		// is human-only) and reuse it for action linking below.
-		hash, hashErr := s.git.CommitHash(ctx)
-		if hashErr == nil {
+		if hash, hashErr := s.git.CommitHash(ctx); hashErr == nil {
 			result.SHA = hash
 		}
 		committed = append(committed, result)
-
-		for _, f := range group.Files {
-			committedFiles[f] = true
-		}
+		markCommitted(committedFiles, group.Files)
 	}
 
 	if len(committed) == 0 && !req.DryRun {
 		return nil, fmt.Errorf("no changes committed: all %d planned group(s) skipped (no diff after staging)", len(plan.Groups))
 	}
-
 	return &CommitResult{Commits: committed, DryRun: req.DryRun}, nil
+}
+
+func (s *CommitService) prepareGroup(ctx context.Context, req CommitRequest, group commit.CommitGroup, groupIdx, totalGroups int) (*diff.StagedDiff, *diff.StagedDiff, error) {
+	if err := s.git.UnstageAll(ctx); err != nil {
+		return nil, nil, fmt.Errorf("unstage all: %w", err)
+	}
+	if err := s.git.StageFiles(ctx, group.Files); err != nil {
+		return nil, nil, fmt.Errorf("stage files %v: %w", group.Files, err)
+	}
+	groupDiff, err := s.git.StagedDiff(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("staged diff for group: %w", err)
+	}
+	if len(groupDiff.Files) == 0 {
+		s.vlog(req, "skipping group (no diff after staging): %v", group.Files)
+		return nil, nil, nil
+	}
+
+	genDiff := groupDiff
+	if s.filter != nil {
+		if filtered, filterErr := s.filter.Filter(ctx, groupDiff); filterErr == nil {
+			genDiff = filtered
+		}
+	}
+	if s.truncator == nil {
+		return groupDiff, genDiff, nil
+	}
+
+	maxBytes := effectiveMaxBytes(req.MaxBytes)
+	truncated, didTruncate, err := s.truncator.Truncate(ctx, genDiff, req.MaxLines, maxBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("truncate group diff: %w", err)
+	}
+	if didTruncate {
+		s.vlog(req, "group diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
+	}
+	genDiff = truncated
+	if !didTruncate {
+		return groupDiff, genDiff, nil
+	}
+
+	if len(genDiff.Files) == 1 && len(genDiff.Content) == maxBytes {
+		stat, statErr := s.git.StagedDiffNumStat(ctx)
+		if statErr == nil {
+			synopsis := buildSynopsis(genDiff.Files[0], stat, len(groupDiff.Content), maxBytes)
+			genDiff = &diff.StagedDiff{Files: genDiff.Files, Content: synopsis, Lines: strings.Count(synopsis, "\n")}
+			s.out(req, "Warning: commit %d/%d: falling back to diff synopsis for %s", groupIdx, totalGroups, genDiff.Files[0])
+		} else {
+			s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
+			s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+		}
+	} else {
+		s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+	}
+	return groupDiff, genDiff, nil
+}
+
+func (s *CommitService) generateGroupMessage(ctx context.Context, req CommitRequest, genDiff, groupDiff *diff.StagedDiff, groupIdx, totalGroups int, inheritedFeedback string) (*generatedGroupMessage, error) {
+	hookFeedback := inheritedFeedback
+	var previousMessage string
+	var preTrailer string
+	for attempt := 1; attempt <= maxHookRetries; attempt++ {
+		if attempt == 1 {
+			s.out(req, "Drafting message: %d/%d...", groupIdx, totalGroups)
+		}
+		msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
+			Diff: genDiff, Intent: req.Intent, Config: req.Config,
+			HookFeedback: hookFeedback, PreviousMessage: previousMessage,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("generate commit message: %w", err)
+		}
+		s.vlog(req, "LLM response received")
+
+		assembled := msg.Title
+		if body := msg.Body(); body != "" {
+			assembled += "\n\n" + body
+		}
+		preTrailer = assembled
+		if len(req.Trailers) > 0 {
+			assembled, err = s.git.FormatTrailers(ctx, assembled, req.Trailers)
+			if err != nil {
+				return nil, fmt.Errorf("format trailers: %w", err)
+			}
+		}
+
+		if len(req.Config.Hooks) == 0 && !req.Config.RequireModelCoAuthor {
+			return &generatedGroupMessage{msg: msg, assembled: assembled, preTrailer: preTrailer, hookOutcome: "skipped", passed: true}, nil
+		}
+		hookResult, err := s.hookExec.Execute(ctx, req.Config.Hooks, hook.HookInput{
+			Diff: groupDiff.Content, CommitMessage: assembled, Intent: req.Intent,
+			StagedFiles: groupDiff.Files, Config: *req.Config,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hook execute: %w", err)
+		}
+		if hookResult.ExitCode == 0 {
+			outcome := "skipped"
+			if hooksAreEffective(req.Config.Hooks) || req.Config.RequireModelCoAuthor {
+				outcome = "passed"
+			}
+			return &generatedGroupMessage{msg: msg, assembled: assembled, preTrailer: preTrailer, hookOutcome: outcome, passed: true}, nil
+		}
+		if attempt < maxHookRetries {
+			s.out(req, "Warning: hook rejected message, retrying... (attempt %d/%d)", attempt+1, maxHookRetries)
+		}
+		hookFeedback = hookResult.Stderr
+		previousMessage = preTrailer
+	}
+	return &generatedGroupMessage{preTrailer: preTrailer, hookFeedback: hookFeedback}, nil
+}
+
+func (s *CommitService) replanAfterHook(ctx context.Context, req CommitRequest, group commit.CommitGroup, remaining []commit.CommitGroup, allowed map[string]bool, committedFiles map[string]bool, renames []diff.Rename, coChangeHints []commit.CoChangeHint) (*commit.CommitPlan, error) {
+	var allFiles []string
+	allFiles = append(allFiles, group.Files...)
+	for _, pending := range remaining {
+		allFiles = append(allFiles, pending.Files...)
+	}
+	newPlan, err := s.runPlan(ctx, req, commit.PlanRequest{
+		StagedDiff: &diff.StagedDiff{Files: allFiles}, Intent: req.Intent,
+		Config: req.Config, CoChangeHints: coChangeHints, MaxPlanFiles: req.MaxPlanFiles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("re-plan commits: %w", err)
+	}
+	rePlanAllowed := make(map[string]bool, len(allowed))
+	for file := range allowed {
+		if !committedFiles[file] {
+			rePlanAllowed[file] = true
+		}
+	}
+	if n := filterPlanFiles(newPlan, rePlanAllowed); n > 0 {
+		s.vlog(req, "dropped %d hallucinated file(s) from hook re-plan", n)
+	}
+	if len(newPlan.Groups) > maxCommitGroups {
+		s.vlog(req, "hook re-plan has %d groups — capping to %d", len(newPlan.Groups), maxCommitGroups)
+		newPlan.Groups = newPlan.Groups[:maxCommitGroups]
+	}
+	appendPassthroughFiles(newPlan, rePlanAllowed)
+	coLocateRenames(newPlan, renames, rePlanAllowed)
+	return newPlan, nil
+}
+
+func (s *CommitService) restoreUncommittedFiles(allowed map[string]bool, committedFiles map[string]bool) {
+	var toRestore []string
+	for file := range allowed {
+		if !committedFiles[file] {
+			toRestore = append(toRestore, file)
+		}
+	}
+	if len(toRestore) == 0 {
+		return
+	}
+	sort.Strings(toRestore)
+	_ = s.git.StageFiles(context.Background(), toRestore)
+}
+
+func markCommitted(committedFiles map[string]bool, files []string) {
+	for _, file := range files {
+		committedFiles[file] = true
+	}
 }
 
 func (s *CommitService) commitAmend(ctx context.Context, req CommitRequest) (*CommitResult, error) {

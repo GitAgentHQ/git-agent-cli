@@ -108,7 +108,6 @@ git-agent commit --amend                      # 重新生成并修改最后一�
 git-agent commit --intent "fix auth bug"      # 向 LLM 提供上下文提示
 git-agent commit --co-author "Name <email>"  # 添加 co-author trailer
 git-agent commit --trailer "Fixes: #123"     # 添加任意 git trailer
-git-agent commit --no-attribution             # 省略默认的 Git Agent trailer
 git-agent commit -o json                      # 结构化结果（标题、SHA、钩子结果）
 ```
 
@@ -126,6 +125,8 @@ git-agent config get <key>         # 显示某配置项的解析值及来源作�
 git-agent config set <key> <value> # 将配置值写入对应作用域
 git-agent config set --user api-key sk-xxx   # 写入用户作用域
 git-agent config set --project hook empty     # 写入项目作用域
+git-agent config set language auto             # 跟随 --intent 语言，否则使用英文
+git-agent config set --local language Japanese # 在本地覆盖语言
 git-agent config set --local max-diff-lines 1000  # 写入本地作用域
 git-agent config set --local max-diff-bytes 524288 # 提高字节上限（如直连端点放宽到 512 KiB）
 git-agent config set --local max-plan-files 300     # 提高规划阶段文件列表上限（超出后按目录折叠）
@@ -140,6 +141,11 @@ git-agent config set --local max-plan-files 300     # 提高规划阶段文件�
 | `--local` | `.git-agent/config.local.yml` | 本地覆盖，gitignore |
 
 未指定作用域参数时，提供商密钥默认写入 `--user`，其他配置项默认写入 `--project`。
+
+生成的提交信息默认使用 `language: auto`：标题描述、要点和说明会跟随清晰的
+`--intent` 指令语言；如果无法识别指令语言，则使用英文。也可以显式设置语言，
+例如 `git-agent config set language Japanese`。本地配置优先于项目配置，项目配置
+优先于用户配置。Conventional Commit 的类型和作用域保持标准语法，只翻译自然语言文本。
 
 ### `git-agent completion`
 
@@ -281,6 +287,7 @@ scopes:
   - infra
 hook:
   - conventional
+language: auto # 或显式指定语言，例如 Japanese
 ```
 
 ### 钩子
@@ -307,7 +314,6 @@ hook:
 | `--intent` | 描述本次变更的意图 |
 | `--co-author` | 添加 co-author trailer（可重复） |
 | `--trailer` | 添加任意 git trailer，格式为 `Key: Value`（可重复） |
-| `--no-attribution` | 省略默认的 Git Agent co-author trailer |
 | `--max-diff-lines` | 发送给模型的最大 diff 行数（默认：0，不限制行数；字节上限始终生效） |
 | `--max-diff-bytes` | 发送给模型的最大 diff 字节数（默认：0，使用内置约 384 KiB 上限；传正值可覆盖） |
 | `--max-plan-files` | 规划提示中单独列出的最大文件路径数，超出后按目录折叠（默认：0，使用内置上限 150） |

@@ -22,8 +22,7 @@ func gitLogBody(t *testing.T, dir string) string {
 // TestCommitCmd_CoAuthorTrailer locks in the `git-agent commit --co-author`
 // contract: each flag appends a Co-Authored-By trailer to the committed
 // message, and the flag is repeatable. Without the flag the commit carries no
-// such trailer (the only other trailer in this fixture is suppressed by
-// --no-attribution).
+// explicit Co-Authored-By trailer.
 func TestCommitCmd_CoAuthorTrailer(t *testing.T) {
 	server := newFastLLMServer(t, 0)
 	defer server.Close()
@@ -39,7 +38,6 @@ func TestCommitCmd_CoAuthorTrailer(t *testing.T) {
 		"--base-url", server.URL,
 		"--model", "test-model",
 		"--no-stage",
-		"--no-attribution",
 		"--co-author", "Alice <alice@example.com>",
 		"--co-author", "Bob <bob@example.com>",
 	)
@@ -67,6 +65,46 @@ func TestCommitCmd_CoAuthorTrailer(t *testing.T) {
 	}
 }
 
+// TestCommitCmd_CoAuthorNameOnly locks in the regression fix: git accepts
+// name-only Co-Authored-By trailers (trailers are free-form text), so a
+// --co-author value without an email must pass the conventional hook instead
+// of being rejected until retries are exhausted.
+func TestCommitCmd_CoAuthorNameOnly(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook:\n  - conventional\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "test-model",
+		"--no-stage",
+		"--co-author", "OX Alpha",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit --co-author (name only) failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if !strings.Contains(msg, "Co-Authored-By: OX Alpha") {
+		t.Errorf("commit message missing name-only Co-Authored-By trailer, got:\n%s", msg)
+	}
+}
+
 // TestAutonomousRoot_CoAuthorTrailer locks in `--co-author` on the bare root
 // command: the autonomous workflow must pass the flag through to the commit
 // pipeline exactly like `git-agent commit --co-author`. The fixture seeds a
@@ -90,7 +128,6 @@ func TestAutonomousRoot_CoAuthorTrailer(t *testing.T) {
 		"--api-key", "test-key",
 		"--base-url", server.URL,
 		"--model", "test-model",
-		"--no-attribution",
 		"--co-author", "Carol <carol@example.com>",
 	)
 	c.Dir = dir

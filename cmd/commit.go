@@ -18,7 +18,6 @@ import (
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
-	infraGitignore "github.com/gitagenthq/git-agent/infrastructure/gitignore"
 	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
@@ -69,9 +68,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 	coAuthors, _ := cmd.Flags().GetStringArray("co-author")
 	trailerFlags, _ := cmd.Flags().GetStringArray("trailer")
-	noGitAgentCoAuthor, _ := cmd.Flags().GetBool("no-attribution")
-	noGitAgentLegacy, _ := cmd.Flags().GetBool("no-git-agent")
-	noGitAgent := noGitAgentCoAuthor || noGitAgentLegacy
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	noStage, _ := cmd.Flags().GetBool("no-stage")
 	amend, _ := cmd.Flags().GetBool("amend")
@@ -85,7 +81,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	providerCfg.NoGitAgentCoAuthor = providerCfg.NoGitAgentCoAuthor || noGitAgent
 
 	if configErr := providerConfigError(providerCfg); configErr != "" {
 		return agentErrors.NewExitCodeError(1, configErr)
@@ -97,28 +92,25 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repo root: %w", err)
 	}
 
-	projCfgPath := infraConfig.ProjectConfigPath(root)
 	projCfg := infraConfig.LoadProjectConfig(root, userConfigPath())
 
 	// Hook executor reads policy off projCfg, so fold user-scope values in.
-	if providerCfg.RequireModelCoAuthor || len(providerCfg.ModelCoAuthorDomains) > 0 {
+	if providerCfg.RequireGitAgentCoAuthor {
 		if projCfg == nil {
 			projCfg = &project.Config{}
 		}
-		if providerCfg.RequireModelCoAuthor {
-			projCfg.RequireModelCoAuthor = true
+		projCfg.RequireGitAgentCoAuthor = true
+	}
+	if providerCfg.RequireModelCoAuthor {
+		if projCfg == nil {
+			projCfg = &project.Config{}
 		}
-		if len(providerCfg.ModelCoAuthorDomains) > 0 {
-			projCfg.ModelCoAuthorDomains = append(projCfg.ModelCoAuthorDomains, providerCfg.ModelCoAuthorDomains...)
-		}
+		projCfg.RequireModelCoAuthor = true
 	}
 
-	skipCoAuthor := providerCfg.NoModelCoAuthor || (projCfg != nil && projCfg.NoModelCoAuthor)
 	var trailers []commit.Trailer
-	if !skipCoAuthor {
-		for _, a := range coAuthors {
-			trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
-		}
+	for _, a := range coAuthors {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: a})
 	}
 	for _, t := range trailerFlags {
 		key, value, ok := strings.Cut(t, ": ")
@@ -128,13 +120,15 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: key, Value: value})
 	}
 
+	// Auto-append Git Agent co-author when opt-in via require_git_agent_co_author.
+	if projCfg != nil && projCfg.RequireGitAgentCoAuthor {
+		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
+	}
+
 	// Auto-infer model Co-Authored-By from the active session model, falling
 	// back to the configured inference model when no session env is present or
 	// the session model cannot be mapped to a known provider.
-	domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
-	if projCfg != nil {
-		domains = append(domains, projCfg.ModelCoAuthorDomains...)
-	}
+	domains := project.DefaultModelCoAuthorDomains
 	var attributionCandidates []string
 	if providerCfg.SessionModel != "" {
 		attributionCandidates = append(attributionCandidates, providerCfg.SessionModel)
@@ -142,33 +136,22 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if providerCfg.Model != "" && providerCfg.Model != providerCfg.SessionModel {
 		attributionCandidates = append(attributionCandidates, providerCfg.Model)
 	}
-	if !skipCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
+	if !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
 		if inferred, ok := commit.InferModelCoAuthorFirstMatch(attributionCandidates...); ok {
 			trailers = append(trailers, inferred)
 		}
-	}
-
-	skipAttribution := providerCfg.NoGitAgentCoAuthor || (projCfg != nil && projCfg.NoGitAgentCoAuthor)
-	if !skipAttribution {
-		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
 	// Fail fast before calling the LLM: the model cannot be trusted to emit
 	// the trailer correctly (wrong casing, wrong placement). Caller must
 	// supply --co-author / --trailer explicitly.
 	if projCfg != nil && projCfg.RequireModelCoAuthor {
-		if skipCoAuthor {
-			return agentErrors.NewExitCodeError(1,
-				"error: require_model_co_author and no_model_co_author are both set — they contradict\nhint: unset one in your git-agent config")
-		}
-		domains := append([]string(nil), project.DefaultModelCoAuthorDomains...)
-		domains = append(domains, projCfg.ModelCoAuthorDomains...)
-		if !commit.HasModelCoAuthor(trailers, domains) {
+		if !commit.HasModelCoAuthor(trailers, project.DefaultModelCoAuthorDomains) {
 			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
 				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
 					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"\n"+
 					"         git-agent commit --co-author \"GPT-5 <noreply@openai.com>\"",
-				strings.Join(domains, ", "),
+				strings.Join(project.DefaultModelCoAuthorDomains, ", "),
 			))
 		}
 	}
@@ -245,68 +228,93 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	}
 
 	result, err := svc.Commit(cmd.Context(), application.CommitRequest{
-		Intent:            intent,
-		Trailers:          trailers,
-		DryRun:            dryRun,
-		NoStage:           noStage,
-		Amend:             amend,
-		Config:            projCfg,
-		MaxLines:          maxDiffLines,
-		MaxBytes:          maxDiffBytes,
-		MaxPlanFiles:      maxPlanFiles,
-		Verbose:           verbose,
-		LogWriter:         logWriter,
-		OutWriter:         outWriter,
-		ProjectConfigPath: projCfgPath,
+		Intent:       intent,
+		Trailers:     trailers,
+		DryRun:       dryRun,
+		NoStage:      noStage,
+		Amend:        amend,
+		Config:       projCfg,
+		MaxLines:     maxDiffLines,
+		MaxBytes:     maxDiffBytes,
+		MaxPlanFiles: maxPlanFiles,
+		Verbose:      verbose,
+		LogWriter:    logWriter,
+		OutWriter:    outWriter,
 	})
 	if err != nil {
-		// Honour SIGINT/SIGTERM cancellation before any other classification —
-		// callers expect a clean "cancelled" line, not a stack of wrapped
-		// error messages, when they Ctrl-C an in-flight LLM call. Check
-		// cmd.Context().Err() too because net/http surfaces signal-driven
-		// cancellation as an opaque signal sentinel (not context.Canceled),
-		// so errors.Is alone misses the SIGINT case.
-		jsonOut := outputFormat(cmd) == output.FormatJSON
-		if jsonOut {
-			// We emit the JSON error envelope ourselves; stop cobra from also
-			// printing its "Error:" line so stderr stays valid JSON for agents.
-			cmd.SilenceErrors = true
-		}
-		if errors.Is(err, context.Canceled) || cmd.Context().Err() != nil {
-			if jsonOut {
-				_ = output.EncodeError(cmd.ErrOrStderr(), 1, "cancelled")
-			} else {
-				fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
-			}
-			return agentErrors.NewExitCodeError(1, "")
-		}
-		if jsonOut {
-			// Reuse RenderCommitError to classify the exit code, but discard its
-			// human text and emit the uniform JSON error envelope instead.
-			mapped := RenderCommitError(io.Discard, err)
-			code := 1
-			msg := mapped.Error()
-			var ece *agentErrors.ExitCodeError
-			if errors.As(mapped, &ece) {
-				code = ece.Code
-				if ece.Message != "" {
-					msg = ece.Message
-				}
-			}
-			// Planner timeout/budget map to an empty ExitCodeError message (their
-			// human text went to io.Discard); fall back to the underlying error so
-			// the JSON envelope is never blank.
-			if msg == "" {
-				msg = err.Error()
-			}
-			_ = output.EncodeError(cmd.ErrOrStderr(), code, msg)
-			return mapped
-		}
-		return RenderCommitError(cmd.ErrOrStderr(), err)
+		return renderCommitFailure(cmd, err)
 	}
 
-	out := cmd.OutOrStdout()
+	if err := renderCommitSuccess(cmd, result); err != nil {
+		return err
+	}
+	updateCommitGraph(cmd, root, graphAutobuild, result, outWriter, graphRepo, graphGit)
+	return nil
+}
 
+func updateCommitGraph(cmd *cobra.Command, root string, graphAutobuild bool, result *application.CommitResult, outWriter io.Writer, graphRepo *infraGraph.SQLiteRepository, graphGit *infraGit.GraphClient) {
+	if !graphAutobuild || result.DryRun {
+		return
+	}
+	if graphRepo == nil {
+		if outWriter != nil {
+			fmt.Fprintln(outWriter, "Building code graph (first run)...")
+		}
+		if _, graphClient, err := openGraphDB(cmd.Context(), root); err == nil {
+			defer graphClient.Close()
+			graphRepo = infraGraph.NewSQLiteRepository(graphClient)
+			graphGit = infraGit.NewGraphClient(root)
+		} else if verbose {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph bootstrap: %v\n", err)
+		}
+	}
+	if graphRepo == nil {
+		return
+	}
+	idxSvc := application.NewIndexService(graphRepo, graphGit)
+	ensure := application.NewEnsureIndexService(idxSvc, graphRepo, graphGit)
+	if _, err := ensure.EnsureIndex(cmd.Context(), graph.IndexRequest{
+		MaxCommits: commitGraphBackfillMaxCommits, MaxFilesPerCommit: 50,
+	}); err != nil && verbose {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph co-change update: %v\n", err)
+	}
+}
+
+func renderCommitFailure(cmd *cobra.Command, err error) error {
+	jsonOut := outputFormat(cmd) == output.FormatJSON
+	if jsonOut {
+		cmd.SilenceErrors = true
+	}
+	if errors.Is(err, context.Canceled) || cmd.Context().Err() != nil {
+		if jsonOut {
+			_ = output.EncodeError(cmd.ErrOrStderr(), 1, "cancelled")
+		} else {
+			fmt.Fprintln(cmd.ErrOrStderr(), "cancelled")
+		}
+		return agentErrors.NewExitCodeError(1, "")
+	}
+	if jsonOut {
+		mapped := RenderCommitError(io.Discard, err)
+		code := 1
+		msg := mapped.Error()
+		var ece *agentErrors.ExitCodeError
+		if errors.As(mapped, &ece) {
+			code = ece.Code
+			if ece.Message != "" {
+				msg = ece.Message
+			}
+		}
+		if msg == "" {
+			msg = err.Error()
+		}
+		_ = output.EncodeError(cmd.ErrOrStderr(), code, msg)
+		return mapped
+	}
+	return RenderCommitError(cmd.ErrOrStderr(), err)
+}
+
+func renderCommitSuccess(cmd *cobra.Command, result *application.CommitResult) error {
+	out := cmd.OutOrStdout()
 	if outputFormat(cmd) == output.FormatJSON {
 		committedCount := 0
 		if !result.DryRun {
@@ -316,70 +324,26 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		if n := len(result.Commits); n > 0 {
 			finalSHA = result.Commits[n-1].SHA
 		}
-		if err := output.EncodeJSON(out, commitJSONResult{
-			DryRun:         result.DryRun,
-			Commits:        result.Commits,
-			CommittedCount: committedCount,
-			FinalSHA:       finalSHA,
-		}); err != nil {
-			return err
-		}
-		// Fall through: graph autobuild below is gated on !DryRun and writes only
-		// to a TTY/verbose stderr writer, so it never pollutes the JSON on stdout.
-	} else if result.DryRun {
+		return output.EncodeJSON(out, commitJSONResult{
+			DryRun: result.DryRun, Commits: result.Commits,
+			CommittedCount: committedCount, FinalSHA: finalSHA,
+		})
+	}
+	if result.DryRun {
 		for i, c := range result.Commits {
 			fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, c.Title, strings.Join(c.Files, ", "))
 		}
 		return nil
-	} else {
-		for _, c := range result.Commits {
-			fmt.Fprintln(out)
-			if c.GitOutput != "" {
-				fmt.Fprintln(out, c.GitOutput)
-			}
-			if c.Explanation != "" {
-				fmt.Fprintln(out, c.Explanation)
-			}
+	}
+	for _, c := range result.Commits {
+		fmt.Fprintln(out)
+		if c.GitOutput != "" {
+			fmt.Fprintln(out, c.GitOutput)
+		}
+		if c.Explanation != "" {
+			fmt.Fprintln(out, c.Explanation)
 		}
 	}
-
-	// git-first graph generation (continued): the commit(s) have landed and the
-	// output is printed, so now bootstrap the graph if none existed and fold the
-	// new commit into the co-change index — the graph grows as a byproduct of
-	// committing, never needing a separate manual index step. Running here,
-	// after the commit, keeps the gitignore/dir bootstrap from dirtying the
-	// committed tree. Disabled by graph_autobuild=false. Strictly best-effort:
-	// the commit is already done, so failures only surface under --verbose.
-	if graphAutobuild && !result.DryRun {
-		if graphRepo == nil {
-			// First-time bootstrap does a one-time, bounded history backfill that
-			// can take a moment. Announce it (only on a TTY / --verbose, like the
-			// other commit phase lines) so the user isn't left at a silent prompt
-			// after the commit hash already printed. Subsequent commits index
-			// incrementally and print nothing.
-			if outWriter != nil {
-				fmt.Fprintln(outWriter, "Building code graph (first run)...")
-			}
-			if _, graphClient, err := openGraphDB(cmd.Context(), root); err == nil {
-				defer graphClient.Close()
-				graphRepo = infraGraph.NewSQLiteRepository(graphClient)
-				graphGit = infraGit.NewGraphClient(root)
-			} else if verbose {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph bootstrap: %v\n", err)
-			}
-		}
-		if graphRepo != nil {
-			idxSvc := application.NewIndexService(graphRepo, graphGit)
-			ensure := application.NewEnsureIndexService(idxSvc, graphRepo, graphGit, graphDBPath)
-			if _, err := ensure.EnsureIndex(cmd.Context(), graph.IndexRequest{
-				MaxCommits:        commitGraphBackfillMaxCommits,
-				MaxFilesPerCommit: 50,
-			}); err != nil && verbose {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph co-change update: %v\n", err)
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -471,25 +435,24 @@ func buildCommitDeps(
 		infraDiff.NewLineTruncator(),
 		heuristicPlanner,
 	)
-	toptalClient := infraGitignore.NewToptalClient()
-	svc.SetGitignoreService(application.NewGitignoreService(llmClient, toptalClient, gitClient))
 	return llmClient, svc
 }
 
+func addCommitBehaviorFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("dry-run", false, "print commit message without committing")
+	cmd.Flags().String("intent", "", "describe the intent of the change")
+	cmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
+	cmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
+	cmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
+	cmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
+	cmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
+	cmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
+	cmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
+	cmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
+}
+
 func init() {
-	commitCmd.Flags().Bool("dry-run", false, "print commit message without committing")
-	commitCmd.Flags().String("intent", "", "describe the intent of the change")
-	commitCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
-	commitCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
-	commitCmd.Flags().Bool("no-attribution", false, "omit the default Git Agent co-author trailer")
-	commitCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
-	_ = commitCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
-	commitCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
-	commitCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
-	commitCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
-	commitCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
-	commitCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
-	commitCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
+	addCommitBehaviorFlags(commitCmd)
 	addOutputFlagWithDefault(commitCmd, "text")
 
 	rootCmd.AddCommand(commitCmd)

@@ -83,14 +83,11 @@ func TestExecute_HookDoesNotExist(t *testing.T) {
 	missing := filepath.Join(os.TempDir(), "git-agent-hook-nonexistent-xyz.sh")
 
 	result, err := exec.Execute(context.Background(), []string{missing}, sampleInput())
-	if err != nil {
-		t.Fatalf("expected no error for missing hook, got: %v", err)
+	if err == nil {
+		t.Fatal("expected an error for missing hook")
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result for missing hook")
-	}
-	if result.ExitCode != 0 {
-		t.Errorf("expected exit code 0 for missing hook, got %d", result.ExitCode)
+	if result != nil {
+		t.Fatalf("expected no hook result for missing hook, got %#v", result)
 	}
 }
 

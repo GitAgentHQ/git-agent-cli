@@ -24,7 +24,7 @@ type directoryBucketer struct{}
 
 // Plan buckets req.StagedDiff.Files and req.UnstagedDiff.Files by their first
 // path component, then caps the result at maxCommitGroups (5) by merging the
-// smallest buckets into the last group. Returns a CommitPlan with placeholder
+// surplus buckets into the largest bucket among the capped tail. Returns a CommitPlan with placeholder
 // titles of the form "chore(<scope>): update N files in <dir>/" — the
 // downstream Generate loop replaces the title with a real LLM message before
 // committing.
@@ -59,9 +59,8 @@ func (b *directoryBucketer) Plan(_ context.Context, req commit.PlanRequest) (*co
 		buckets[idx].files = append(buckets[idx].files, f)
 	}
 
-	// Cap at maxCommitGroups by merging the smallest buckets into the
-	// already-last bucket so its file list stays cohesive when sorted by
-	// the original top-level dir.
+	// Cap at maxCommitGroups by merging surplus buckets into the largest
+	// bucket in the capped tail so the resulting file list stays stable.
 	if len(buckets) > maxCommitGroups {
 		// Sort surplus buckets by size descending; largest gets merged first and keeps its dir.
 		sort.SliceStable(buckets[maxCommitGroups-1:], func(i, j int) bool {

@@ -30,3 +30,16 @@ Feature: Autonomous Root Command (bare git-agent)
     Given a git repository with no changed files
     When git-agent is executed with no subcommands
     Then git-agent outputs clean status without running commit
+
+  Scenario: Bare git-agent keeps LLM heartbeat off stdout
+    Given a bare git-agent invocation is waiting for an LLM response
+    When the LLM heartbeat interval elapses
+    Then heartbeat diagnostics are written to stderr
+    And stdout remains reserved for command output
+
+  Scenario: Bare git-agent preserves mandatory ignores when gitignore service is unavailable
+    Given a git repository with no .gitignore file
+    And the gitignore provider is unavailable
+    When git-agent is executed with no subcommands
+    Then a .gitignore file is still created
+    And mandatory git-agent files are ignored

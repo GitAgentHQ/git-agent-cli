@@ -52,7 +52,7 @@ func TestConfigSet_ProjectScope(t *testing.T) {
 
 func TestConfigSet_LocalScope(t *testing.T) {
 	dir := newGitRepo(t)
-	out, code := gitAgent(t, dir, "config", "set", "no_git_agent_co_author", "true", "--local")
+	out, code := gitAgent(t, dir, "config", "set", "require_git_agent_co_author", "true", "--local")
 	if code != 0 {
 		t.Fatalf("config set --local: exit code %d\noutput: %s", code, out)
 	}

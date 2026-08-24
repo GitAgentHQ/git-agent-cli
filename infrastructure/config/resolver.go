@@ -27,31 +27,27 @@ const DefaultRequestTimeout = 90 * time.Second
 const DefaultHeartbeatInterval = 15 * time.Second
 
 type ProviderConfig struct {
-	APIKey                string
-	BaseURL               string
-	Model                 string
-	SessionModel          string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
-	CloudflareAIGatewayID string
-	RequestTimeout        time.Duration // 0 = use DefaultRequestTimeout
-	HeartbeatInterval     time.Duration // 0 = use DefaultHeartbeatInterval
-	ForceFreeGateway      bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
-	NoGitAgentCoAuthor    bool          // When true, omit the default Co-Authored-By: Git Agent trailer
-	NoModelCoAuthor       bool          // When true, ignore all --co-author trailers
-	RequireModelCoAuthor  bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
-	ModelCoAuthorDomains  []string      // Extra email domains accepted by the require check; appended to project.DefaultModelCoAuthorDomains
+	APIKey                  string
+	BaseURL                 string
+	Model                   string
+	SessionModel            string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
+	CloudflareAIGatewayID   string
+	RequestTimeout          time.Duration // 0 = use DefaultRequestTimeout
+	HeartbeatInterval       time.Duration // 0 = use DefaultHeartbeatInterval
+	ForceFreeGateway        bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
+	RequireGitAgentCoAuthor bool          // When true, append Co-Authored-By: Git Agent trailer (opt-in)
+	RequireModelCoAuthor    bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
 }
 
 type fileConfig struct {
-	APIKey                string   `yaml:"api_key"`
-	BaseURL               string   `yaml:"base_url"`
-	Model                 string   `yaml:"model"`
-	CloudflareAIGatewayID string   `yaml:"cloudflare_ai_gateway_id"`
-	RequestTimeout        string   `yaml:"request_timeout"`
-	HeartbeatInterval     string   `yaml:"heartbeat_interval"`
-	NoGitAgentCoAuthor    bool     `yaml:"no_git_agent_co_author"`
-	NoModelCoAuthor       bool     `yaml:"no_model_co_author"`
-	RequireModelCoAuthor  bool     `yaml:"require_model_co_author"`
-	ModelCoAuthorDomains  []string `yaml:"model_co_author_domains"`
+	APIKey                  string `yaml:"api_key"`
+	BaseURL                 string `yaml:"base_url"`
+	Model                   string `yaml:"model"`
+	CloudflareAIGatewayID   string `yaml:"cloudflare_ai_gateway_id"`
+	RequestTimeout          string `yaml:"request_timeout"`
+	HeartbeatInterval       string `yaml:"heartbeat_interval"`
+	RequireGitAgentCoAuthor bool   `yaml:"require_git_agent_co_author"`
+	RequireModelCoAuthor    bool   `yaml:"require_model_co_author"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -133,16 +129,8 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.CloudflareAIGatewayID = ""
 	}
 
-	result.NoGitAgentCoAuthor = flags.NoGitAgentCoAuthor || file.NoGitAgentCoAuthor
-	result.NoModelCoAuthor = flags.NoModelCoAuthor || file.NoModelCoAuthor
+	result.RequireGitAgentCoAuthor = flags.RequireGitAgentCoAuthor || file.RequireGitAgentCoAuthor
 	result.RequireModelCoAuthor = flags.RequireModelCoAuthor || file.RequireModelCoAuthor
-
-	if len(flags.ModelCoAuthorDomains) > 0 {
-		result.ModelCoAuthorDomains = append(result.ModelCoAuthorDomains, flags.ModelCoAuthorDomains...)
-	}
-	if len(file.ModelCoAuthorDomains) > 0 {
-		result.ModelCoAuthorDomains = append(result.ModelCoAuthorDomains, file.ModelCoAuthorDomains...)
-	}
 
 	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)

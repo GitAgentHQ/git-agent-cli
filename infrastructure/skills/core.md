@@ -208,9 +208,8 @@ planner cannot stage a pure deletion).
 | `--no-stage` | User has already staged specific files and doesn't want auto-staging |
 | `--amend` | User wants to rewrite the most recent commit message |
 | `--intent "..."` | Always set — keeps generated messages focused |
-| `--co-author "Name <email>"` | Attribute a co-author (repeatable); skipped if `no_model_co_author` is set in config |
+| `--co-author "Name <email>"` | Attribute a co-author (repeatable) |
 | `--trailer "Key: Value"` | Add an arbitrary git trailer (repeatable) |
-| `--no-attribution` | Omit the default `Co-Authored-By: Git Agent` trailer |
 | `--max-diff-lines N` | Cap diff size sent to the model (0 = no line limit; a byte cap always applies) |
 | `--max-diff-bytes N` | Cap diff byte size sent to the model (0 or negative = built-in default ~384 KiB) |
 | `-o json` | Emit machine-readable commit results (titles, SHAs, hook outcomes) for scripting; defaults to text |
@@ -275,7 +274,7 @@ Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local 
 
 **Note for Coding Agents**: attribution and inference are separate. The generation model resolves only from the `--model` flag, `git config --local git-agent.model`, or `model:` in the user config file — in that precedence order — and is never displaced by a session-injected model. The session model (`PI_MODEL`, etc.) only supplies the `Co-Authored-By` trailer identifying who produced the change.
 
-Built-in domains (no `model_co_author_domains` config needed): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. Only custom / lesser-known providers need `model_co_author_domains:`.
+Built-in domains (hard-coded in source): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. These cannot be extended via config — edit `DefaultModelCoAuthorDomains` in code if you need custom providers.
 
 Manual `--co-author "Name <email@domain>"` flags remain available for custom human or secondary co-author attributions, but are no longer required for active model attribution even when `require_model_co_author: true` is set.
 

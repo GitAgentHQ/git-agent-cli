@@ -20,7 +20,6 @@ func TestEnsureIndex_CreatesDBWhenMissing(t *testing.T) {
 	git("commit", "-m", "initial commit")
 
 	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
-
 	// Verify DB does not exist yet.
 	if _, err := os.Stat(dbPath); err == nil {
 		t.Fatal("DB should not exist before EnsureIndex")
@@ -29,7 +28,7 @@ func TestEnsureIndex_CreatesDBWhenMissing(t *testing.T) {
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 
 	ctx := context.Background()
 	result, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
@@ -65,7 +64,6 @@ func TestEnsureIndex_IncrementalWhenStale(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "commit 3")
 
-	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
@@ -90,7 +88,7 @@ func TestEnsureIndex_IncrementalWhenStale(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "commit 5")
 
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 	result2, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
 	if err != nil {
 		t.Fatalf("EnsureIndex() error = %v", err)
@@ -118,7 +116,6 @@ func TestEnsureIndex_NoOpWhenFresh(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "initial")
 
-	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
@@ -132,7 +129,7 @@ func TestEnsureIndex_NoOpWhenFresh(t *testing.T) {
 	}
 
 	// EnsureIndex should find nothing new.
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 	result, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
 	if err != nil {
 		t.Fatalf("EnsureIndex() error = %v", err)
@@ -158,7 +155,6 @@ func TestEnsureIndex_ForcePushTriggersFullReindex(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "commit 3")
 
-	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
@@ -189,7 +185,7 @@ func TestEnsureIndex_ForcePushTriggersFullReindex(t *testing.T) {
 		t.Fatalf("SetLastIndexedCommit() error = %v", err)
 	}
 
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 	result, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
 	if err != nil {
 		t.Fatalf("EnsureIndex() error = %v", err)
@@ -209,7 +205,6 @@ func TestEnsureIndex_CorruptLastHashSurfacesError(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "commit 1")
 
-	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
@@ -227,7 +222,7 @@ func TestEnsureIndex_CorruptLastHashSurfacesError(t *testing.T) {
 		t.Fatalf("SetLastIndexedCommit() error = %v", err)
 	}
 
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 	_, err = ensureSvc.EnsureIndex(ctx, graph.IndexRequest{})
 	if err == nil {
 		t.Fatal("EnsureIndex() expected error for corrupt lastHash, got nil")
@@ -245,7 +240,6 @@ func TestEnsureIndex_ForceFlag(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "commit 2")
 
-	dbPath := filepath.Join(repoDir, ".git-agent", "graph.db")
 	repo := openTestDB(t, repoDir)
 	gitClient := gitinfra.NewGraphClient(repoDir)
 	indexSvc := NewIndexService(repo, gitClient)
@@ -259,7 +253,7 @@ func TestEnsureIndex_ForceFlag(t *testing.T) {
 	}
 
 	// Force=true should trigger full re-index even though DB is fresh.
-	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient, dbPath)
+	ensureSvc := NewEnsureIndexService(indexSvc, repo, gitClient)
 	result, err := ensureSvc.EnsureIndex(ctx, graph.IndexRequest{Force: true})
 	if err != nil {
 		t.Fatalf("EnsureIndex(Force=true) error = %v", err)

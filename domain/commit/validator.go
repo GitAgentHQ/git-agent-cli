@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Severity indicates how serious a validation issue is.
@@ -58,8 +60,12 @@ func (r *ValidationResult) Warnings() []string {
 }
 
 var (
-	headerRe   = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
-	scopeRe    = regexp.MustCompile(`^\w+\(([a-z0-9_-]+)\)`)
+	headerRe = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9_-]+\))?!?: .+`)
+	scopeRe  = regexp.MustCompile(`^\w+\(([a-z0-9_-]+)\)`)
+	// coAuthorRe matches the strict "Name <email@domain>" form. Git itself
+	// treats trailers as free-form text (Rule 9 accepts any non-empty value);
+	// this stricter pattern is only needed where an email is semantically
+	// required, i.e. model-domain attribution policy.
 	coAuthorRe = regexp.MustCompile(`^Co-Authored-By: .+ <[^>]+@[^>]+>$`)
 	footerRe   = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): `)
 	pastVerbs  = []string{
@@ -69,10 +75,18 @@ var (
 	}
 )
 
-// ValidateConventional validates a raw commit message against Conventional
-// Commits 1.0.0 and project-specific rules. When allowedScopes is non-empty,
-// any scope used in the header must be in the list. It never returns nil.
+// ValidateConventional validates a raw commit message using the default
+// English rules. It is retained for callers that do not have language context.
 func ValidateConventional(raw string, allowedScopes []string) *ValidationResult {
+	return ValidateConventionalWithLanguage(raw, allowedScopes, "English", "")
+}
+
+// ValidateConventionalWithLanguage validates a raw commit message against
+// Conventional Commits and project-specific rules. An explicit English
+// language keeps the historical lowercase and byte-count rules. For auto,
+// an intent containing a non-ASCII letter selects non-English rules; an empty
+// or otherwise undetectable intent remains English.
+func ValidateConventionalWithLanguage(raw string, allowedScopes []string, language, intent string) *ValidationResult {
 	result := &ValidationResult{}
 
 	if strings.TrimSpace(raw) == "" {
@@ -81,12 +95,35 @@ func ValidateConventional(raw string, allowedScopes []string) *ValidationResult 
 	}
 
 	lines := strings.Split(raw, "\n")
-	checkHeader(result, lines[0], allowedScopes)
+	nonEnglish := isNonEnglishLanguage(language, intent)
+	checkHeader(result, lines[0], allowedScopes, nonEnglish)
 	checkBody(result, lines)
 	return result
 }
 
-func checkHeader(result *ValidationResult, header string, allowedScopes []string) {
+func isNonEnglishLanguage(language, intent string) bool {
+	language = strings.TrimSpace(language)
+	if language == "" || strings.EqualFold(language, "auto") {
+		for _, r := range intent {
+			if r > unicode.MaxASCII && unicode.IsLetter(r) {
+				return true
+			}
+		}
+		return false
+	}
+	return !isEnglishLanguage(language)
+}
+
+func isEnglishLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
+		return true
+	default:
+		return false
+	}
+}
+
+func checkHeader(result *ValidationResult, header string, allowedScopes []string, nonEnglish bool) {
 	// Rule 1: format
 	if !headerRe.MatchString(header) {
 		result.Issues = append(result.Issues, ValidationIssue{
@@ -117,11 +154,16 @@ func checkHeader(result *ValidationResult, header string, allowedScopes []string
 		}
 	}
 
-	// Rule 3: title <=50 chars
-	if len(header) > 50 {
+	// Rule 3: title <=50 characters. UTF-8 bytes are the historical English
+	// behavior; natural-language output uses Unicode runes.
+	titleLength := len(header)
+	if nonEnglish {
+		titleLength = utf8.RuneCountInString(header)
+	}
+	if titleLength > 50 {
 		result.Issues = append(result.Issues, ValidationIssue{
 			SeverityError,
-			fmt.Sprintf("title must be 50 characters or less (got %d)", len(header)),
+			fmt.Sprintf("title must be 50 characters or less (got %d)", titleLength),
 		})
 	}
 
@@ -136,8 +178,9 @@ func checkHeader(result *ValidationResult, header string, allowedScopes []string
 	}
 	desc := header[colonIdx+2:]
 
-	// Rule 2: description must be all lowercase
-	if desc != strings.ToLower(desc) {
+	// Rule 2: English descriptions must be all lowercase. Other languages
+	// retain their natural capitalization and orthography.
+	if !nonEnglish && desc != strings.ToLower(desc) {
 		result.Issues = append(result.Issues, ValidationIssue{SeverityError, "description must be all lowercase"})
 	}
 
@@ -248,15 +291,15 @@ func checkBodyLineLength(result *ValidationResult, bodyLines []string) {
 }
 
 func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
-	// Rule 9: Co-Authored-By format, when present
+	// Rule 9: git commits any trailer text, so a Co-Authored-By line is valid
+	// with a plain name or with the Name <email@domain> form; only an empty
+	// value is malformed.
 	for _, line := range bodyLines {
-		if strings.HasPrefix(line, "Co-Authored-By:") {
-			if !coAuthorRe.MatchString(line) {
-				result.Issues = append(result.Issues, ValidationIssue{
-					SeverityError,
-					"Co-Authored-By must be: Co-Authored-By: Name <email@domain>",
-				})
-			}
+		if strings.HasPrefix(line, "Co-Authored-By:") && strings.TrimSpace(line[len("Co-Authored-By:"):]) == "" {
+			result.Issues = append(result.Issues, ValidationIssue{
+				SeverityError,
+				"Co-Authored-By must have a value: Co-Authored-By: Name or Co-Authored-By: Name <email@domain>",
+			})
 		}
 	}
 }
@@ -266,9 +309,8 @@ func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
 // domain is in allowedDomains (case-insensitive). Malformed Co-Authored-By
 // lines are ignored here — ValidateConventional already reports them.
 //
-// The allowedDomains slice is taken as-is; callers are expected to merge
-// project.DefaultModelCoAuthorDomains with any user-configured extensions
-// before calling.
+// The allowedDomains slice is taken as-is; callers typically pass
+// project.DefaultModelCoAuthorDomains directly.
 func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResult {
 	result := &ValidationResult{}
 	normalized := normalizeDomains(allowedDomains)

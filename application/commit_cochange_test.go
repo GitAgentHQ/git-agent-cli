@@ -221,7 +221,8 @@ func TestCommitService_WithCoChangeHints_PassesToPlanner(t *testing.T) {
 		},
 	}
 
-	svc := application.NewCommitService(gen, rp, git, noopHook(), nil, nil, nil, nil, coProvider)
+	svc := application.NewCommitService(gen, rp, git, noopHook(), nil, nil, nil, nil)
+	svc.SetCoChangeProvider(coProvider)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	_, err := svc.Commit(context.Background(), req)
@@ -259,7 +260,8 @@ func TestCommitService_CoChangeError_GracefulDegradation(t *testing.T) {
 		err: context.DeadlineExceeded, // simulate a failure
 	}
 
-	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil, coProvider)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+	svc.SetCoChangeProvider(coProvider)
 
 	req := application.CommitRequest{Config: &project.Config{}}
 	result, err := svc.Commit(context.Background(), req)

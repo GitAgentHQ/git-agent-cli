@@ -10,11 +10,19 @@ all-language, offline, no API key.
 
 ## Start here
 
-Use the bare command by default. Pass the user's intent directly to
-`git-agent`:
+Use the bare command by default. Every commit is two steps — gather context
+first, then assemble and pass the intent. Never build the intent from memory
+alone:
+
+1. **Gather context**: use the harness session-context tool (`session_context`
+   in pi) to collect the user's requests and decisions since the last commit;
+   if no such tool exists, fall back to reading the diff yourself.
+2. **Assemble the intent**: condense that context into one concise sentence
+   describing what changed and why — never a raw file list or diff dump.
+3. **Commit** with the assembled intent:
 
 ```bash
-git-agent --intent "describe the user's requested change"
+git-agent --intent "<one-sentence intent assembled from the gathered context>"
 ```
 
 The bare command is the autonomous agent entry point introduced by the recent

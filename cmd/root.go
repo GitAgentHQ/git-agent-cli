@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,10 +141,11 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 		return runCommit(cmd, args)
 	}
 
+	heartbeatWriter := autonomousHeartbeatWriter(cmd)
 	llmClient := infraOpenAI.NewClient(
 		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
-		cmd.OutOrStdout(),
+		heartbeatWriter,
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
@@ -162,7 +164,15 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 		)
 		techs, _, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
 		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
+			fallback := application.EnsureMandatoryIgnoreRules("")
+			if writeErr := os.WriteFile(gitignorePath, []byte(fallback), 0644); writeErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v\n", err)
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-gitignore failed: %v; wrote mandatory ignore rules\n", err)
+				if updatedFiles, updateErr := gitClient.AllChangedFiles(cmd.Context()); updateErr == nil {
+					allFiles = updatedFiles
+				}
+			}
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated .gitignore (%s)\n", strings.Join(techs, ", "))
 			if updatedFiles, err := gitClient.AllChangedFiles(cmd.Context()); err == nil {
@@ -234,6 +244,13 @@ var stdDirAbbrevs = map[string]string{
 	"test":           "tests",
 }
 
+func autonomousHeartbeatWriter(cmd *cobra.Command) io.Writer {
+	if verbose || stderrIsTerminal() {
+		return cmd.ErrOrStderr()
+	}
+	return nil
+}
+
 func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 	if len(scopes) == 0 {
 		return true
@@ -271,18 +288,6 @@ func init() {
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
 	rootCmd.PersistentFlags().Bool("free", false, "force routing through the free shared gateway, overriding api_key / base_url / model")
 
-	rootCmd.Flags().Bool("dry-run", false, "print commit message without committing")
-	rootCmd.Flags().String("intent", "", "describe the intent of the change")
-	rootCmd.Flags().StringArray("co-author", nil, "add a co-author trailer (repeatable)")
-	rootCmd.Flags().StringArray("trailer", nil, "add an arbitrary git trailer, format \"Key: Value\" (repeatable)")
-	rootCmd.Flags().Bool("no-attribution", false, "omit the default Git Agent co-author trailer")
-	rootCmd.Flags().Bool("no-git-agent", false, "omit the default Git Agent co-author trailer")
-	_ = rootCmd.Flags().MarkDeprecated("no-git-agent", "use --no-attribution instead")
-	rootCmd.Flags().Bool("no-stage", false, "skip auto-staging; only commit already-staged changes")
-	rootCmd.Flags().Bool("amend", false, "regenerate and amend the most recent commit")
-	rootCmd.MarkFlagsMutuallyExclusive("amend", "no-stage")
-	rootCmd.Flags().Int("max-diff-lines", 0, "maximum diff lines to send to the model (0 = no line limit; a byte cap always applies)")
-	rootCmd.Flags().Int("max-diff-bytes", 0, "maximum diff bytes to send to the model (0 or negative = built-in default ~384 KiB; pass a positive value to override)")
-	rootCmd.Flags().Int("max-plan-files", 0, "maximum file paths listed individually in the planner prompt before collapsing to directory summaries (0 or negative = built-in default 150)")
+	addCommitBehaviorFlags(rootCmd)
 	addOutputFlagWithDefault(rootCmd, "text")
 }
