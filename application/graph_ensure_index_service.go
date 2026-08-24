@@ -16,7 +16,7 @@ type EnsureIndexService struct {
 }
 
 // NewEnsureIndexService creates an EnsureIndexService.
-func NewEnsureIndexService(indexSvc *IndexService, repo graph.GraphRepository, git graph.GraphGitClient, dbPath string) *EnsureIndexService {
+func NewEnsureIndexService(indexSvc *IndexService, repo graph.GraphRepository, git graph.GraphGitClient) *EnsureIndexService {
 	return &EnsureIndexService{
 		indexSvc: indexSvc,
 		repo:     repo,
