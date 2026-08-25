@@ -98,7 +98,7 @@ Feature: Model Co-Authored-By trailer enforcement
 
       Co-Authored-By: <model> <noreply@<domain>>
       """
-    And the allow-list is "anthropic.com,openai.com,google.com,x.ai,zhipuai.cn,qwen.ai,deepseek.com,moonshot.ai"
+    And the allow-list is "anthropic.com,openai.com,google.com,x.ai,zhipuai.cn,qwen.ai,deepseek.com,moonshot.ai,models.git-agent.dev"
     Then HasErrors returns false
 
     Examples:
