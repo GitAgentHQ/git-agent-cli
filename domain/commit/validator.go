@@ -379,6 +379,12 @@ type ModelProviderInfo struct {
 	Domain       string // Canonical email domain (e.g. "google.com")
 }
 
+// fallbackCoAuthorDomain is the git-agent-owned email domain used when a
+// session model maps to no known provider (stealth aliases, custom gateways).
+// It is part of the default model co-author allow-list
+// (project.DefaultModelCoAuthorDomains).
+const fallbackCoAuthorDomain = "models.git-agent.dev"
+
 // knownProviders is the table-driven registry of recognized AI model providers used for co-author inference.
 var knownProviders = []ModelProviderInfo{
 	{MatchKeyword: "gemini", Domain: "google.com"},
@@ -406,6 +412,7 @@ var ignoredTierSuffixes = []string{
 	"low",
 	"minimal",
 	"xhigh",
+	"free",
 }
 
 // knownBrandCasings defines canonical display casings for common model terminology.
@@ -422,7 +429,9 @@ var knownBrandCasings = map[string]string{
 }
 
 // InferModelCoAuthor infers a Co-Authored-By trailer from a model ID string using a table-driven design.
-// Returns (Trailer{}, false) if the model ID cannot be matched to a known provider domain.
+// Known providers contribute their canonical email domain; models that map to
+// no known provider (stealth aliases, custom gateways) are attributed under
+// fallbackCoAuthorDomain. Returns (Trailer{}, false) only for an empty model ID.
 func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
@@ -437,17 +446,15 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 
 	lowerClean := strings.ToLower(cleaned)
 
-	// 2. Table lookup for known provider matching
-	var matchedProvider *ModelProviderInfo
+	// 2. Table lookup for known provider matching; unmatched models keep the
+	// fallback domain so attribution never requires provider mapping.
+	domain := fallbackCoAuthorDomain
 	for i := range knownProviders {
 		p := &knownProviders[i]
 		if strings.Contains(lowerClean, p.MatchKeyword) {
-			matchedProvider = p
+			domain = p.Domain
 			break
 		}
-	}
-	if matchedProvider == nil {
-		return Trailer{}, false
 	}
 
 	// 3. Strip trailing reasoning/tier suffixes and date tags (-YYYYMMDD or -MMDD)
@@ -506,7 +513,7 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	title := strings.Join(mergedParts, " ")
 	return Trailer{
 		Key:   "Co-Authored-By",
-		Value: fmt.Sprintf("%s <noreply@%s>", title, matchedProvider.Domain),
+		Value: fmt.Sprintf("%s <noreply@%s>", title, domain),
 	}, true
 }
 

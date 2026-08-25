@@ -68,6 +68,9 @@ var DefaultModelCoAuthorDomains = []string{
 	"qwen.ai",
 	"deepseek.com",
 	"moonshot.ai",
+	// Fallback domain for inferred trailers of session models that map to no
+	// known provider (see commit.fallbackCoAuthorDomain).
+	"models.git-agent.dev",
 }
 
 // ScopeNames returns just the scope name strings.

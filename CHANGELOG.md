@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Attribute session models that map to no known provider (stealth aliases such as `openrouter/stealth/ox-alpha`) as `Co-Authored-By: <Title Cased Model> <noreply@models.git-agent.dev>` instead of failing fast under `require_model_co_author`; strip the `-free` gateway tier suffix like other routing suffixes (cli)
+
 ## [0.13.0] - 2026-08-24
 
 ### Changed
