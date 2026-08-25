@@ -25,3 +25,9 @@ Feature: Co-author trailers (--co-author)
     When git-agent is executed
     Then the committed message contains a Co-Authored-By trailer matching the session model
 
+  Scenario: Unmapped session model still infers Co-Authored-By without provider mapping
+    Given a git repository with changed files and an agent session model that maps to no known provider
+    When git-agent is executed with require_model_co_author enabled
+    Then the commit succeeds
+    And the committed message contains a Co-Authored-By trailer titled from the session model under the fallback domain
+

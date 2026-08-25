@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -223,5 +224,45 @@ func TestAgentSession_SessionModelAddsCoAuthorTrailer(t *testing.T) {
 	msg := gitLogBody(t, dir)
 	if !strings.Contains(msg, "Co-Authored-By: Gemini 3.1 Flash Lite <noreply@google.com>") {
 		t.Errorf("expected session model Co-Authored-By trailer, got:\n%s", msg)
+	}
+}
+
+// TestAgentSession_UnmappedSessionModelAddsCoAuthorTrailer ensures a session
+// model that maps to no known provider (e.g. an OpenRouter stealth alias) is
+// still attributed — under the fallback domain — and satisfies
+// require_model_co_author instead of failing fast.
+func TestAgentSession_UnmappedSessionModelAddsCoAuthorTrailer(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "git-agent", "config.yml"),
+		fmt.Sprintf("api_key: test-key\nbase_url: %s/v1\nmodel: test-model\nrequire_model_co_author: true\nhook: empty\n", server.URL))
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--intent", "update readme contents",
+		"--no-stage",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"PI_MODEL=openrouter/stealth/ox-alpha",
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if !strings.Contains(msg, "Co-Authored-By: Ox Alpha <noreply@models.git-agent.dev>") {
+		t.Errorf("expected fallback-domain session model Co-Authored-By trailer, got:\n%s", msg)
 	}
 }
