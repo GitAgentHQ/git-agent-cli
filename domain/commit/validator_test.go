@@ -423,14 +423,15 @@ func TestValidateModelCoAuthor(t *testing.T) {
 	// project.DefaultModelCoAuthorDomains so adding a provider cannot leave it
 	// untested.
 	builtInModels := map[string]string{
-		"anthropic.com": "Claude Opus 4.6",
-		"openai.com":    "GPT-5",
-		"google.com":    "Gemini Pro",
-		"x.ai":          "Grok 4.5",
-		"zhipuai.cn":    "GLM-4.5",
-		"qwen.ai":       "Qwen3",
-		"deepseek.com":  "DeepSeek V3",
-		"moonshot.ai":   "Kimi K2",
+		"anthropic.com":        "Claude Opus 4.6",
+		"openai.com":           "GPT-5",
+		"google.com":           "Gemini Pro",
+		"x.ai":                 "Grok 4.5",
+		"zhipuai.cn":           "GLM-4.5",
+		"qwen.ai":              "Qwen3",
+		"deepseek.com":         "DeepSeek V3",
+		"moonshot.ai":          "Kimi K2",
+		"models.git-agent.dev": "Ox Alpha",
 	}
 	for _, domain := range project.DefaultModelCoAuthorDomains {
 		domain := domain
@@ -686,8 +687,22 @@ func TestInferModelCoAuthor(t *testing.T) {
 			wantOk:  true,
 		},
 		{
+			modelID: "openrouter/stealth/ox-alpha",
+			wantKey: "Co-Authored-By",
+			wantVal: "Ox Alpha <noreply@models.git-agent.dev>",
+			wantOk:  true,
+		},
+		{
+			modelID: "ox-alpha-free",
+			wantKey: "Co-Authored-By",
+			wantVal: "Ox Alpha <noreply@models.git-agent.dev>",
+			wantOk:  true,
+		},
+		{
 			modelID: "unknown-custom-model",
-			wantOk:  false,
+			wantKey: "Co-Authored-By",
+			wantVal: "Unknown Custom Model <noreply@models.git-agent.dev>",
+			wantOk:  true,
 		},
 	}
 

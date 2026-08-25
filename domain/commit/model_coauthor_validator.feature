@@ -8,10 +8,11 @@ Feature: Model Co-Authored-By trailer enforcement
 
   Built-in allow-list (project.DefaultModelCoAuthorDomains — no
   model_co_author_domains config needed): anthropic.com, openai.com, google.com,
-  x.ai, zhipuai.cn, qwen.ai, deepseek.com, moonshot.ai. With
-  require_model_co_author on and no model_co_author_domains, the hook merges
-  this list in before validating, so a trailer from any of these passes. Custom
-  providers still use model_co_author_domains.
+  x.ai, zhipuai.cn, qwen.ai, deepseek.com, moonshot.ai, plus the fallback domain
+  models.git-agent.dev for inferred trailers of session models that map to no
+  known provider. With require_model_co_author on and no
+  model_co_author_domains, the hook merges this list in before validating, so a
+  trailer from any of these passes.
 
   Background:
     Given a raw commit message string
@@ -107,6 +108,7 @@ Feature: Model Co-Authored-By trailer enforcement
       | Qwen3       | qwen.ai     |
       | DeepSeek V3 | deepseek.com |
       | Kimi K2     | moonshot.ai |
+      | Ox Alpha    | models.git-agent.dev |
 
   # --- model co-author inference ---
 
@@ -128,6 +130,8 @@ Feature: Model Co-Authored-By trailer enforcement
       | kimi-k3                     | Kimi K3 <noreply@moonshot.ai>              |
       | grok-4.5                    | Grok 4.5 <noreply@x.ai>                    |
       | grok-4.20-0309-non-reasoning| Grok 4.20 <noreply@x.ai>                   |
+      | openrouter/stealth/ox-alpha | Ox Alpha <noreply@models.git-agent.dev>   |
+      | ox-alpha-free               | Ox Alpha <noreply@models.git-agent.dev>   |
 
   # --- error: missing model trailer ---
 
