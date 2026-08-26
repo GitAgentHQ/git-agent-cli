@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Attribute session models that map to no known provider (stealth aliases such as `openrouter/stealth/ox-alpha`) as `Co-Authored-By: <Title Cased Model> <noreply@models.git-agent.dev>` instead of failing fast under `require_model_co_author`; strip the `-free` gateway tier suffix like other routing suffixes (cli)
+- Attribute Ox Alpha as the name-only trailer `Co-Authored-By: Ox Alpha` because it does not own `models.git-agent.dev`; retain fallback-domain attribution for other unmapped session models and strip the `-free` gateway tier suffix like other routing suffixes (cli)
 
 ## [0.13.0] - 2026-08-24
 

@@ -69,7 +69,7 @@ var DefaultModelCoAuthorDomains = []string{
 	"deepseek.com",
 	"moonshot.ai",
 	// Fallback domain for inferred trailers of session models that map to no
-	// known provider (see commit.fallbackCoAuthorDomain).
+	// known provider other than Ox Alpha (see commit.fallbackCoAuthorDomain).
 	"models.git-agent.dev",
 }
 

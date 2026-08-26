@@ -25,6 +25,13 @@ Feature: Co-author trailers (--co-author)
     When git-agent is executed
     Then the committed message contains a Co-Authored-By trailer matching the session model
 
+  Scenario: Ox Alpha inference uses a name-only Co-Authored-By trailer
+    Given a git repository with changed files and Ox Alpha as the active agent session model
+    When git-agent is executed
+    Then the commit succeeds
+    And the committed message contains "Co-Authored-By: Ox Alpha"
+    And the committed message does not contain "models.git-agent.dev"
+
   Scenario: Unmapped session model still infers Co-Authored-By without provider mapping
     Given a git repository with changed files and an agent session model that maps to no known provider
     When git-agent is executed with require_model_co_author enabled

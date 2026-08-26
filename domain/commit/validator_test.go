@@ -318,6 +318,24 @@ func TestValidateModelCoAuthor(t *testing.T) {
 			wantErrors: false,
 		},
 		{
+			name:       "Ox Alpha name-only trailer passes",
+			msg:        baseBody + "Co-Authored-By: Ox Alpha",
+			domains:    []string{"anthropic.com", "openai.com", "google.com"},
+			wantErrors: false,
+		},
+		{
+			name:       "Ox Alpha name-only trailer match is case-insensitive",
+			msg:        baseBody + "Co-Authored-By: OX ALPHA",
+			domains:    nil,
+			wantErrors: false,
+		},
+		{
+			name:       "name-only non-Ox Alpha trailer is rejected",
+			msg:        baseBody + "Co-Authored-By: Alice",
+			domains:    defaults,
+			wantErrors: true,
+		},
+		{
 			name:       "case-insensitive domain match",
 			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@ANTHROPIC.COM>",
 			domains:    []string{"anthropic.com"},
@@ -431,7 +449,7 @@ func TestValidateModelCoAuthor(t *testing.T) {
 		"qwen.ai":              "Qwen3",
 		"deepseek.com":         "DeepSeek V3",
 		"moonshot.ai":          "Kimi K2",
-		"models.git-agent.dev": "Ox Alpha",
+		"models.git-agent.dev": "Unknown Custom Model",
 	}
 	for _, domain := range project.DefaultModelCoAuthorDomains {
 		domain := domain
@@ -513,6 +531,18 @@ func TestHasModelCoAuthor(t *testing.T) {
 			trailers: []commit.Trailer{{Key: "Signed-off-by", Value: "Bob <bob@anthropic.com>"}},
 			domains:  defaults,
 			want:     false,
+		},
+		{
+			name:     "Ox Alpha name-only trailer returns true",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Ox Alpha"}},
+			domains:  nil,
+			want:     true,
+		},
+		{
+			name:     "Ox Alpha name-only trailer match is case-insensitive",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "ox alpha"}},
+			domains:  nil,
+			want:     true,
 		},
 		{
 			name:     "value missing email returns false",
@@ -689,13 +719,13 @@ func TestInferModelCoAuthor(t *testing.T) {
 		{
 			modelID: "openrouter/stealth/ox-alpha",
 			wantKey: "Co-Authored-By",
-			wantVal: "Ox Alpha <noreply@models.git-agent.dev>",
+			wantVal: "Ox Alpha",
 			wantOk:  true,
 		},
 		{
 			modelID: "ox-alpha-free",
 			wantKey: "Co-Authored-By",
-			wantVal: "Ox Alpha <noreply@models.git-agent.dev>",
+			wantVal: "Ox Alpha",
 			wantOk:  true,
 		},
 		{

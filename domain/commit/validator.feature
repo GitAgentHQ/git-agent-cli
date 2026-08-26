@@ -273,9 +273,22 @@ Feature: Conventional commit message validation
     Then HasErrors returns true
     And Errors contains "explanation paragraph"
 
-  # --- error: Co-Authored-By malformed (Rule 9) ---
+  # --- Co-Authored-By values (Rule 9) ---
 
-  Scenario: Co-Authored-By missing email angle brackets
+  Scenario: Co-Authored-By with a name only is valid
+    Given the commit message is:
+      """
+      feat: add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+
+      Co-Authored-By: Ox Alpha
+      """
+    Then HasErrors returns false
+
+  Scenario: Co-Authored-By with non-empty malformed email text is valid
     Given the commit message is:
       """
       feat: add login endpoint
@@ -285,6 +298,19 @@ Feature: Conventional commit message validation
       This adds the login route.
 
       Co-Authored-By: Bot bot@example.com
+      """
+    Then HasErrors returns false
+
+  Scenario: Empty Co-Authored-By value is rejected
+    Given the commit message is:
+      """
+      feat: add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+
+      Co-Authored-By:
       """
     Then HasErrors returns true
     And Errors contains "Co-Authored-By"

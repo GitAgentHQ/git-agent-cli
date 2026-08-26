@@ -143,9 +143,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if projCfg != nil && projCfg.RequireModelCoAuthor {
 		if !commit.HasModelCoAuthor(trailers, project.DefaultModelCoAuthorDomains) {
 			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
-				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
+				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s, or use \"Ox Alpha\"\n"+
 					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"\n"+
-					"         git-agent commit --co-author \"GPT-5 <noreply@openai.com>\"",
+					"         git-agent commit --co-author \"Ox Alpha\"",
 				strings.Join(project.DefaultModelCoAuthorDomains, ", "),
 			))
 		}
