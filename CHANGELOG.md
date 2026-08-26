@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-26
+
+### Changed
+- Update Ox Alpha co-author attribution to use a name-only trailer while retaining fallback-domain attribution for other unmapped models (cli)
+
 ### Fixed
-- Attribute Ox Alpha as the name-only trailer `Co-Authored-By: Ox Alpha` because it does not own `models.git-agent.dev`; retain fallback-domain attribution for other unmapped session models and strip the `-free` gateway tier suffix like other routing suffixes (cli)
+- Allow non-empty name-only Co-Authored-By trailers through conventional validation (domain)
 
 ## [0.13.0] - 2026-08-24
 
