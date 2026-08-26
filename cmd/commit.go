@@ -125,19 +125,14 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		trailers = append(trailers, commit.Trailer{Key: "Co-Authored-By", Value: "Git Agent <noreply@git-agent.dev>"})
 	}
 
-	// Auto-infer model Co-Authored-By from the active session model, falling
-	// back to the configured inference model when no session env is present or
-	// the session model cannot be mapped to a known provider.
+	// Auto-infer model Co-Authored-By ONLY from the active agent session model
+	// (e.g. PI_MODEL, CLAUDE_CODE_MODEL, CODEX_MODEL), which identifies the AI
+	// coding agent that generated the code changes. The model configured for
+	// git-agent's own inference (providerCfg.Model) is strictly for commit
+	// drafting/planning and must NEVER be attributed as a co-author.
 	domains := project.DefaultModelCoAuthorDomains
-	var attributionCandidates []string
-	if providerCfg.SessionModel != "" {
-		attributionCandidates = append(attributionCandidates, providerCfg.SessionModel)
-	}
-	if providerCfg.Model != "" && providerCfg.Model != providerCfg.SessionModel {
-		attributionCandidates = append(attributionCandidates, providerCfg.Model)
-	}
-	if !commit.HasModelCoAuthor(trailers, domains) && len(attributionCandidates) > 0 {
-		if inferred, ok := commit.InferModelCoAuthorFirstMatch(attributionCandidates...); ok {
+	if !commit.HasModelCoAuthor(trailers, domains) && providerCfg.SessionModel != "" {
+		if inferred, ok := commit.InferModelCoAuthor(providerCfg.SessionModel); ok {
 			trailers = append(trailers, inferred)
 		}
 	}
@@ -148,9 +143,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if projCfg != nil && projCfg.RequireModelCoAuthor {
 		if !commit.HasModelCoAuthor(trailers, project.DefaultModelCoAuthorDomains) {
 			return agentErrors.NewExitCodeError(1, fmt.Sprintf(
-				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s\n"+
+				"error: require_model_co_author is enabled — pass --co-author with an email from one of: %s, or use \"Ox Alpha\"\n"+
 					"example: git-agent commit --co-author \"Claude Opus 4.7 <noreply@anthropic.com>\"\n"+
-					"         git-agent commit --co-author \"GPT-5 <noreply@openai.com>\"",
+					"         git-agent commit --co-author \"Ox Alpha\"",
 				strings.Join(project.DefaultModelCoAuthorDomains, ", "),
 			))
 		}

@@ -306,8 +306,9 @@ func checkCoAuthoredBy(result *ValidationResult, bodyLines []string) {
 
 // ValidateModelCoAuthor enforces the require_model_co_author policy: at least
 // one well-formed Co-Authored-By line in the message must carry an email whose
-// domain is in allowedDomains (case-insensitive). Malformed Co-Authored-By
-// lines are ignored here — ValidateConventional already reports them.
+// domain is in allowedDomains (case-insensitive), or use the approved name-only
+// Ox Alpha identity. Malformed Co-Authored-By lines are ignored here —
+// ValidateConventional already reports them.
 //
 // The allowedDomains slice is taken as-is; callers typically pass
 // project.DefaultModelCoAuthorDomains directly.
@@ -316,7 +317,14 @@ func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResul
 	normalized := normalizeDomains(allowedDomains)
 
 	for _, line := range strings.Split(raw, "\n") {
-		if !strings.HasPrefix(line, "Co-Authored-By:") || !coAuthorRe.MatchString(line) {
+		if !strings.HasPrefix(line, "Co-Authored-By:") {
+			continue
+		}
+		value := strings.TrimSpace(line[len("Co-Authored-By:"):])
+		if isOxAlphaCoAuthor(value) {
+			return result
+		}
+		if !coAuthorRe.MatchString(line) {
 			continue
 		}
 		domain := extractEmailDomain(line)
@@ -334,16 +342,17 @@ func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResul
 
 // HasModelCoAuthor reports whether trailers contains at least one
 // Co-Authored-By entry whose email domain is in allowedDomains
-// (case-insensitive). Use this for fail-fast pre-flight at the cmd layer,
-// before the message body is assembled or the LLM is called.
+// (case-insensitive), or the approved name-only Ox Alpha identity. Use this
+// for fail-fast pre-flight at the cmd layer, before the message body is
+// assembled or the LLM is called.
 func HasModelCoAuthor(trailers []Trailer, allowedDomains []string) bool {
 	normalized := normalizeDomains(allowedDomains)
-	if len(normalized) == 0 {
-		return false
-	}
 	for _, t := range trailers {
 		if !strings.EqualFold(t.Key, "Co-Authored-By") {
 			continue
+		}
+		if isOxAlphaCoAuthor(t.Value) {
+			return true
 		}
 		domain := extractEmailDomain(t.Value)
 		if domain != "" && containsDomain(normalized, domain) {
@@ -379,6 +388,12 @@ type ModelProviderInfo struct {
 	Domain       string // Canonical email domain (e.g. "google.com")
 }
 
+// fallbackCoAuthorDomain is the git-agent-owned email domain used when a
+// session model maps to no known provider (other than Ox Alpha). It is part of
+// the default model co-author allow-list (project.DefaultModelCoAuthorDomains).
+const fallbackCoAuthorDomain = "models.git-agent.dev"
+const oxAlphaCoAuthorName = "Ox Alpha"
+
 // knownProviders is the table-driven registry of recognized AI model providers used for co-author inference.
 var knownProviders = []ModelProviderInfo{
 	{MatchKeyword: "gemini", Domain: "google.com"},
@@ -406,6 +421,7 @@ var ignoredTierSuffixes = []string{
 	"low",
 	"minimal",
 	"xhigh",
+	"free",
 }
 
 // knownBrandCasings defines canonical display casings for common model terminology.
@@ -422,7 +438,9 @@ var knownBrandCasings = map[string]string{
 }
 
 // InferModelCoAuthor infers a Co-Authored-By trailer from a model ID string using a table-driven design.
-// Returns (Trailer{}, false) if the model ID cannot be matched to a known provider domain.
+// Known providers contribute their canonical email domain; models that map to
+// no known provider (stealth aliases, custom gateways) are attributed under
+// fallbackCoAuthorDomain. Returns (Trailer{}, false) only for an empty model ID.
 func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
@@ -437,17 +455,15 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 
 	lowerClean := strings.ToLower(cleaned)
 
-	// 2. Table lookup for known provider matching
-	var matchedProvider *ModelProviderInfo
+	// 2. Table lookup for known provider matching; unmatched models keep the
+	// fallback domain so attribution never requires provider mapping.
+	domain := fallbackCoAuthorDomain
 	for i := range knownProviders {
 		p := &knownProviders[i]
 		if strings.Contains(lowerClean, p.MatchKeyword) {
-			matchedProvider = p
+			domain = p.Domain
 			break
 		}
-	}
-	if matchedProvider == nil {
-		return Trailer{}, false
 	}
 
 	// 3. Strip trailing reasoning/tier suffixes and date tags (-YYYYMMDD or -MMDD)
@@ -504,24 +520,17 @@ func InferModelCoAuthor(modelID string) (Trailer, bool) {
 	}
 
 	title := strings.Join(mergedParts, " ")
+	if isOxAlphaCoAuthor(title) {
+		return Trailer{Key: "Co-Authored-By", Value: oxAlphaCoAuthorName}, true
+	}
 	return Trailer{
 		Key:   "Co-Authored-By",
-		Value: fmt.Sprintf("%s <noreply@%s>", title, matchedProvider.Domain),
+		Value: fmt.Sprintf("%s <noreply@%s>", title, domain),
 	}, true
 }
 
-// InferModelCoAuthorFirstMatch returns the first trailer InferModelCoAuthor can
-// map from the given candidate model IDs (highest priority first). This lets
-// callers prefer the session model for attribution while still falling back to
-// the configured inference model when the session model is unmappable (e.g. a
-// self-hosted or unrecognized model string).
-func InferModelCoAuthorFirstMatch(candidates ...string) (Trailer, bool) {
-	for _, id := range candidates {
-		if trailer, ok := InferModelCoAuthor(id); ok {
-			return trailer, true
-		}
-	}
-	return Trailer{}, false
+func isOxAlphaCoAuthor(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), oxAlphaCoAuthorName)
 }
 
 func isDigits(s string) bool {

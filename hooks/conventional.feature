@@ -166,6 +166,18 @@ Feature: Conventional Commits validation hook
     When the hook runs
     Then it exits with code 0
 
+  Scenario: Co-Authored-By with name and email passes
+    Given the commit message is:
+      "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By: Bot <bot@example.com>"
+    When the hook runs
+    Then it exits with code 0
+
+  Scenario: Co-Authored-By with malformed email text passes as a non-empty value
+    Given the commit message is:
+      "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By: Bot bot@example.com"
+    When the hook runs
+    Then it exits with code 0
+
   Scenario: Co-Authored-By with empty value fails
     Given the commit message is:
       "feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By:"

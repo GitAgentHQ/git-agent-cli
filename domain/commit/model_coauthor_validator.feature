@@ -2,16 +2,20 @@ Feature: Model Co-Authored-By trailer enforcement
 
   When require_model_co_author is enabled, every commit must carry at least
   one Co-Authored-By trailer whose email belongs to a known AI-provider
-  domain. The default Git Agent attribution trailer
+  domain, or the approved name-only Ox Alpha identity. The default Git Agent
+  attribution trailer
   (Co-Authored-By: Git Agent <noreply@git-agent.dev>) does NOT satisfy this
   rule on its own — only domains in the allow-list count.
 
   Built-in allow-list (project.DefaultModelCoAuthorDomains — no
   model_co_author_domains config needed): anthropic.com, openai.com, google.com,
-  x.ai, zhipuai.cn, qwen.ai, deepseek.com, moonshot.ai. With
-  require_model_co_author on and no model_co_author_domains, the hook merges
-  this list in before validating, so a trailer from any of these passes. Custom
-  providers still use model_co_author_domains.
+  x.ai, zhipuai.cn, qwen.ai, deepseek.com, moonshot.ai, plus the fallback domain
+  models.git-agent.dev for inferred trailers of session models that map to no
+  known provider. Ox Alpha is intentionally attributed by name only because
+  it does not own the fallback domain. With require_model_co_author on and no
+  model_co_author_domains, the hook merges this list in before validating, so a
+  trailer from any of these passes. Ox Alpha is accepted independently of this
+  email-domain allow-list.
 
   Background:
     Given a raw commit message string
@@ -97,7 +101,7 @@ Feature: Model Co-Authored-By trailer enforcement
 
       Co-Authored-By: <model> <noreply@<domain>>
       """
-    And the allow-list is "anthropic.com,openai.com,google.com,x.ai,zhipuai.cn,qwen.ai,deepseek.com,moonshot.ai"
+    And the allow-list is "anthropic.com,openai.com,google.com,x.ai,zhipuai.cn,qwen.ai,deepseek.com,moonshot.ai,models.git-agent.dev"
     Then HasErrors returns false
 
     Examples:
@@ -107,6 +111,20 @@ Feature: Model Co-Authored-By trailer enforcement
       | Qwen3       | qwen.ai     |
       | DeepSeek V3 | deepseek.com |
       | Kimi K2     | moonshot.ai |
+
+  Scenario: Ox Alpha name-only trailer is accepted
+    Given the commit message is:
+      """
+      feat: add login endpoint
+
+      - add route handler
+
+      This adds the login route.
+
+      Co-Authored-By: Ox Alpha
+      """
+    And the allow-list is "anthropic.com,openai.com,google.com"
+    Then HasErrors returns false
 
   # --- model co-author inference ---
 
@@ -128,6 +146,8 @@ Feature: Model Co-Authored-By trailer enforcement
       | kimi-k3                     | Kimi K3 <noreply@moonshot.ai>              |
       | grok-4.5                    | Grok 4.5 <noreply@x.ai>                    |
       | grok-4.20-0309-non-reasoning| Grok 4.20 <noreply@x.ai>                   |
+      | openrouter/stealth/ox-alpha | Ox Alpha                               |
+      | ox-alpha-free               | Ox Alpha                               |
 
   # --- error: missing model trailer ---
 

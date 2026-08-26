@@ -81,6 +81,11 @@ func TestConventionalHook(t *testing.T) {
 			0, "",
 		},
 		{
+			"name-only co-authored-by",
+			"feat: add user authentication\n\n- add login endpoint\n\nThis introduces basic authentication support.\n\nCo-Authored-By: Ox Alpha",
+			0, "",
+		},
+		{
 			"no co-authored-by footer",
 			fullMsg("feat: add login endpoint", "- add route handler", "This adds the login route."),
 			0, "",
@@ -150,11 +155,11 @@ func TestConventionalHook(t *testing.T) {
 			1, "explanation paragraph",
 		},
 
-		// --- error: malformed Co-Authored-By ---
+		// --- Co-Authored-By values are free-form when non-empty ---
 		{
-			"malformed co-authored-by",
+			"co-authored-by with bare email",
 			"feat: add login endpoint\n\n- add route handler\n\nThis adds the route.\n\nCo-Authored-By: Bot bot@example.com",
-			1, "Co-Authored-By",
+			0, "",
 		},
 	}
 

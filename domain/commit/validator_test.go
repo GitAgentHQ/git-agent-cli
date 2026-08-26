@@ -318,6 +318,24 @@ func TestValidateModelCoAuthor(t *testing.T) {
 			wantErrors: false,
 		},
 		{
+			name:       "Ox Alpha name-only trailer passes",
+			msg:        baseBody + "Co-Authored-By: Ox Alpha",
+			domains:    []string{"anthropic.com", "openai.com", "google.com"},
+			wantErrors: false,
+		},
+		{
+			name:       "Ox Alpha name-only trailer match is case-insensitive",
+			msg:        baseBody + "Co-Authored-By: OX ALPHA",
+			domains:    nil,
+			wantErrors: false,
+		},
+		{
+			name:       "name-only non-Ox Alpha trailer is rejected",
+			msg:        baseBody + "Co-Authored-By: Alice",
+			domains:    defaults,
+			wantErrors: true,
+		},
+		{
 			name:       "case-insensitive domain match",
 			msg:        baseBody + "Co-Authored-By: Claude Opus 4.6 <noreply@ANTHROPIC.COM>",
 			domains:    []string{"anthropic.com"},
@@ -423,14 +441,15 @@ func TestValidateModelCoAuthor(t *testing.T) {
 	// project.DefaultModelCoAuthorDomains so adding a provider cannot leave it
 	// untested.
 	builtInModels := map[string]string{
-		"anthropic.com": "Claude Opus 4.6",
-		"openai.com":    "GPT-5",
-		"google.com":    "Gemini Pro",
-		"x.ai":          "Grok 4.5",
-		"zhipuai.cn":    "GLM-4.5",
-		"qwen.ai":       "Qwen3",
-		"deepseek.com":  "DeepSeek V3",
-		"moonshot.ai":   "Kimi K2",
+		"anthropic.com":        "Claude Opus 4.6",
+		"openai.com":           "GPT-5",
+		"google.com":           "Gemini Pro",
+		"x.ai":                 "Grok 4.5",
+		"zhipuai.cn":           "GLM-4.5",
+		"qwen.ai":              "Qwen3",
+		"deepseek.com":         "DeepSeek V3",
+		"moonshot.ai":          "Kimi K2",
+		"models.git-agent.dev": "Unknown Custom Model",
 	}
 	for _, domain := range project.DefaultModelCoAuthorDomains {
 		domain := domain
@@ -512,6 +531,18 @@ func TestHasModelCoAuthor(t *testing.T) {
 			trailers: []commit.Trailer{{Key: "Signed-off-by", Value: "Bob <bob@anthropic.com>"}},
 			domains:  defaults,
 			want:     false,
+		},
+		{
+			name:     "Ox Alpha name-only trailer returns true",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "Ox Alpha"}},
+			domains:  nil,
+			want:     true,
+		},
+		{
+			name:     "Ox Alpha name-only trailer match is case-insensitive",
+			trailers: []commit.Trailer{{Key: "Co-Authored-By", Value: "ox alpha"}},
+			domains:  nil,
+			want:     true,
 		},
 		{
 			name:     "value missing email returns false",
@@ -686,8 +717,22 @@ func TestInferModelCoAuthor(t *testing.T) {
 			wantOk:  true,
 		},
 		{
+			modelID: "openrouter/stealth/ox-alpha",
+			wantKey: "Co-Authored-By",
+			wantVal: "Ox Alpha",
+			wantOk:  true,
+		},
+		{
+			modelID: "ox-alpha-free",
+			wantKey: "Co-Authored-By",
+			wantVal: "Ox Alpha",
+			wantOk:  true,
+		},
+		{
 			modelID: "unknown-custom-model",
-			wantOk:  false,
+			wantKey: "Co-Authored-By",
+			wantVal: "Unknown Custom Model <noreply@models.git-agent.dev>",
+			wantOk:  true,
 		},
 	}
 
@@ -703,57 +748,6 @@ func TestInferModelCoAuthor(t *testing.T) {
 					t.Errorf("InferModelCoAuthor(%q) = {%q, %q}, want {%q, %q}",
 						tc.modelID, got.Key, got.Value, tc.wantKey, tc.wantVal)
 				}
-			}
-		})
-	}
-}
-
-func TestInferModelCoAuthorFirstMatch(t *testing.T) {
-	cases := []struct {
-		name       string
-		candidates []string
-		wantVal    string
-		wantOk     bool
-	}{
-		{
-			name:       "first candidate wins",
-			candidates: []string{"gemini-3.6-flash-high", "gpt-5.6-luna"},
-			wantVal:    "Gemini 3.6 Flash <noreply@google.com>",
-			wantOk:     true,
-		},
-		{
-			name:       "unmappable primary falls back to secondary",
-			candidates: []string{"o4-mini", "gpt-5.6-luna"},
-			wantVal:    "GPT 5.6 Luna <noreply@openai.com>",
-			wantOk:     true,
-		},
-		{
-			name:       "empty candidates",
-			candidates: nil,
-			wantOk:     false,
-		},
-		{
-			name:       "no candidate maps",
-			candidates: []string{"o4-mini", "llama3.2"},
-			wantOk:     false,
-		},
-		{
-			name:       "blank string candidates are skipped",
-			candidates: []string{"", "", "gemini-3.6-flash-high"},
-			wantVal:    "Gemini 3.6 Flash <noreply@google.com>",
-			wantOk:     true,
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := commit.InferModelCoAuthorFirstMatch(tc.candidates...)
-			if ok != tc.wantOk {
-				t.Fatalf("InferModelCoAuthorFirstMatch(%v) ok = %v, want %v", tc.candidates, ok, tc.wantOk)
-			}
-			if ok && got.Value != tc.wantVal {
-				t.Errorf("InferModelCoAuthorFirstMatch(%v).Value = %q, want %q", tc.candidates, got.Value, tc.wantVal)
 			}
 		})
 	}

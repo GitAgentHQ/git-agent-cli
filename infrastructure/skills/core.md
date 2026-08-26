@@ -264,17 +264,18 @@ needed — the merge never clobbers custom rules.
 
 ## Require model co-author & Auto-Inference
 
-Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain.
+Set `require_model_co_author: true` in `.git-agent/config.yml` (or user / local scope) to enforce that every commit carries a `Co-Authored-By` trailer from a known AI-provider domain or the approved name-only Ox Alpha identity.
 
 ### Automatic Model Co-Author Inference
-`git-agent` derives the `Co-Authored-By` trailer from the active LLM session model when present — the model that actually produced the change, read from agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`) — and falls back to the configured model (`--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml`) when no session env is set.
-- **Reasoning Tier & Date Suffixes** (`-high`, `-thinking`, `-non-reasoning`, `-20241022`) are automatically stripped.
+`git-agent` derives the `Co-Authored-By` trailer solely from the active LLM session model when present — the model that actually produced the code change, read from agent-session environment variables (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`). The model configured for `git-agent`'s own inference (`--model` flag, `git config --local git-agent.model`, or `model:` in `~/.config/git-agent/config.yml`) is strictly used for commit planning/drafting and is never attributed as a co-author.
+- **Reasoning Tier & Date Suffixes** (`-high`, `-thinking`, `-non-reasoning`, `-free`, `-20241022`) are automatically stripped.
 - **Model Variants** (`Flash`, `Max`, `Pro`, `Opus`, `Sonnet`) are preserved.
+- **Provider mapping is not required**: a session model that maps to no known provider is still attributed — title-cased under the fallback domain. Ox Alpha is the exception: it is attributed by name only because it does not own `models.git-agent.dev`: `Co-Authored-By: Ox Alpha`.
 - **Example**: `gemini-3.6-flash-high` $\rightarrow$ `Co-Authored-By: Gemini 3.6 Flash <noreply@google.com>`.
 
 **Note for Coding Agents**: attribution and inference are separate. The generation model resolves only from the `--model` flag, `git config --local git-agent.model`, or `model:` in the user config file — in that precedence order — and is never displaced by a session-injected model. The session model (`PI_MODEL`, etc.) only supplies the `Co-Authored-By` trailer identifying who produced the change.
 
-Built-in domains (hard-coded in source): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`. These cannot be extended via config — edit `DefaultModelCoAuthorDomains` in code if you need custom providers.
+Built-in domains (hard-coded in source): `anthropic.com`, `openai.com`, `google.com`, `x.ai`, `zhipuai.cn`, `qwen.ai`, `deepseek.com`, `moonshot.ai`, plus the fallback domain `models.git-agent.dev` for inferred trailers of session models that map to no known provider other than Ox Alpha. Ox Alpha's name-only trailer is accepted independently of the domain list. These cannot be extended via config — edit `DefaultModelCoAuthorDomains` in code if you need custom providers.
 
 Manual `--co-author "Name <email@domain>"` flags remain available for custom human or secondary co-author attributions, but are no longer required for active model attribution even when `require_model_co_author: true` is set.
 

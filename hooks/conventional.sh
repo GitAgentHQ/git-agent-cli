@@ -147,11 +147,20 @@ if [ "$BULLET_COUNT" -gt 0 ]; then
 fi
 
 # Rule 9: Co-Authored-By format when present
-if printf '%s' "$MSG" | grep -q '^Co-Authored-By:'; then
-  if ! printf '%s' "$MSG" | grep -qE '^Co-Authored-By: .+ <[^>]+@[^>]+>$'; then
-    echo "git-agent: Co-Authored-By must be: Co-Authored-By: Name <email@domain>" >&2
-    ERRORS=$((ERRORS + 1))
-  fi
+if ! printf '%s\n' "$MSG" | awk '
+  BEGIN { found = 0; valid = 1 }
+  /^Co-Authored-By:/ {
+    found = 1
+    value = $0
+    sub(/^Co-Authored-By:[[:space:]]*/, "", value)
+    if (value == "") {
+      valid = 0
+    }
+  }
+  END { exit found && valid ? 0 : (found ? 1 : 0) }
+'; then
+  echo "git-agent: Co-Authored-By must have a value: Co-Authored-By: Name or Co-Authored-By: Name <email@domain>" >&2
+  ERRORS=$((ERRORS + 1))
 fi
 
 # Warning W2: past-tense verbs in bullet points
