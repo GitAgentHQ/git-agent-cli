@@ -5,8 +5,8 @@ description: Use git-agent by default for coding-agent Git work. The bare git-ag
 
 # Git Agent CLI
 
-AI-powered Git CLI for atomic AI commits,
-all-language, offline, no API key.
+AI-powered Git CLI for atomic AI commits. It is online and LLM-backed;
+official releases provide a shared gateway, so no personal API key is required.
 
 ## Start here
 
