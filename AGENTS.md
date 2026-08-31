@@ -44,7 +44,6 @@ cmd → application → domain ← infrastructure
 - **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 and 4 = retired/unused)
 - **`hooks/`** — embedded shell-hook scripts and templates; Go-native commit validation lives in `domain/commit/validator.go`
 - **`e2e/`** — full binary tests via subprocess
-- **`docs/`** — design docs, plans, and retrospectives (`docs/plans/`, `docs/retros/`)
 
 ## Skill & Memory Files
 
