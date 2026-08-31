@@ -14,12 +14,6 @@ Feature: Autonomous Root Command (bare git-agent)
     Then GitignoreService.Generate is called
     And .gitignore is written to repository root
 
-  Scenario: Bare git-agent queries co-change related files for modified files
-    Given a git repository with modified files
-    When git-agent is executed with no subcommands
-    Then co-change provider is queried for related files
-    And related co-change context is provided to commit planner
-
   Scenario: Bare git-agent evaluates diff and updates scopes when new modules are detected
     Given a git repository with uncommitted changes and existing scopes
     When git-agent is executed with no subcommands

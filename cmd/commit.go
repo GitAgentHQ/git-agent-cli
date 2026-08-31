@@ -13,12 +13,10 @@ import (
 
 	"github.com/gitagenthq/git-agent/application"
 	"github.com/gitagenthq/git-agent/domain/commit"
-	"github.com/gitagenthq/git-agent/domain/graph"
 	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraDiff "github.com/gitagenthq/git-agent/infrastructure/diff"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
-	infraGraph "github.com/gitagenthq/git-agent/infrastructure/graph"
 	infraHook "github.com/gitagenthq/git-agent/infrastructure/hook"
 	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 	agentErrors "github.com/gitagenthq/git-agent/pkg/errors"
@@ -42,12 +40,6 @@ type commitJSONResult struct {
 var stderrIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stderr.Fd()))
 }
-
-// commitGraphBackfillMaxCommits bounds the one-time co-change backfill the first
-// commit performs when bootstrapping the graph, so a deep history cannot turn
-// the first commit into a long index. Recency-weighting fades older commits, so
-// a bounded recent window carries nearly all the co-change signal anyway.
-const commitGraphBackfillMaxCommits = 1000
 
 var commitCmd = &cobra.Command{
 	Use:   "commit",
@@ -172,24 +164,6 @@ func runCommit(cmd *cobra.Command, args []string) error {
 
 	_, svc := buildCommitDeps(providerCfg, projCfg, gitClient, heartbeatWriter)
 
-	// git-first graph generation: commit is the primary write path for the code
-	// graph. Before committing, engage an EXISTING graph only — no bootstrap, so
-	// nothing dirties the working tree being committed — to feed co-change hints
-	// into planning and link captured actions to the commit. The graph is
-	// bootstrapped and maintained AFTER the commit lands (see end of runCommit).
-	graphAutobuild := projCfg == nil || projCfg.GraphAutobuild == nil || *projCfg.GraphAutobuild
-	graphDBPath := infraGraph.DBPath(root)
-	var graphRepo *infraGraph.SQLiteRepository
-	var graphGit *infraGit.GraphClient
-	if _, statErr := os.Stat(graphDBPath); statErr == nil {
-		if graphClient, err := openGraphDBConn(cmd.Context(), graphDBPath); err == nil {
-			defer graphClient.Close()
-			graphRepo = infraGraph.NewSQLiteRepository(graphClient)
-			graphGit = infraGit.NewGraphClient(root)
-			svc.SetCoChangeProvider(application.NewGraphCoChangeProvider(graphRepo))
-		}
-	}
-
 	var logWriter io.Writer
 	if verbose {
 		logWriter = cmd.ErrOrStderr()
@@ -243,36 +217,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	if err := renderCommitSuccess(cmd, result); err != nil {
 		return err
 	}
-	updateCommitGraph(cmd, root, graphAutobuild, result, outWriter, graphRepo, graphGit)
 	return nil
-}
-
-func updateCommitGraph(cmd *cobra.Command, root string, graphAutobuild bool, result *application.CommitResult, outWriter io.Writer, graphRepo *infraGraph.SQLiteRepository, graphGit *infraGit.GraphClient) {
-	if !graphAutobuild || result.DryRun {
-		return
-	}
-	if graphRepo == nil {
-		if outWriter != nil {
-			fmt.Fprintln(outWriter, "Building code graph (first run)...")
-		}
-		if _, graphClient, err := openGraphDB(cmd.Context(), root); err == nil {
-			defer graphClient.Close()
-			graphRepo = infraGraph.NewSQLiteRepository(graphClient)
-			graphGit = infraGit.NewGraphClient(root)
-		} else if verbose {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph bootstrap: %v\n", err)
-		}
-	}
-	if graphRepo == nil {
-		return
-	}
-	idxSvc := application.NewIndexService(graphRepo, graphGit)
-	ensure := application.NewEnsureIndexService(idxSvc, graphRepo, graphGit)
-	if _, err := ensure.EnsureIndex(cmd.Context(), graph.IndexRequest{
-		MaxCommits: commitGraphBackfillMaxCommits, MaxFilesPerCommit: 50,
-	}); err != nil && verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: graph co-change update: %v\n", err)
-	}
 }
 
 func renderCommitFailure(cmd *cobra.Command, err error) error {

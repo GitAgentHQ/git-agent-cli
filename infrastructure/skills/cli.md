@@ -41,8 +41,8 @@ git-agent uses a typed exit-code taxonomy across all commands:
 | `0` | Success |
 | `1` | General error (no API key, git error, no changes, etc.) |
 | `2` | Commit blocked by a hook after retries |
-| `3` | Retired / unused (co-change reads auto-index on first run) |
-| `4` | Retired / unused — formerly "Event Log chain integrity"; the Event Log subsystem has been removed |
+| `3` | Retired / unused |
+| `4` | Retired / unused |
 
 ---
 
@@ -54,7 +54,6 @@ Every read command takes a single `-o, --output` flag:
 -o, --output {auto,json,text}
 ```
 
-- `auto` (the default for `related` and `status` reads): JSON when stdout is piped, text on a TTY.
 - `json`: force machine-readable JSON.
 - `text`: force human-readable text.
 
@@ -147,7 +146,7 @@ Initialize git-agent in the current repository.
 
 With no flags, runs the full setup wizard:
 1. Ensures a git repo exists (runs `git init` if needed)
-2. Generates `.gitignore` via AI — always includes `.git-agent/graph.db` and `*.db-shm`/`*.db-wal`/`*.db-journal`, and untracks `.git-agent/graph.db` if it is already in the index (prevents the runtime graph database from being committed)
+2. Generates `.gitignore` via AI
 3. Generates commit scopes from git history via AI
 4. Writes `.git-agent/config.yml` with scopes and `hook: [conventional]`
 
@@ -344,73 +343,6 @@ git-agent version [-o <format>]
 ```
 
 Print the build version (injected via ldflags; defaults to `dev` in local builds). Defaults to text output; pass `-o json` for a machine-readable object.
-
----
-
-## git-agent related
-
-```
-git-agent related [path...]
-```
-
-Show the files that historically change together with the given seeds
-(co-change coupling), mined from git history. Seeds are one or more files, a
-directory (expands to its tracked files), or — with **no arguments** — the
-current working-tree changes ("given what I've edited, what else usually
-moves?"). Co-change neighbours are aggregated across all seeds, so a file
-coupled to several seeds ranks above one coupled to a single seed. The query is
-**language-agnostic** (it reads commit history, not source code), offline (no
-LLM / API key), and the first run auto-indexes git history. Tooling directories
-(`.git-agent/`, `.claude/`) are never used as seeds.
-
-In JSON, each related file also carries a `commits` array — the actual commits
-that linked it to a seed (`{sha, subject, ts}`) — so you can read *why* two
-files are coupled, not just that they are.
-
-### Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--depth N` | 1 | Transitive co-change depth; depth > 1 entries are marked `[indirect, depth N]` |
-| `--top N` | 20 | Max results |
-| `--min-count N` | 2 | Minimum co-change count to include (matches the index floor of 2; values below 2 cannot surface more) |
-| `--reindex` | false | Force a full re-index before querying |
-| `--tests` | false | Keep only related test files — "which tests should I run for this change?" |
-| `-o, --output` | auto | Output format: `auto`, `json`, or `text` (JSON when piped, text on a TTY) |
-
-### Output
-
-Text shows `path  strength%  (N co-changes)`, with `[M/T seeds: ...]` when more
-than one seed. JSON fields per entry: `path`, `coupling_count`,
-`coupling_strength`, `score` (sum of strengths over matched seeds — the rank
-key), `seed_matches`, `related_to` (which seeds), `depth`, and `commits`
-(`[{sha, subject, ts}]` — the commits that link this file to a seed). Top-level:
-`targets`, `co_changed`, `total_found`, `query_ms`.
-
-```bash
-git-agent related application/commit_service.go cmd/commit.go -o json
-git-agent related internal/auth                                  # a whole module
-git-agent related                                                # seeds = my current edits
-git-agent related --tests                                        # which tests to run for my edits
-```
-
-## git-agent status
-
-```
-git-agent status [-o <format>]
-```
-
-Snapshot of index health: whether the index exists, the last indexed commit,
-and row counts. Read-only; auto-syncs projections before reading. The first
-`related` run auto-indexes git history, so
-`commit_count`/`file_count`/`author_count`/`co_changed_count` stay 0 until then.
-
-### Fields
-
-`exists`, `last_indexed_commit` (omitempty — absent until git history is
-indexed by the first `related`), `commit_count`, `file_count`,
-`author_count`, `co_changed_count`, `db_size_bytes` (SQLite page_count ×
-page_size).
 
 ---
 

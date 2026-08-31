@@ -118,7 +118,7 @@ func TestAutonomousRoot_CoAuthorTrailer(t *testing.T) {
 
 	dir := newGitRepo(t)
 	writeFile(t, filepath.Join(dir, ".gitignore"),
-		".git-agent/graph.db\n*.db-shm\n*.db-wal\n*.db-journal\n.git-agent/config.local.yml\n")
+		".git-agent/config.local.yml\n")
 	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
 		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
 	runGit(t, dir, "add", ".gitignore", ".git-agent/config.yml")

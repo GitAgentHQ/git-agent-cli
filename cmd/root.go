@@ -149,9 +149,6 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
-	// Ensure graph.db is untracked before inspecting files or loading DB
-	_, _ = ensureGraphDBUntracked(cmd.Context(), gitClient, root)
-
 	// 1. Autonomous check for .gitignore (create if missing, or update if missing mandatory rules)
 	gitignorePath := filepath.Join(root, ".gitignore")
 	existingGitignore, gitignoreErr := os.ReadFile(gitignorePath)

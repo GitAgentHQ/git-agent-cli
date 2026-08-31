@@ -7,107 +7,15 @@ cases.
 
 ## When to use git-agent
 
-Reach for git-agent at these moments. Each situation maps to one command:
-
 | Situation | Command |
 |---|---|
-| About to start multi-file work / modify a feature — find what else changes | `git-agent related [files...]` |
-| Deciding which tests to run after a change | `git-agent related <files...> --tests` |
-| Co-change queries return nothing or look stale | `git-agent status` (reads auto-sync; a full rebuild is `git-agent related <file> --reindex`) |
 | Ready to commit changes | `git-agent --intent "..."` |
 | New repo, or no scopes configured | `git-agent init` |
 | Regenerate scopes from latest history | `git-agent init --scope --force` |
 | Refresh / improve the `.gitignore` | `git-agent init --gitignore` |
 | Provider / API key / model setup | `git-agent config show` / `config set <key> <value>` |
 
-If the situation isn't listed, run `git-agent --help`. Every `related` and
-`status` query is read-only and offline (no LLM, no API key); only `commit`
-and `init --scope` need a provider.
-
-## Find related files before changing a feature
-
-When you are about to modify a feature — or are partway through editing it — ask
-git-agent which other files historically change together with the ones you are
-touching. Those are the files most likely to also need updating (tests, sibling
-modules, config) and are easy to forget. `git-agent related` mines git history
-(not source parsing), so it is language-agnostic, offline, and needs no API key;
-the first run auto-indexes.
-
-```
-# Given the files of a feature, rank the files that usually change with them:
-git-agent related application/commit_service.go cmd/commit.go -o json
-
-# Given a directory (a whole module/feature area):
-git-agent related infrastructure/hook -o json
-
-# No arguments: use your CURRENT working-tree changes as the seeds —
-# "given what I've already changed, what else usually moves with it?"
-git-agent related -o json
-
-# Keep only related test files — "which tests should I run for this change?"
-git-agent related application/commit_service.go --tests
-```
-
-Read the JSON to prioritise: each related file has `seed_matches` (how many of
-the seed files it co-changes with — higher means more central to the feature),
-`related_to` (which seeds), `coupling_strength`, `score` (the ranking), and a
-`commits` array of `{sha, subject, ts}` — the actual commits that changed the
-files together, i.e. the evidence for *why* they are related. Read those
-subjects to judge whether a coupling is real or incidental. A file with
-`seed_matches` equal to the number of seeds is coupled to the whole feature;
-open it before you finish.
-
-Useful flags: `--depth` and `--top` shape how far and how many results come
-back, `--min-count` filters out weak couplings, `--tests` narrows the result to
-related test files ("which tests to run"), and `--reindex` forces a fresh
-history scan.
-
-Use `related` proactively at the start of multi-file work and again before
-committing, so nothing coupled to the change is left behind.
-
-## Pair `related` with your own search tools (Grep / Glob / Explore)
-
-`related` does not replace your built-in code search — it covers a blind spot
-in it. Grep, Glob, and the Explore agent find files by their **current content
-and symbols** (spatial: "where is `X` referenced *now*?"). `related` finds
-files by **how they have changed together** (temporal: "what moves with `X`,
-and why?"). The two are complementary, so run both.
-
-End-to-end measurement on real repos makes the gap concrete. For a seed file,
-many of its strongest co-change partners carry **no textual link** a symbol
-search would catch:
-
-- In `gin`, of `context.go`'s top co-change partners, more than half are
-  grep-blind — `tree.go`, `errors.go`, `binding/*`, `render/*` — none mention
-  the `Context` symbol or the filename.
-- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
-  `docs/templating.rst`. A coding agent relying on grep alone would never learn
-  it must also update the changelog and the docs when it edits `app.py`.
-
-The `commits` array is the other thing static search cannot give you: it is the
-**intent** behind a coupling ("these two moved together in *fix
-subdomain_matching=False behavior*"), so you can judge whether the link is
-architectural or incidental.
-
-Recommended loop for a coding agent:
-
-1. `git-agent related <file>` — get the blast radius plus the commits that
-   explain *why* each file is coupled (context Grep can't give).
-2. Grep / Read / Explore those files — get exact symbol locations and code
-   (the spatial detail `related` can't give).
-3. `git-agent related <file> --tests` — get which tests to run before you stop.
-
-Because it is offline, zero-cost, and answers in milliseconds, call `related`
-freely — it is safe to run on every multi-file task.
-
-**Trust calibration.** Co-change is an *aggregate* signal. It is accurate for
-consistent couplings (an implementation and its test almost always move
-together) and softer for feature-spanning changes: a one-off feature that
-touched files across packages, or a sweeping commit like "support go1.18", will
-link files that are not really coupled. Don't treat the ranking as ground
-truth — read the `commits` subjects. A partner backed by focused, on-topic
-commits is a real coupling; one backed only by a single mass-refactor commit is
-probably noise.
+Use your code-search tools and targeted tests to explore the current codebase before changing a feature. `git-agent` focuses on creating reliable commits from the current diff.
 
 ## Commit workflow
 
@@ -172,34 +80,6 @@ It prints a single object:
 fields are empty. `commit` defaults to human-readable text; pass `-o json` only
 when scripting.
 
-## Do not track `.git-agent/graph.db`
-
-The graph database (`.git-agent/graph.db`) is generated at runtime and must
-**never** be tracked in git. If it is tracked, `.gitignore` has no effect and
-every run re-modifies it, producing a stream of `chore: update graph database
-file` commits — the "infinite recreation" loop.
-
-`git-agent init` handles this by default (full wizard and `--gitignore`):
-  1. Writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal`) into
-     `.gitignore`, idempotently.
-  2. If `.git-agent/graph.db` is already tracked, runs `git rm --cached` on it
-     so the ignore rule can take effect (prints `Untracked ... graph.db`).
-
-So after `git-agent init`, the file is ignored and untracked automatically.
-Verify when in doubt:
-
-```
-git ls-files .git-agent/graph.db        # must print nothing (untracked)
-git check-ignore .git-agent/graph.db    # prints the path, exit 0 (ignored)
-```
-
-If a repo predates this init behavior and `git ls-files` still shows the path,
-re-run `git-agent init --gitignore` to untrack it. Never
-`git add -f .git-agent/graph.db`. If a commit shows
-`graph.db | Bin ... -> ... bytes`, the file is tracked again — untrack it
-before continuing (raw `git rm --cached .git-agent/graph.db` + commit; git-agent's
-planner cannot stage a pure deletion).
-
 ## Useful flags
 
 | Flag | When to use |
@@ -257,9 +137,7 @@ git-agent init --gitignore
 ```
 
 It runs the technology detector, appends the generated rules, and preserves
-anything you hand-wrote under the `### custom rules ###` section. The mandatory
-rules (`.git-agent/graph.db`, `*.db-shm`/`*.db-wal`/`*.db-journal`,
-`.git-agent/config.local.yml`) are re-injected idempotently. No `--force`
+anything you hand-wrote under the `### custom rules ###` section. The mandatory `.git-agent/config.local.yml` rule is re-injected idempotently. No `--force`
 needed — the merge never clobbers custom rules.
 
 ## Require model co-author & Auto-Inference
@@ -299,8 +177,8 @@ Hook exit codes (the hook script's own contract): `0` = allow, non-zero = block.
 | `0` | Success |
 | `1` | General error (no API key, git error, no changes, etc.) |
 | `2` | Commit blocked by a hook after retries |
-| `3` | Retired / unused — formerly "graph not indexed"; no longer emitted (co-change reads auto-index on first run) |
-| `4` | Retired / unused — formerly "Event Log chain integrity"; the Event Log subsystem has been removed and this code is no longer emitted |
+| `3` | Retired / unused |
+| `4` | Retired / unused |
 
 ## Commit format
 
@@ -324,8 +202,6 @@ Co-Authored-By: Git Agent <noreply@git-agent.dev>
 
 | Command | What it does |
 |---|---|
-| `git-agent related [path...]` | Rank files that historically change with the seeds (files, a directory, or — with no args — your working-tree changes); in JSON each result carries a `commits` array as the evidence for the coupling. Add `--tests` to keep only related test files. Finds the other files a feature change is likely to need. JSON via `-o json`. Auto-indexes git history on first run; `--reindex` forces a full rebuild |
-| `git-agent status` | Show co-change index health and row counts (commits, files, authors, co-change pairs, last indexed commit, db size) |
 | `git-agent init` | Initialize git-agent in a repo (generates scopes, .gitignore, installs hooks) |
 | `git-agent init --scope [--force]` | Regenerate scopes only (`--force` required once `.git-agent/config.yml` exists) |
 | `git-agent init --gitignore` | Regenerate `.gitignore` via AI (merges, preserves `### custom rules ###`) |

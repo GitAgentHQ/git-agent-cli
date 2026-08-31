@@ -72,11 +72,8 @@ The CLI is a Cobra tree. Every command lives in exactly one of three namespaces;
 
 ### Namespaces
 
-- **Action** (top-level): `init`, `commit`. These mutate the repo or the graph. (The hidden `capture` hook target and the `audit` forensic tree were removed when the agent Event Log subsystem was cut — the graph is now commit-history co-change only.)
-- **Meta** (top-level): `config`, `skills`, `version`, `completion`. Configuration and tooling, not repo mutation.
-- **Reads** (top-level): `related` and `status`. `related <files...>` is the co-change query — the files that habitually change with the given files, enriched with the commits that link them (subject + sha + date); language-agnostic (git history, not parsing), offline, no API key. `status` reports index health and row counts. A new co-change read goes at the top level here.
-
-**There is no query namespace parent.** The graph is a single data source (git-history co-change); there is no append-only Event Log and no separate forensic trust model. Reads are top-level `related`/`status`.
+- **Action** (top-level): `init`, `commit`. These mutate the repository.
+- **Meta** (top-level): `config`, `skills`, `version`, `completion`. Configuration and tooling, not repository mutation.
 
 ### Registration
 
@@ -84,7 +81,7 @@ Each command registers itself exactly once in its own `init()` via `rootCmd.AddC
 
 ### Output format
 
-Every read command takes a single `-o, --output {auto,json,text}` flag, registered via `addOutputFlag` (local on `related`/`status`/`commit`/`version`). `auto` (the query default) emits **JSON when stdout is piped, text on a TTY**; `commit`/`version` default to `text` so piping a human-facing action does not silently switch it to JSON. Resolve the format with `outputFormat(cmd)` (wraps `pkg/output.Decide`), encode with `pkg/output.EncodeJSON`, and emit error envelopes with `pkg/output.EncodeError`. Wrap a read command's `RunE` in `jsonAwareRunE` so failures render as `{"error":{"code","message"}}` on stderr in JSON mode. Do not hand-roll `--json`/`--text` or `json.NewEncoder` in a new command. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating.)
+Commands that support structured output take `-o, --output {auto,json,text}`. `commit` and `version` default to `text`; use `outputFormat(cmd)` and `pkg/output` helpers rather than hand-rolled encoders.
 
 ### Flag policy
 
@@ -98,7 +95,7 @@ Prefer config keys over per-command flags. A value belongs on the command line o
 
 ### Hidden commands
 
-There are currently no hidden commands (the `capture` hook target was removed with the Event Log). Graph building is automatic (via `commit` and read-path auto-sync through `related`), so there are no manual index/sync commands.
+There are currently no hidden commands.
 
 ## Commit Conventions
 
