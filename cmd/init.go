@@ -24,8 +24,7 @@ var initCmd = &cobra.Command{
 
 With no flags, runs the full setup wizard:
   1. Ensures a git repo exists (runs 'git init' if needed)
-  2. Generates .gitignore via AI (always ignores .git-agent/graph.db and
-     untracks it if already in the index)
+  2. Generates .gitignore via AI
   3. Generates commit scopes from git history via AI
   4. Writes .git-agent/config.yml with scopes and hook: [conventional]
 
@@ -91,13 +90,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if doGitignore {
 		if err := runGitignore(cmd, cmd.OutOrStdout()); err != nil {
-			return err
-		}
-		// The graph database is generated at runtime and must never be tracked.
-		// runGitignore just wrote the ignore rule, but .gitignore has no effect
-		// on a file that is already in the index — untrack it now so the rule
-		// can take effect. Idempotent: a no-op when graph.db is not tracked.
-		if err := untrackGraphDB(cmd); err != nil {
 			return err
 		}
 	}

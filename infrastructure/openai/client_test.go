@@ -860,10 +860,8 @@ func planRequestMessages(t *testing.T, r *http.Request) (system, user string) {
 }
 
 // A scoped plan can come back as {"groups": []} when no configured scope
-// covers the changed files — the scoped prompt forbids unlisted scopes and
-// scope generation deliberately skips docs/asset directories, so a docs-only
-// changeset has no legal scope. Plan must retry once with the unscoped
-// prompt instead of surfacing a fatal "empty plan" error.
+// covers the changed files. Plan must retry once with the unscoped prompt
+// instead of surfacing a fatal "empty plan" error.
 func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
 	var systems, users []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -872,7 +870,7 @@ func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
 		users = append(users, user)
 		content := `{"groups": []}`
 		if system == planSystemPrompt {
-			content = `{"groups": [{"files": ["docs/retros/log.jsonl"], "title": "docs: update retro log", "bullets": ["Add entry"], "explanation": "Records the retro."}]}`
+			content = `{"groups": [{"files": ["README.md"], "title": "docs: update readme", "bullets": ["Update usage"], "explanation": "Keeps documentation current."}]}`
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(chatCompletionBody(t, content))
@@ -882,7 +880,7 @@ func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
 
 	plan, err := c.Plan(context.Background(), commit.PlanRequest{
-		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"README.md"}},
 		Config: &project.Config{Scopes: []project.Scope{
 			{Name: "app", Description: "application logic in src/"},
 		}},
@@ -893,7 +891,7 @@ func TestClient_Plan_EmptyScopedPlanRetriesUnscoped(t *testing.T) {
 	if len(plan.Groups) != 1 {
 		t.Fatalf("expected 1 group, got %d", len(plan.Groups))
 	}
-	if plan.Groups[0].Message.Title != "docs: update retro log" {
+	if plan.Groups[0].Message.Title != "docs: update readme" {
 		t.Errorf("expected retry plan title, got %q", plan.Groups[0].Message.Title)
 	}
 	if len(systems) != 2 {
@@ -936,7 +934,7 @@ func TestClient_Plan_EmptyAfterUnscopedRetryFails(t *testing.T) {
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
 
 	_, err := c.Plan(context.Background(), commit.PlanRequest{
-		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"README.md"}},
 		Config: &project.Config{Scopes: []project.Scope{
 			{Name: "app", Description: "application logic in src/"},
 		}},
@@ -961,7 +959,7 @@ func TestClient_Plan_UnscopedEmptyPlanFailsWithoutRetry(t *testing.T) {
 	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
 
 	_, err := c.Plan(context.Background(), commit.PlanRequest{
-		UnstagedDiff: &diff.StagedDiff{Files: []string{"docs/retros/log.jsonl"}},
+		UnstagedDiff: &diff.StagedDiff{Files: []string{"README.md"}},
 	})
 	if err == nil {
 		t.Fatal("expected empty-plan error, got nil")

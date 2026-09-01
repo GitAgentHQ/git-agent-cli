@@ -1,8 +1,10 @@
-# AGENTS.md
+# Repository Guidelines
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+## Project Structure & Module Organization
 
-## Commands
+`git-agent` is a Go 1.26 CLI. Keep dependencies pointing inward: `cmd/` wires Cobra commands, `application/` orchestrates workflows, `domain/` contains pure interfaces and value objects, and `infrastructure/` adapts Git, OpenAI, configuration, and external services. Put reusable internal helpers in `pkg/`; shell hooks and their embedded templates live in `hooks/`; binary-level tests live in `e2e/`. User-facing usage text is maintained in `README*.md`, `skills/using-git-agent/`, and `infrastructure/skills/`.
+
+## Build, Test & Development Commands
 
 ```bash
 # Build / test / install (preferred — use Makefile targets)
@@ -25,13 +27,13 @@ gofmt -w ./...
 
 **e2e tests**: `TestMain` builds the `git-agent` binary once, then all tests invoke it as a subprocess. After any source change, re-run `go test ./e2e/...` — the stale binary will not reflect changes.
 
-## CI / Build Verification
+## Testing Guidelines & CI
 
 `.github/workflows/build-check.yml` gates every push/PR to `main`/`develop` with a `CGO_ENABLED=0` build, cross-compile of all release targets, a `gofmt -l .` check, and the full test suite. `release.yml` fires on a `v*` tag and cross-compiles the release targets with `CGO_ENABLED=0` (the release builds are cgo-free so they cross-compile without a C toolchain — do not introduce a cgo-only dependency, or both the build-check and the next tag release will fail). The local `make build`, `make test`, and `gofmt -l .` should still be run before every commit, but the workflow is the merge gate.
 
 ## Architecture
 
-Clean Architecture with strict inward dependency flow:
+Maintain this strict inward dependency flow:
 
 ```
 cmd → application → domain ← infrastructure
@@ -44,7 +46,10 @@ cmd → application → domain ← infrastructure
 - **`pkg/errors/`** — typed exit codes (0 = success, 1 = general error, 2 = hook blocked commit, 3 and 4 = retired/unused)
 - **`hooks/`** — embedded shell-hook scripts and templates; Go-native commit validation lives in `domain/commit/validator.go`
 - **`e2e/`** — full binary tests via subprocess
-- **`docs/`** — design docs, plans, and retrospectives (`docs/plans/`, `docs/retros/`)
+
+## Coding Style & Naming
+
+Run `gofmt -w ./...` after Go edits. Follow established Go naming and keep functions focused. Define interfaces in the consuming layer; do not import infrastructure from `domain/` or `application/`. Add behavior through a `.feature` scenario and a matching Go test before implementation. Do not add cgo-only dependencies: CI and releases require `CGO_ENABLED=0` builds.
 
 ## Skill & Memory Files
 
@@ -72,11 +77,8 @@ The CLI is a Cobra tree. Every command lives in exactly one of three namespaces;
 
 ### Namespaces
 
-- **Action** (top-level): `init`, `commit`. These mutate the repo or the graph. (The hidden `capture` hook target and the `audit` forensic tree were removed when the agent Event Log subsystem was cut — the graph is now commit-history co-change only.)
-- **Meta** (top-level): `config`, `skills`, `version`, `completion`. Configuration and tooling, not repo mutation.
-- **Reads** (top-level): `related` and `status`. `related <files...>` is the co-change query — the files that habitually change with the given files, enriched with the commits that link them (subject + sha + date); language-agnostic (git history, not parsing), offline, no API key. `status` reports index health and row counts. A new co-change read goes at the top level here.
-
-**There is no query namespace parent.** The graph is a single data source (git-history co-change); there is no append-only Event Log and no separate forensic trust model. Reads are top-level `related`/`status`.
+- **Action** (top-level): `init`, `commit`. These mutate the repository.
+- **Meta** (top-level): `config`, `skills`, `version`, `completion`. Configuration and tooling, not repository mutation.
 
 ### Registration
 
@@ -84,11 +86,11 @@ Each command registers itself exactly once in its own `init()` via `rootCmd.AddC
 
 ### Output format
 
-Every read command takes a single `-o, --output {auto,json,text}` flag, registered via `addOutputFlag` (local on `related`/`status`/`commit`/`version`). `auto` (the query default) emits **JSON when stdout is piped, text on a TTY**; `commit`/`version` default to `text` so piping a human-facing action does not silently switch it to JSON. Resolve the format with `outputFormat(cmd)` (wraps `pkg/output.Decide`), encode with `pkg/output.EncodeJSON`, and emit error envelopes with `pkg/output.EncodeError`. Wrap a read command's `RunE` in `jsonAwareRunE` so failures render as `{"error":{"code","message"}}` on stderr in JSON mode. Do not hand-roll `--json`/`--text` or `json.NewEncoder` in a new command. (`commit`'s `stderrIsTerminal` is a separate stderr concern for progress gating.)
+Commands that support structured output take `-o, --output {auto,json,text}`. `commit` and `version` default to `text`; use `outputFormat(cmd)` and `pkg/output` helpers rather than hand-rolled encoders.
 
 ### Flag policy
 
-Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--force`, `--reindex`, `--amend`), (b) a per-invocation override of query shape (`--depth`, `--top`, `--kind`, `--file`), or (c) a path / free-form argument. Provider credentials, models, base URLs, and timeouts are canonical config keys (`git-agent config set <key> <value>`). The legacy provider override flags (`--api-key`, `--model`, `--base-url`) remain supported for one-off invocations and must continue to resolve ahead of config; do not add new provider flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver.
+Prefer config keys over per-command flags. A value belongs on the command line only if it is (a) a behavioral toggle (`--force`, `--amend`), (b) a path or free-form argument, or (c) an established per-invocation output override. Provider credentials, models, base URLs, and timeouts are canonical config keys (`git-agent config set <key> <value>`). The legacy provider override flags (`--api-key`, `--model`, `--base-url`) remain supported for one-off invocations and must continue to resolve ahead of config; do not add new provider flags. When sinking a flag to config, the key must already exist in `infrastructure/config/keys.go` `KeyRegistry` and be read by the resolver.
 
 ### Short descriptions
 
@@ -98,9 +100,9 @@ Prefer config keys over per-command flags. A value belongs on the command line o
 
 ### Hidden commands
 
-There are currently no hidden commands (the `capture` hook target was removed with the Event Log). Graph building is automatic (via `commit` and read-path auto-sync through `related`), so there are no manual index/sync commands.
+There are currently no hidden commands.
 
-## Commit Conventions
+## Commit & Pull Request Guidelines
 
 Enforced via pre-tool hook (`conventional` mode validates against this repo's own `.git-agent/config.yml`). Commit messages must:
 - Title: `type(scope): description` — all lowercase, ≤50 characters
@@ -109,3 +111,4 @@ Enforced via pre-tool hook (`conventional` mode validates against this repo's ow
 - Body: bullet points (imperative verbs) + closing explanation paragraph
 - Body lines ≤72 characters
 - Branches mirror commit types: `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`
+- Before opening a pull request, run `make build`, `make test`, and `gofmt -l .`; CI also performs cgo-free cross-compilation for release targets.

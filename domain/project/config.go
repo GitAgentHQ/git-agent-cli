@@ -32,16 +32,15 @@ func (s *Scope) UnmarshalJSON(data []byte) error {
 // Config holds project-level configuration for git-agent.
 type Config struct {
 	Scopes                  []Scope  `json:"scopes"`
-	Hooks                   []string `json:"hooks"`                    // ordered list: "conventional", file paths, etc. Empty = no validation.
-	MaxDiffLines            int      `json:"maxDiffLines"`             // 0 = no limit
-	MaxDiffBytes            int      `json:"maxDiffBytes"`             // 0 = built-in default cap
-	MaxInputTokens          int      `json:"maxInputTokens"`           // 0 = built-in default preflight ceiling (1M tokens)
-	MaxPlanFiles            int      `json:"maxPlanFiles"`             // 0 = built-in default cap
-	PlanFallback            string   `json:"planFallback"`             // PlanFallbackNone | PlanFallbackHeuristic | PlanFallbackAuto; empty = auto
-	Language                string   `json:"language"`                 // Generated commit message language; empty = auto
-	RequireGitAgentCoAuthor bool     `json:"requireGitAgentCoAuthor"`  // When true, append Co-Authored-By: Git Agent trailer
-	RequireModelCoAuthor    bool     `json:"requireModelCoAuthor"`     // When true, every commit must carry a Co-Authored-By from a built-in AI-provider domain
-	GraphAutobuild          *bool    `json:"graphAutobuild,omitempty"` // nil = default on; commit bootstraps and maintains the code graph unless set false
+	Hooks                   []string `json:"hooks"`                   // ordered list: "conventional", file paths, etc. Empty = no validation.
+	MaxDiffLines            int      `json:"maxDiffLines"`            // 0 = no limit
+	MaxDiffBytes            int      `json:"maxDiffBytes"`            // 0 = built-in default cap
+	MaxInputTokens          int      `json:"maxInputTokens"`          // 0 = built-in default preflight ceiling (1M tokens)
+	MaxPlanFiles            int      `json:"maxPlanFiles"`            // 0 = built-in default cap
+	PlanFallback            string   `json:"planFallback"`            // PlanFallbackNone | PlanFallbackHeuristic | PlanFallbackAuto; empty = auto
+	Language                string   `json:"language"`                // Generated commit message language; empty = auto
+	RequireGitAgentCoAuthor bool     `json:"requireGitAgentCoAuthor"` // When true, append Co-Authored-By: Git Agent trailer
+	RequireModelCoAuthor    bool     `json:"requireModelCoAuthor"`    // When true, every commit must carry a Co-Authored-By from a built-in AI-provider domain
 }
 
 // PlanFallback values accepted by Config.PlanFallback.

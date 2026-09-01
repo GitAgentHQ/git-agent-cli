@@ -6,7 +6,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs. It also surfaces co-change relations for agents — which files habitually change together, plus the commits that explain why — all-language, offline, and with no API key.
+AI-powered Git CLI that analyzes your staged and unstaged changes, splits them into atomic commits, and generates conventional commit messages via LLMs.
 
 ## Installation
 
@@ -74,25 +74,6 @@ git-agent init --local --scope          # write scopes to .git-agent/config.loca
 | `--max-commits` | Max commits to analyze for scope generation (default: 200) |
 | `--local` | Write config to `.git-agent/config.local.yml` (requires an action flag) |
 | `--user` | Write config to `~/.config/git-agent/config.yml` (requires an action flag) |
-
-#### `.git-agent/graph.db` is never tracked
-
-The graph database (`.git-agent/graph.db`) is generated at runtime by `commit`,
-`related`, and `status` commands. It must never be committed — if it is, every
-run re-modifies it and produces a stream of `chore: update graph database file`
-commits (the "infinite recreation" loop).
-
-git-agent defends this invariant automatically, with no `init` required:
-
-- **`git-agent init`** writes `.git-agent/graph.db` (+ `*.db-shm`/`*.db-wal`/`*.db-journal` and `.git-agent/config.local.yml`) into the committed `.gitignore`, and runs `git rm --cached` on any already-tracked `graph.db` so the rule can take effect.
-- **Runtime defence**: every command that opens the graph DB (`commit`, `related`, `status`) writes the mandatory ignore rules to `.git/info/exclude` (local, untracked, invisible to `git diff`) and untracks `graph.db` if a prior commit tracked it — e.g. a repo cloned from a fork that committed it. This breaks the loop even when `init` has not run.
-
-Verify when in doubt:
-
-```bash
-git ls-files .git-agent/graph.db        # must print nothing (untracked)
-git check-ignore .git-agent/graph.db    # prints the path, exit 0 (ignored)
-```
 
 ### `git-agent` (bare command)
 
@@ -188,76 +169,6 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 ### `git-agent version`
 
 Print the build version.
-
-### `git-agent related`
-
-Show the files that historically change together with the given seeds
-(co-change coupling), mined from git history. Seeds are file paths, a
-directory, or — with no arguments — your current working-tree changes
-("what else usually changes with my edits?"). A file coupled to several seeds
-ranks highest.
-
-In JSON output, each related file carries a `commits` array of
-`{sha, subject, ts}` — the commits that link it to a seed, i.e. the evidence
-for *why* the two files are coupled. Use `--tests` to keep only related test
-files, a fast "which tests should I run after this change?".
-
-Language-agnostic (it reads git history, not source parsing), offline (no LLM,
-no API key), and auto-indexed on first run.
-
-```bash
-git-agent related                                        # "what else changes with my edits?"
-git-agent related application/commit_service.go          # co-change from a specific file
-git-agent related src/                                   # co-change from a directory
-git-agent related application/commit_service.go --tests  # related test files only
-git-agent related application/commit_service.go -o json  # adds the linking `commits` array
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--depth` | 1 | Transitive co-change depth |
-| `--top` | 20 | Max results |
-| `--min-count` | 2 | Minimum co-change count to include |
-| `--tests` | false | Keep only related test files |
-| `--reindex` | false | Force a full re-index before querying |
-| `-o`, `--output` | auto | Output format: `auto`, `json`, `text` (JSON when piped, text on a TTY) |
-
-#### Why it complements grep (for coding agents)
-
-`related` is the temporal complement to a code-search tool, not a replacement.
-Grep, Glob, and editor "find references" locate files by their **current
-content and symbols** (spatial). `related` locates them by **how they have
-changed together** (temporal). Many real couplings are invisible to a symbol
-search:
-
-- In `gin`, over half of `context.go`'s top co-change partners (`tree.go`,
-  `errors.go`, `binding/*`, `render/*`) carry no textual link to the `Context`
-  symbol — grep cannot surface them.
-- In `flask`, `app.py` co-changes with `CHANGES.rst` (85 commits) and
-  `docs/templating.rst`; grep alone never tells you to update the changelog and
-  docs when you edit `app.py`.
-
-The JSON `commits` array adds the **intent** behind each coupling, which static
-search cannot. A practical loop: `related <file>` (blast radius + the commits
-explaining why) → grep/read those files (exact code) → `related <file> --tests`
-(which tests to run). It is offline and answers in milliseconds, so an agent
-can call it on every multi-file change.
-
-Co-change is an aggregate signal: accurate for consistent couplings (an
-implementation and its test), softer for feature-spanning or sweeping commits.
-Read the `commits` subjects to tell a real coupling from incidental noise.
-
-### `git-agent status`
-
-Report code-graph index health and row counts: commits, files, authors,
-co-change pairs, the last indexed commit, and database size. Offline (no LLM,
-no API key).
-
-```bash
-git-agent status              # index health + row counts
-git-agent status -o json      # structured output
-git-agent related <file>      # auto-indexes git history on first run
-```
 
 ## Configuration
 

@@ -93,8 +93,8 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 		final = mergeGitignore(string(existing), content)
 	}
 
-	// Generated files (graph DB, local config) must never be tracked. Inject
-	// their ignore rules mandatorily and idempotently so they survive every
+	// Local configuration must never be tracked. Inject its ignore rule
+	// mandatorily and idempotently so it survives every
 	// regeneration even when the Toptal content omits them.
 	final = EnsureMandatoryIgnoreRules(final)
 
@@ -214,18 +214,10 @@ func trimLeadingEmpty(lines []string) []string {
 	return lines
 }
 
-// mandatoryIgnoreRules are ignore entries git-agent injects into every
-// .gitignore because they describe generated files that must never be tracked.
-//   - .git-agent/graph.db + sidecars: the runtime SQLite graph database. If
-//     tracked, auto-staging re-adds it every run (the "infinite recreation"
-//     loop of chore commits).
-//   - .git-agent/config.local.yml: personal per-repo overrides (see config
-//     --local); documented as gitignored, and the ignore rule must hold.
+// mandatoryIgnoreRules are generated files git-agent injects into every
+// .gitignore. Local configuration contains personal per-repository overrides
+// and must not be committed.
 var mandatoryIgnoreRules = []string{
-	".git-agent/graph.db",
-	"*.db-shm",
-	"*.db-wal",
-	"*.db-journal",
 	".git-agent/config.local.yml",
 }
 
@@ -246,33 +238,6 @@ func EnsureMandatoryIgnoreRules(content string) string {
 	block := "\n# git-agent generated files (never track)\n" +
 		strings.Join(missing, "\n") + "\n"
 	return strings.TrimRight(content, "\n") + "\n" + block
-}
-
-// EnsureGitAgentIgnoredAt ensures the mandatory ignore rules are in effect for
-// repoRoot. It is the runtime defence for commands that create
-// .git-agent/graph.db before `git-agent init` has run (capture/timeline/impact):
-// without it, a first write in a freshly cloned repo leaves the database
-// unignored and a later `git add -A` tracks it.
-//
-// It writes to .git/info/exclude (the per-repo local exclude file), NOT the
-// working-tree .gitignore. Two reasons: (1) the committed .gitignore is owned
-// by `git-agent init`'s Generate, which is the user-visible, shareable rules;
-// (2) writing a brand-new .gitignore during a graph read would itself show up
-// as an unexplained working-tree change and pollute reconcile's out-of-band
-// Event Log. .git/info/exclude is local, untracked, and invisible to
-// `git diff`, so it defends tracking without side effects. Idempotent — safe to
-// call on every graph-db open.
-func EnsureGitAgentIgnoredAt(repoRoot string) error {
-	excludePath := filepath.Join(repoRoot, ".git", "info", "exclude")
-	existing, _ := os.ReadFile(excludePath)
-	final := EnsureMandatoryIgnoreRules(string(existing))
-	if final == string(existing) {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(excludePath), 0755); err != nil {
-		return fmt.Errorf("create .git/info dir: %w", err)
-	}
-	return os.WriteFile(excludePath, []byte(final), 0644)
 }
 
 // gitignoreHasRule reports whether a gitignore pattern line equal to rule is

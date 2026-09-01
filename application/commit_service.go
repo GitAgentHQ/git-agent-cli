@@ -89,7 +89,6 @@ type CommitService struct {
 	filter           diff.DiffFilter         // nil = no filtering
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
-	coChange         CoChangeProvider        // nil = skip co-change (graceful)
 }
 
 func NewCommitService(
@@ -170,11 +169,6 @@ func plannerFallbackReason(err error) string {
 	}
 }
 
-// SetCoChangeProvider sets an optional co-change hint provider.
-func (s *CommitService) SetCoChangeProvider(provider CoChangeProvider) {
-	s.coChange = provider
-}
-
 func (s *CommitService) vlog(req CommitRequest, format string, args ...any) {
 	if req.Verbose && req.LogWriter != nil {
 		fmt.Fprintf(req.LogWriter, format+"\n", args...)
@@ -247,17 +241,15 @@ func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (
 	if err := s.ensureScopes(ctx, req); err != nil {
 		return nil, err
 	}
-	allFiles := sortedKeys(allowed)
-	coChangeHints := s.coChangeHints(ctx, req, allFiles)
 	renamed, err := s.detectRenames(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := s.buildPlan(ctx, req, staged, unstaged, allowed, renamed, coChangeHints)
+	plan, err := s.buildPlan(ctx, req, staged, unstaged, allowed, renamed)
 	if err != nil {
 		return nil, err
 	}
-	return s.commitGroups(ctx, req, plan, allowed, renamed, coChangeHints)
+	return s.commitGroups(ctx, req, plan, allowed, renamed)
 }
 
 func (s *CommitService) collectChanges(ctx context.Context, req CommitRequest) (*diff.StagedDiff, *diff.StagedDiff, error) {
@@ -335,21 +327,6 @@ func (s *CommitService) ensureScopes(ctx context.Context, req CommitRequest) err
 	return nil
 }
 
-func (s *CommitService) coChangeHints(ctx context.Context, req CommitRequest, files []string) []commit.CoChangeHint {
-	if s.coChange == nil {
-		return nil
-	}
-	hints, err := s.coChange.GetHintsForFiles(ctx, files)
-	if err != nil {
-		s.vlog(req, "co-change lookup failed: %v", err)
-		return nil
-	}
-	if len(hints) > 0 {
-		s.vlog(req, "found %d co-change hints for planning", len(hints))
-	}
-	return hints
-}
-
 func (s *CommitService) detectRenames(ctx context.Context, req CommitRequest) ([]diff.Rename, error) {
 	renamed, err := s.git.DetectRenames(ctx)
 	if err != nil {
@@ -362,20 +339,20 @@ func (s *CommitService) detectRenames(ctx context.Context, req CommitRequest) ([
 	return renamed, nil
 }
 
-func (s *CommitService) buildPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename, hints []commit.CoChangeHint) (*commit.CommitPlan, error) {
+func (s *CommitService) buildPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename) (*commit.CommitPlan, error) {
 	files := sortedKeys(allowed)
 	if len(files) == 1 {
 		s.vlog(req, "single file — skipping planning phase")
 		return &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: files}}}, nil
 	}
 	s.out(req, "Planning commits...")
-	plan, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, CoChangeHints: hints, MaxPlanFiles: req.MaxPlanFiles})
+	plan, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, MaxPlanFiles: req.MaxPlanFiles})
 	if err != nil {
 		return nil, fmt.Errorf("plan commits: %w", err)
 	}
 	s.normalizePlan(plan, allowed, renamed, req)
 	if s.scopeSvc != nil && len(req.Config.Scopes) > 0 && hasUnscopedGroups(plan) {
-		if err := s.refreshScopesAndPlan(ctx, req, staged, unstaged, allowed, renamed, hints, plan); err != nil {
+		if err := s.refreshScopesAndPlan(ctx, req, staged, unstaged, allowed, renamed, plan); err != nil {
 			return nil, err
 		}
 	}
@@ -397,7 +374,7 @@ func (s *CommitService) normalizePlan(plan *commit.CommitPlan, allowed map[strin
 	coLocateRenames(plan, renamed, allowed)
 }
 
-func (s *CommitService) refreshScopesAndPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename, hints []commit.CoChangeHint, plan *commit.CommitPlan) error {
+func (s *CommitService) refreshScopesAndPlan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename, plan *commit.CommitPlan) error {
 	s.out(req, "Refreshing scopes...")
 	newScopes, err := s.scopeSvc.Generate(ctx, 200, req.Config.Scopes)
 	if err != nil {
@@ -406,7 +383,7 @@ func (s *CommitService) refreshScopesAndPlan(ctx context.Context, req CommitRequ
 	}
 	req.Config.Scopes = newScopes
 	s.out(req, "Scopes updated (in-memory): %v, re-planning...", req.Config.ScopeNames())
-	updated, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, CoChangeHints: hints, MaxPlanFiles: req.MaxPlanFiles})
+	updated, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, MaxPlanFiles: req.MaxPlanFiles})
 	if err != nil {
 		return fmt.Errorf("re-plan after scope refresh: %w", err)
 	}
@@ -424,7 +401,7 @@ type generatedGroupMessage struct {
 	passed       bool
 }
 
-func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, plan *commit.CommitPlan, allowed map[string]bool, renames []diff.Rename, coChangeHints []commit.CoChangeHint) (_ *CommitResult, retErr error) {
+func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, plan *commit.CommitPlan, allowed map[string]bool, renames []diff.Rename) (_ *CommitResult, retErr error) {
 	remaining := append([]commit.CommitGroup(nil), plan.Groups...)
 	totalGroups := len(plan.Groups)
 	commitWord := "commits"
@@ -469,7 +446,7 @@ func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, pla
 			}
 			inheritedFeedback = attempt.hookFeedback
 			rePlanCount++
-			newPlan, err := s.replanAfterHook(ctx, req, group, remaining, allowed, committedFiles, renames, coChangeHints)
+			newPlan, err := s.replanAfterHook(ctx, req, group, remaining, allowed, committedFiles, renames)
 			if err != nil {
 				return nil, err
 			}
@@ -622,7 +599,7 @@ func (s *CommitService) generateGroupMessage(ctx context.Context, req CommitRequ
 	return &generatedGroupMessage{preTrailer: preTrailer, hookFeedback: hookFeedback}, nil
 }
 
-func (s *CommitService) replanAfterHook(ctx context.Context, req CommitRequest, group commit.CommitGroup, remaining []commit.CommitGroup, allowed map[string]bool, committedFiles map[string]bool, renames []diff.Rename, coChangeHints []commit.CoChangeHint) (*commit.CommitPlan, error) {
+func (s *CommitService) replanAfterHook(ctx context.Context, req CommitRequest, group commit.CommitGroup, remaining []commit.CommitGroup, allowed map[string]bool, committedFiles map[string]bool, renames []diff.Rename) (*commit.CommitPlan, error) {
 	var allFiles []string
 	allFiles = append(allFiles, group.Files...)
 	for _, pending := range remaining {
@@ -630,7 +607,7 @@ func (s *CommitService) replanAfterHook(ctx context.Context, req CommitRequest, 
 	}
 	newPlan, err := s.runPlan(ctx, req, commit.PlanRequest{
 		StagedDiff: &diff.StagedDiff{Files: allFiles}, Intent: req.Intent,
-		Config: req.Config, CoChangeHints: coChangeHints, MaxPlanFiles: req.MaxPlanFiles,
+		Config: req.Config, MaxPlanFiles: req.MaxPlanFiles,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("re-plan commits: %w", err)

@@ -756,19 +756,6 @@ func (c *Client) planOnce(ctx context.Context, req commit.PlanRequest, scoped bo
 		))
 	}
 	planParts = append(planParts, languageInstruction(effectiveLanguage(req.Language, req.Config), req.Intent))
-	if len(req.CoChangeHints) > 0 {
-		var lines []string
-		for _, h := range req.CoChangeHints {
-			line := fmt.Sprintf("- %s <-> %s (%.0f%%)", h.FileA, h.FileB, h.Strength*100)
-			if len(h.Subjects) > 0 {
-				// Surface the reason they coupled, e.g. once committed together as
-				// "feat(auth): add token refresh" — semantic signal, not just a count.
-				line += fmt.Sprintf(" — once committed together as: %q", strings.Join(h.Subjects, "; "))
-			}
-			lines = append(lines, line)
-		}
-		planParts = append(planParts, "Historical co-change — these file pairs are usually committed together. Keep each pair in the SAME commit group unless their diffs are clearly unrelated:\n"+strings.Join(lines, "\n"))
-	}
 	userPrompt := strings.Join(planParts, "\n\n")
 
 	raw, err := c.callLLM(ctx, systemPrompt, userPrompt, 8192, planMaxTokensCeiling)

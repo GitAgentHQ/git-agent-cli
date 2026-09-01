@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Remove historical co-change analysis, including the `related` and `status` commands, graph storage and autobuild, and co-change hints in commit planning (cli)
+
 ## [0.14.0] - 2026-08-26
 
 ### Changed

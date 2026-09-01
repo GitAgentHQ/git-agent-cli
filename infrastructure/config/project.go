@@ -66,7 +66,6 @@ type rawProjectConfig struct {
 	Language                string     `yaml:"language,omitempty"`
 	RequireGitAgentCoAuthor *bool      `yaml:"require_git_agent_co_author,omitempty"`
 	RequireModelCoAuthor    *bool      `yaml:"require_model_co_author,omitempty"`
-	GraphAutobuild          *bool      `yaml:"graph_autobuild,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {
@@ -166,16 +165,11 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.RequireModelCoAuthor != nil {
 		merged.RequireModelCoAuthor = local.RequireModelCoAuthor
 	}
-	if local.GraphAutobuild != nil {
-		merged.GraphAutobuild = local.GraphAutobuild
-	}
-
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
 		merged.MaxDiffBytes == nil && merged.MaxInputTokens == nil && merged.MaxPlanFiles == nil && merged.PlanFallback == "" &&
 		merged.RequireGitAgentCoAuthor == nil &&
 		merged.Language == "" &&
-		merged.RequireModelCoAuthor == nil &&
-		merged.GraphAutobuild == nil {
+		merged.RequireModelCoAuthor == nil {
 		return nil
 	}
 
@@ -207,9 +201,6 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 	if merged.RequireModelCoAuthor != nil {
 		cfg.RequireModelCoAuthor = *merged.RequireModelCoAuthor
-	}
-	if merged.GraphAutobuild != nil {
-		cfg.GraphAutobuild = merged.GraphAutobuild
 	}
 	return cfg
 }

@@ -12,7 +12,7 @@ scopes:
     - name: hooks
       description: Manages git pre-commit shell scripts and execution templates in hooks/; excludes Go-based hook executors.
     - name: infra
-      description: Adapters for Git, OpenAI, SQLite graph storage, and config resolution in infrastructure/; excludes domain models.
+      description: Adapters for Git, OpenAI, and config resolution in infrastructure/; excludes domain models.
     - name: pkg
       description: Shared internal utilities, error definitions, and pattern filters in pkg/; excludes application services.
     - name: skills

@@ -5,8 +5,8 @@ description: Use git-agent by default for coding-agent Git work. The bare git-ag
 
 # Git Agent CLI
 
-AI-powered Git CLI — atomic AI commits plus co-change relations for agents,
-all-language, offline, no API key.
+AI-powered Git CLI for atomic AI commits. It is online and LLM-backed;
+official releases provide a shared gateway, so no personal API key is required.
 
 ## Start here
 
@@ -52,14 +52,8 @@ instructions never go stale.
 
 - **Autonomous workflow**: the bare command inspects the repository and runs the commit workflow
 - **Atomic commits**: splits changes into up to 5 logically distinct commits, each hook-validated
-- **Co-change relations**: `git-agent related` mines git history for the files that move with your change — offline, language-agnostic, no API key
 - **Auto-scope**: generates commit scopes from git history automatically
 - **Scope & `.gitignore` optimization**: regenerates scopes from latest history (`init --scope --force`) and re-derives `.gitignore` while preserving custom rules (`init --gitignore`)
 - **Hook validation**: conventional-commit validation built in; custom hooks via shell scripts
 - **Config precedence**: CLI flag > `git config --local` > `~/.config/git-agent/config.yml` > free shared-gateway default; `--free` forces the gateway and ignores the rest. Agent-session env vars (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`) never set the inference model — it resolves only from flag / local git config / user config; the session model is read separately for `Co-Authored-By` attribution
 - **Structured output**: `-o json` on every read command for scripting
-
-## Status check
-
-`git-agent status` reports co-change index health (last indexed commit, row
-counts, db size). Read-only and offline.

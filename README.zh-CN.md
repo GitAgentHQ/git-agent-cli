@@ -6,7 +6,7 @@
 
 [English](README.md) | **简体中文**
 
-面向 agent 的 Git 命令行工具：原子化 AI 提交 + 共变关系——全语言、离线、无需 API key。它分析暂存和未暂存的变更，将其拆分为原子提交并通过 LLM 生成规范的提交信息；共变查询则挖掘 git 历史，找出习惯性一起变更的文件，并附上解释这种耦合的提交信息。
+面向 agent 的 Git 命令行工具：它分析暂存和未暂存的变更，将其拆分为原子提交，并通过 LLM 生成规范的提交信息。
 
 ## 安装
 
@@ -69,24 +69,6 @@ git-agent init --local --scope          # 将作用域写入 .git-agent/config.l
 | `--max-commits` | 用于作用域生成的最大提交分析数量（默认：200） |
 | `--local` | 将配置写入 `.git-agent/config.local.yml`（需要至少一个操作参数） |
 | `--user` | 将配置写入 `~/.config/git-agent/config.yml`（需要至少一个操作参数） |
-
-#### `.git-agent/graph.db` 永不追踪
-
-图数据库（`.git-agent/graph.db`）由 `commit`、`related`、`status` 等命令在运行时生成。
-它绝不能被提交——一旦被追踪，每次运行都会再次修改它，产生一连串
-`chore: update graph database file` 提交（即"无限重建"循环）。
-
-git-agent 自动守护这一不变量，无需 `init`：
-
-- **`git-agent init`**：把 `.git-agent/graph.db`（及 `*.db-shm`/`*.db-wal`/`*.db-journal`、`.git-agent/config.local.yml`）写入提交版 `.gitignore`，并对已追踪的 `graph.db` 执行 `git rm --cached`，使忽略规则生效。
-- **运行时防护**：每个打开图库的命令（`commit`、`related`、`status`）都会把强制忽略规则写入 `.git/info/exclude`（本地、未追踪、`git diff` 不可见），并在 `graph.db` 已被追踪时自动 untrack——例如从已提交该文件的 fork 克隆下来的仓库。即便未运行 `init`，也能阻断循环。
-
-存疑时验证：
-
-```bash
-git ls-files .git-agent/graph.db        # 应无输出（未追踪）
-git check-ignore .git-agent/graph.db    # 输出路径，exit 0（已忽略）
-```
 
 ### `git-agent`（裸命令）
 
@@ -174,65 +156,6 @@ git-agent completion fish > ~/.config/fish/completions/git-agent.fish
 ### `git-agent version`
 
 打印构建版本。
-
-### `git-agent related`
-
-挖掘 git 历史，找出历史上与给定文件一起变更的文件（共变耦合）。种子可以是
-文件路径、目录，或不带参数时取当前工作区的变更（"我的改动通常还会涉及哪些
-文件？"）。与多个种子都耦合的文件排名最高。
-
-它**全语言**——只读取 git 历史，不解析源码——离线运行，无需 API key，首次
-运行自动索引。
-
-使用 `-o json` 时，每个相关文件都附带一个 `commits` 数组（每项
-`{sha, subject, ts}`）——把这些文件联系起来的提交，即"它们为什么相关？"的证据。
-
-```bash
-git-agent related                                     # "我的改动通常还会涉及哪些文件？"
-git-agent related application/commit_service.go       # 从特定文件查共变
-git-agent related src/                                # 从目录查共变
-git-agent related --tests                             # 只保留相关的测试文件（"该跑哪些测试？"）
-git-agent related application/commit_service.go -o json
-```
-
-| 参数 | 默认值 | 描述 |
-|------|--------|------|
-| `--depth` | 1 | 传递性共变深度 |
-| `--top` | 20 | 最大结果数 |
-| `--min-count` | 2 | 最小共变次数阈值 |
-| `--tests` | false | 只保留相关的测试文件（决定改动后该跑哪些测试） |
-| `--reindex` | false | 查询前强制重新索引 |
-| `-o`、`--output` | 自动 | 输出格式：`auto`、`json`、`text`（管道时为 JSON，TTY 时为文本） |
-
-#### 为什么它与 grep 互补（面向 coding agent）
-
-`related` 是代码搜索的**时间维补充**，而非替代。grep、Glob、编辑器的"查找
-引用"按**当前内容与符号**定位文件（空间维）；`related` 按**它们如何一起变更**
-定位（时间维）。许多真实耦合是符号搜索看不见的：
-
-- 在 `gin` 中，`context.go` 的 top 共变伙伴有过半（`tree.go`、`errors.go`、
-  `binding/*`、`render/*`）与 `Context` 符号无任何文本关联——grep 无法发现。
-- 在 `flask` 中，`app.py` 与 `CHANGES.rst`（85 次提交）、`docs/templating.rst`
-  共变；仅靠 grep 永远不会提醒你改 `app.py` 时还要更新 changelog 和文档。
-
-JSON 的 `commits` 数组还给出每条耦合背后的**意图**，这是静态搜索给不了的。
-实用流程：`related <file>`（改动爆炸半径 + 解释原因的提交）→ grep/读这些文件
-（精确代码）→ `related <file> --tests`（该跑哪些测试）。它离线、毫秒级响应，
-agent 可以在每次多文件改动时调用。
-
-共变是**聚合信号**：对一致耦合（实现与其测试）准确，对跨特性或大范围扫荡式
-提交较软。读 `commits` 的标题，即可区分真实耦合与偶发噪声。
-
-### `git-agent status`
-
-显示图索引的健康度与行数：提交、文件、作者、共变对、最后索引的提交，
-以及数据库大小。离线操作（无需 LLM，无需 API key）。
-
-```bash
-git-agent status            # 索引健康度 + 行数
-git-agent status -o json    # JSON 输出
-git-agent related <file>    # 首次运行自动建索引
-```
 
 ## 配置
 
