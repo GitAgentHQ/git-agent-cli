@@ -53,6 +53,20 @@ Use your code-search tools and targeted tests to explore the current codebase be
    diff with `--max-diff-lines <n>` / `--max-diff-bytes <n>`, or switch to a
    more capable model via `--model`.
 
+5. **Optional System One layer** — when a TypeSafe key is set, Jev answers the
+   decisions git-agent can pose as closed questions: which scope covers which
+   directory, which technologies the project uses, how changed files group into
+   commits, and which lever a hook rejection needs. The text model keeps writing
+   every message and scope description.
+   ```
+   git-agent config set jev_api_key YOUR_TYPESAFE_KEY
+   git-agent config set jev_mode on    # shadow is the default and only measures
+   ```
+   Without a key, every decision stays with the text model. With a key that cannot
+   be reached, git-agent falls back to the text model, so the layer never blocks a
+   commit. Run with `-v` to see one line per judgment and its agreement with the
+   model.
+
 ### Structured output (`-o json`)
 
 When you need to read the result back programmatically (which commits were

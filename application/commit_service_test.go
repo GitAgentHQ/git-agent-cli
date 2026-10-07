@@ -1437,7 +1437,7 @@ func TestCommitService_AutoScope_InMemoryOnly(t *testing.T) {
 	planner := &mockCommitPlanner{plan: &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: []string{"main.go"}}}}}
 	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cli"}, {Name: "app"}}}
 	mockGit := &mockGitReader{commits: []string{"feat: init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
-	scopeSvc := application.NewScopeService(llm, mockGit)
+	scopeSvc := application.NewScopeService(llm, mockGit, nil, nil)
 
 	svc := application.NewCommitService(gen, planner, git, noopHook(), scopeSvc, nil, nil, nil)
 	req := application.CommitRequest{

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add an optional System One (Jev) layer that owns the decisions git-agent can pose as closed questions: scope assignment, technology detection, commit grouping, and hook-rejection routing, while the text model keeps writing messages and descriptions; every judgment reads a structured summary and never the diff body (cli)
+- Add `shadow`, `on`, and `off` modes with a per-run call budget and a confidence floor, so an unmeasured judgment runs and records without replacing working behavior (cli)
+- Add an evaluation harness that replays repository history through a judgment and reports agreement with the recorded commit titles, behind the `jevlive` build tag (cli)
+
 ### Removed
 - Remove historical co-change analysis, including the `related` and `status` commands, graph storage and autobuild, and co-change hints in commit planning (cli)
 

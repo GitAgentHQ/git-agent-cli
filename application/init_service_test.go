@@ -16,10 +16,23 @@ type mockLLMClient struct {
 	scopes    []project.Scope
 	reasoning string
 	err       error
+
+	// described records the scopes the service asked the model to word, and
+	// returns them back with the description filled in.
+	described   []project.Scope
+	describeErr error
 }
 
 func (m *mockLLMClient) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error) {
 	return m.scopes, m.reasoning, m.err
+}
+
+func (m *mockLLMClient) DescribeScopes(ctx context.Context, proposed []project.ProposedScope) ([]project.Scope, error) {
+	m.described = append(m.described, project.Scope{})
+	for _, p := range proposed {
+		m.described = append(m.described, project.Scope{Name: p.Name})
+	}
+	return m.described, m.describeErr
 }
 
 // mockGitReader implements application.GitReader.

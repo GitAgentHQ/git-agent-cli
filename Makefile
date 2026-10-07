@@ -10,7 +10,7 @@ build:
 	go build $(BUILD_FLAGS) -o $(BINARY) .
 
 test:
-	go test -count=1 ./application/... ./domain/... ./infrastructure/... ./cmd/... ./e2e/...
+	go test -count=1 ./...
 
 clean:
 	rm -f $(BINARY)

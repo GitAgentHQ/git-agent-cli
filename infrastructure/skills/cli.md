@@ -348,14 +348,12 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ## Defaults and legacy notes
 
-### Hardcoded defaults
+### Provider defaults
 
-When no provider config is found at any level, git-agent falls back to:
-
-| Key | Default |
-|-----|---------|
-| `base_url` | `https://api.anthropic.com/v1` |
-| `model` | `claude-3-5-haiku-20241022` |
+Official release binaries embed the free shared-gateway URL as the zero-config
+`base_url`. Development builds do not embed a provider endpoint, so configure
+`base_url` (and, for direct providers, `api_key` and `model`) before running
+generation commands. The shared gateway selects the model server-side.
 
 ### Legacy config migration
 

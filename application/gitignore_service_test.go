@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gitagenthq/git-agent/application"
+	"github.com/gitagenthq/git-agent/domain/decision"
 	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
@@ -75,6 +76,20 @@ func TestGitignoreService_Generate_CreatesFile(t *testing.T) {
 	}
 	if !strings.Contains(content, "### end git-agent ###") {
 		t.Error("missing auto-generated end marker")
+	}
+}
+
+func TestGitignoreService_Generate_HonorsCanceledContextBeforeWrite(t *testing.T) {
+	svc, _, cleanup := setupGitignoreTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := svc.Generate(ctx, application.GitignoreRequest{}); err == nil {
+		t.Fatal("expected canceled context error")
+	}
+	if _, err := os.Stat(".gitignore"); !os.IsNotExist(err) {
+		t.Fatalf("expected canceled write to leave no .gitignore, stat error: %v", err)
 	}
 }
 
@@ -228,3 +243,42 @@ func TestGitignoreService_Generate_WritesToCorrectPath(t *testing.T) {
 		t.Errorf(".gitignore not found: %v", err)
 	}
 }
+
+func TestGitignoreService_TechClassifierIsMeasuredButNotAdopted(t *testing.T) {
+	// Given a classifier that publishes the measured floor, which no answer can
+	// reach, and a detector that can answer.
+	classifier := &measuredTechClassifier{verdict: &domainGitignore.TechnologyVerdict{
+		Technologies: []string{"go"}, Confidence: 0.99,
+	}}
+	dir := t.TempDir()
+	git := &mockGitReader{dirs: []string{"application"}, files: []string{"main.go"}, repoRoot: dir}
+	svc := application.NewGitignoreService(&mockTechDetector{techs: []string{"go"}}, &mockContentGenerator{}, git).
+		WithTechnologyClassifier(classifier).
+		WithDecisions(application.NewDecisions(decision.ModeOn, 0.5, 8, nil, nil))
+
+	techs, _, err := svc.Generate(context.Background(), application.GitignoreRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The detector keeps the decision; the classifier ran and decided nothing.
+	if classifier.calls != 1 {
+		t.Errorf("expected the classifier to run once, got %d calls", classifier.calls)
+	}
+	if len(techs) == 0 || techs[0] != "go" {
+		t.Errorf("expected the detector's technology, got %v", techs)
+	}
+}
+
+// measuredTechClassifier publishes a floor no answer can reach, which is how a
+// measured seam stays visible without deciding.
+type measuredTechClassifier struct {
+	verdict *domainGitignore.TechnologyVerdict
+	calls   int
+}
+
+func (c *measuredTechClassifier) ClassifyTechnologies(context.Context, domainGitignore.ClassifyRequest) (*domainGitignore.TechnologyVerdict, error) {
+	c.calls++
+	return c.verdict, nil
+}
+
+func (c *measuredTechClassifier) TechFloor() float64 { return 1.1 }

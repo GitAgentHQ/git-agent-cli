@@ -7,8 +7,10 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gitagenthq/git-agent/domain/commit"
+	"github.com/gitagenthq/git-agent/domain/decision"
 	"github.com/gitagenthq/git-agent/domain/diff"
 	"github.com/gitagenthq/git-agent/domain/hook"
 	"github.com/gitagenthq/git-agent/domain/project"
@@ -89,6 +91,16 @@ type CommitService struct {
 	filter           diff.DiffFilter         // nil = no filtering
 	truncator        diff.DiffTruncator      // nil = no truncation
 	heuristicPlanner commit.HeuristicPlanner // nil = no REQ-008 fallback
+	// decider decides how files group into commits. A nil decider leaves the
+	// grouping to the planner.
+	decider commit.GroupDecider
+	// judge decides the type and scope prefix of each message. A nil judge
+	// leaves the whole title to the model.
+	judge commit.TypeScopeJudge
+	// router decides which lever a rejected commit needs. A nil router keeps
+	// the fixed retry policy.
+	router    commit.FailureRouter
+	decisions *Decisions
 }
 
 func NewCommitService(
@@ -113,6 +125,20 @@ func NewCommitService(
 	}
 }
 
+// WithJudgments attaches the System One seams: the grouping decider, the
+// type and scope judge, and the failure router. Any of them may be nil, which
+// leaves that decision to the existing path.
+func (s *CommitService) WithJudgments(decider commit.GroupDecider, judge commit.TypeScopeJudge, router commit.FailureRouter) *CommitService {
+	s.decider, s.judge, s.router = decider, judge, router
+	return s
+}
+
+// WithDecisions attaches the System One policy for one run.
+func (s *CommitService) WithDecisions(d *Decisions) *CommitService {
+	s.decisions = d
+	return s
+}
+
 // HeuristicPlanner reports the fallback planner this service uses when the
 // primary LLM planner exhausts its token budget. Returns nil when REQ-008
 // fallback is disabled. Exposed so cmd-layer wiring tests can confirm
@@ -134,6 +160,9 @@ func (s *CommitService) HeuristicPlanner() commit.HeuristicPlanner {
 func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq commit.PlanRequest) (*commit.CommitPlan, error) {
 	plan, err := s.planner.Plan(ctx, planReq)
 	if err == nil {
+		if plan == nil {
+			return nil, errors.New("planner returned nil commit plan")
+		}
 		return plan, nil
 	}
 	if !isPlannerFallbackError(err) {
@@ -146,7 +175,11 @@ func (s *CommitService) runPlan(ctx context.Context, req CommitRequest, planReq 
 		return nil, err
 	}
 	s.out(req, "Warning: LLM planner unavailable (%s), falling back to directory bucketer", plannerFallbackReason(err))
-	return s.heuristicPlanner.Plan(ctx, planReq)
+	plan, err = s.heuristicPlanner.Plan(ctx, planReq)
+	if err == nil && plan == nil {
+		return nil, errors.New("heuristic planner returned nil commit plan")
+	}
+	return plan, err
 }
 
 // isPlannerFallbackError reports whether err is one of the LLM-planner
@@ -346,7 +379,7 @@ func (s *CommitService) buildPlan(ctx context.Context, req CommitRequest, staged
 		return &commit.CommitPlan{Groups: []commit.CommitGroup{{Files: files}}}, nil
 	}
 	s.out(req, "Planning commits...")
-	plan, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, MaxPlanFiles: req.MaxPlanFiles})
+	plan, err := s.plan(ctx, req, staged, unstaged, allowed, renamed)
 	if err != nil {
 		return nil, fmt.Errorf("plan commits: %w", err)
 	}
@@ -360,6 +393,303 @@ func (s *CommitService) buildPlan(ctx context.Context, req CommitRequest, staged
 		return nil, fmt.Errorf("plan produced no valid commit groups (all files were filtered out)")
 	}
 	return plan, nil
+}
+
+// routeHookFailure asks the router which lever the rejection needs. Every other
+// case, including a router failure, keeps the fixed policy of re-planning.
+//
+// The reason the router returns replan is handled by the caller falling through
+// to the existing re-plan, so this function only needs to distinguish the two
+// outcomes that change the loop.
+func (s *CommitService) routeHookFailure(ctx context.Context, req CommitRequest, group commit.CommitGroup, remaining []commit.CommitGroup, attempt *generatedGroupMessage) commit.FailureAction {
+	session := s.decisions.Begin()
+	if s.router == nil || !session.Take(SeamHookRoute) {
+		return ""
+	}
+
+	var remainingFiles []string
+	for _, pending := range remaining {
+		remainingFiles = append(remainingFiles, pending.Files...)
+	}
+
+	started := time.Now()
+	route, err := s.router.RouteFailure(ctx, commit.FailureRouteRequest{
+		HookReason:     attempt.hookFeedback,
+		Title:          attempt.preTrailer,
+		Files:          group.Files,
+		RemainingFiles: remainingFiles,
+	})
+	if err != nil {
+		session.Report(started, decision.Observation{Seam: SeamHookRoute, Err: err.Error()})
+		return ""
+	}
+
+	floor, ok := hookRouteFloorOf(s.router)
+	if ok && !session.AdoptAt(SeamHookRoute, route.Confidence, floor) {
+		session.Report(started, decision.Observation{
+			Seam: SeamHookRoute, Decision: string(route.Action), Confidence: route.Confidence,
+		})
+		return ""
+	}
+	session.Report(started, decision.Observation{
+		Seam: SeamHookRoute, Decision: string(route.Action), Confidence: route.Confidence, Adopted: true,
+	})
+	s.vlog(req, "jev routed the hook rejection to %s", route.Action)
+	return route.Action
+}
+
+// hookRouteFloorOf reads the router's own confidence floor, when it publishes
+// one.
+func hookRouteFloorOf(router commit.FailureRouter) (float64, bool) {
+	if floored, ok := router.(interface{ HookRouteFloor() float64 }); ok {
+		return floored.HookRouteFloor(), true
+	}
+	return 0, false
+}
+
+// maxHookRewrites bounds how often one group may be drafted again after a
+// routing decision asked for a rewrite, and maxTotalHookRewrites bounds the
+// rewrites of a whole run. The per-run cap matters because a router that always
+// says "rewrite" would otherwise redraft the same group without end.
+const (
+	maxHookRewrites      = 1
+	maxTotalHookRewrites = 2
+)
+
+// groupKey identifies a group by its file set, independent of order, so the
+// same group is recognized however the loop reaches it again.
+func groupKey(files []string) string {
+	sorted := append([]string(nil), files...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "\x1f")
+}
+
+// decidePrefix asks the judge for the conventional-commit type and scope of one
+// change and returns the scope the generator must be told to pin.
+//
+// Only the scope is pinned. Measurement over a repository's own history put the
+// scope in agreement 92 percent of the time with every disagreement arriving
+// around 0.5 confidence, so a 0.7 floor separates it cleanly.
+//
+// The type is never pinned, and that is a measured decision rather than a
+// cautious one: the type agreed in 58 to 67 percent of cases and its
+// disagreements arrived at 0.81 to 0.94 confidence. The wrong answers are the
+// confident ones, so no floor separates right from wrong and pinning the type at
+// any threshold would write confidently wrong history. The type stays with the
+// model until a measurement shows a floor that works.
+//
+// The judge refuses a language it has not been measured on, so a non-English
+// message keeps its provider's prefix. The gate lives in the domain so the call
+// is skipped rather than made and refused.
+func (s *CommitService) decidePrefix(ctx context.Context, req CommitRequest, groupDiff *diff.StagedDiff) (pinScope string) {
+	session := s.decisions.Begin()
+	if s.judge == nil || !session.Take(SeamTypeScope) {
+		return ""
+	}
+	scopeFloor, ok := scopeFloorOf(s.judge)
+	if !ok {
+		return ""
+	}
+	language := ""
+	if req.Config != nil {
+		language = req.Config.Language
+	}
+	if !commit.JudgeSupportsLanguage(language) {
+		s.vlog(req, "type and scope judgment skipped: language %q is not measured", language)
+		return ""
+	}
+
+	started := time.Now()
+	verdict, err := s.judge.JudgeTypeScope(ctx, commit.TypeScopeRequest{
+		Files:    fileChanges(groupDiff),
+		Intent:   req.Intent,
+		Scopes:   scopeMap(req.Config.Scopes),
+		Language: language,
+	})
+	if err != nil {
+		session.Report(started, decision.Observation{Seam: SeamTypeScope, Err: err.Error()})
+		return ""
+	}
+
+	scopeAllowed := session.AdoptAt(SeamTypeScope, verdict.ScopeConfidence, scopeFloor)
+	pinScope = verdict.PinnedScope(scopeAllowed)
+
+	// The observation records the confidence of the part that was acted on, so a
+	// log line never shows a low confidence next to a high one for one answer.
+	observed := verdict.TypeConfidence
+	if scopeAllowed {
+		observed = verdict.ScopeConfidence
+	}
+	decided := fmt.Sprintf("type=%s scope=%s", orNone(verdict.Type), orNone(verdict.Scope))
+	if scopeAllowed {
+		decided += " (scope pinned)"
+	}
+	s.vlog(req, "jev answered %s: type %.2f scope %.2f", decided, verdict.TypeConfidence, verdict.ScopeConfidence)
+	session.Report(started, decision.Observation{
+		Seam:       SeamTypeScope,
+		Decision:   decided,
+		Confidence: observed,
+		Adopted:    scopeAllowed,
+	})
+	return pinScope
+}
+
+func orNone(value string) string {
+	if value == "" {
+		return "none"
+	}
+	return value
+}
+
+// scopeFloorOf reads the seam's own scope floor. A judge that publishes none is
+// trusted no further than the policy floor.
+func scopeFloorOf(judge commit.TypeScopeJudge) (float64, bool) {
+	scoped, ok := judge.(interface{ ScopeFloor() float64 })
+	if !ok {
+		return 0, false
+	}
+	return scoped.ScopeFloor(), true
+}
+
+// fileChanges renders a diff as the per-file summary the judge reads. The diff
+// body never leaves this function.
+func fileChanges(d *diff.StagedDiff) []commit.FileChange {
+	if d == nil {
+		return nil
+	}
+	evidence := diffEvidence(d)
+	out := make([]commit.FileChange, 0, len(d.Files))
+	for _, file := range d.Files {
+		change := commit.FileChange{Path: file}
+		if ev := evidence[file]; ev != nil {
+			change.Adds, change.Dels = ev.adds, ev.dels
+		}
+		out = append(out, change)
+	}
+	return out
+}
+
+// plan produces the commit grouping. The System One decider answers it when the
+// layer is on and confident; every other case, including a shadow run, keeps the
+// planner's grouping. A shadow run records both so the difference is measurable
+// before the decider is trusted.
+func (s *CommitService) plan(ctx context.Context, req CommitRequest, staged, unstaged *diff.StagedDiff, allowed map[string]bool, renamed []diff.Rename) (*commit.CommitPlan, error) {
+	session := s.decisions.Begin()
+	judged, shadow := s.judgeGrouping(ctx, session, req, staged, unstaged)
+
+	if judged != nil {
+		// The detected renames still travel with the plan: a rename pair belongs
+		// in one commit whatever the judgment decided.
+		s.normalizePlan(judged, allowed, renamed, req)
+		return judged, nil
+	}
+
+	plan, err := s.runPlan(ctx, req, commit.PlanRequest{StagedDiff: staged, UnstagedDiff: unstaged, Intent: req.Intent, Config: req.Config, MaxPlanFiles: req.MaxPlanFiles})
+	if err != nil {
+		return nil, err
+	}
+	if shadow != nil {
+		shadow.compare(planGroups(plan))
+		session.Report(shadow.started, shadow.Observation)
+	}
+	return plan, nil
+}
+
+// judgeGrouping asks the decider which candidate buckets belong together. It
+// returns the plan when the answer may decide, and otherwise the shadow
+// observation to record against the planner's own grouping.
+//
+// The buckets are built from every changed file, not from the staged set alone,
+// because a grouping covers staged and unstaged work together.
+func (s *CommitService) judgeGrouping(ctx context.Context, session *Session, req CommitRequest, staged, unstaged *diff.StagedDiff) (*commit.CommitPlan, *pendingGrouping) {
+	if s.decider == nil || !session.Take(SeamGrouping) {
+		return nil, nil
+	}
+
+	// The planning step has file lists but no diff body, so the line counts come
+	// from numstat. A failure here costs the judgment its line counts and
+	// nothing else, so it is tolerated.
+	numstat, err := s.git.StagedDiffNumStat(ctx)
+	if err != nil {
+		s.vlog(req, "grouping judgment without line counts: %v", err)
+	}
+	buckets := buildBuckets([]*diff.StagedDiff{staged, unstaged}, numstat, maxCommitGroups)
+	if len(buckets) < 2 {
+		return nil, nil
+	}
+	bucketReq := commit.GroupDecisionRequest{Buckets: buckets, Scopes: scopeMap(req.Config.Scopes)}
+
+	started := time.Now()
+	verdict, err := s.decider.DecideGroups(ctx, bucketReq)
+	if err != nil {
+		session.Report(started, decision.Observation{Seam: SeamGrouping, Err: err.Error()})
+		return nil, nil
+	}
+
+	groups, problems := verdict.DecidedGroups(bucketReq)
+	for _, problem := range problems {
+		s.vlog(req, "grouping decision: %s", problem)
+	}
+	if len(groups) == 0 {
+		// A decision code cannot execute is no decision: keep the planner.
+		session.Report(started, decision.Observation{Seam: SeamGrouping, Err: "decision named no executable group"})
+		return nil, nil
+	}
+
+	signature := groupingSignature(groups)
+	confidence := verdict.Confidence
+	if !session.AdoptAt(SeamGrouping, confidence, groupingFloorOf(s.decider)) {
+		return nil, &pendingGrouping{started: started, Observation: decision.Observation{
+			Seam: SeamGrouping, Decision: signature, Confidence: confidence,
+		}}
+	}
+
+	plan := &commit.CommitPlan{}
+	for _, files := range groups {
+		plan.Groups = append(plan.Groups, commit.CommitGroup{Files: files})
+	}
+	session.Report(started, decision.Observation{
+		Seam: SeamGrouping, Decision: signature, Confidence: confidence, Adopted: true,
+	})
+	s.vlog(req, "jev grouping measured but not adopted: %s", signature)
+	return plan, nil
+}
+
+// groupingFloorOf reads the seam's own floor. A decider that publishes none is
+// trusted no further than the policy floor.
+func groupingFloorOf(decider commit.GroupDecider) float64 {
+	if floored, ok := decider.(interface{ GroupFloor() float64 }); ok {
+		return floored.GroupFloor()
+	}
+	return 0
+}
+
+// pendingGrouping carries a shadowed grouping until the planner's own grouping
+// exists to compare it with.
+type pendingGrouping struct {
+	started     time.Time
+	Observation decision.Observation
+}
+
+func planGroups(plan *commit.CommitPlan) [][]string {
+	var out [][]string
+	for _, g := range plan.Groups {
+		out = append(out, g.Files)
+	}
+	return out
+}
+
+func (p *pendingGrouping) compare(plan [][]string) {
+	baseline := groupingSignature(plan)
+	p.Observation.Baseline = baseline
+	switch {
+	case p.Observation.Decision == "" || baseline == "":
+		p.Observation.Agreement = decision.AgreementNone
+	case p.Observation.Decision == baseline:
+		p.Observation.Agreement = decision.AgreementAgree
+	default:
+		p.Observation.Agreement = decision.AgreementDisagree
+	}
 }
 
 func (s *CommitService) normalizePlan(plan *commit.CommitPlan, allowed map[string]bool, renamed []diff.Rename, req CommitRequest) {
@@ -413,6 +743,12 @@ func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, pla
 	var committed []SingleCommitResult
 	committedFiles := make(map[string]bool)
 	rePlanCount := 0
+	// rewrites bounds how often one group may be drafted again because the hook
+	// rejected its wording. It is keyed by the group's files, because the loop
+	// counter advances on every iteration: a counter key would let the same
+	// group be drafted again without bound.
+	rewrites := map[string]int{}
+	totalRewrites := 0
 	var inheritedFeedback string
 
 	defer func() {
@@ -445,6 +781,23 @@ func (s *CommitService) commitGroups(ctx context.Context, req CommitRequest, pla
 				return nil, &HookBlockedError{LastMessage: attempt.preTrailer, Reason: attempt.hookFeedback}
 			}
 			inheritedFeedback = attempt.hookFeedback
+			switch s.routeHookFailure(ctx, req, group, remaining, attempt) {
+			case commit.FailureGiveUp:
+				return nil, &HookBlockedError{LastMessage: attempt.preTrailer, Reason: attempt.hookFeedback}
+			case commit.FailureRewrite:
+				// The wording is at fault, so the same group is drafted again.
+				// One rewrite per group, and a small total, keep a rejected hook
+				// from looping.
+				key := groupKey(group.Files)
+				if rewrites[key] >= maxHookRewrites || totalRewrites >= maxTotalHookRewrites {
+					s.vlog(req, "hook rewrite budget spent; re-planning instead")
+					break
+				}
+				rewrites[key]++
+				totalRewrites++
+				remaining = append([]commit.CommitGroup{group}, remaining...)
+				continue
+			}
 			rePlanCount++
 			newPlan, err := s.replanAfterHook(ctx, req, group, remaining, allowed, committedFiles, renames)
 			if err != nil {
@@ -548,6 +901,11 @@ func (s *CommitService) generateGroupMessage(ctx context.Context, req CommitRequ
 	hookFeedback := inheritedFeedback
 	var previousMessage string
 	var preTrailer string
+	// A decided prefix stays fixed across retries: the hook rejected the wording
+	// or the grouping, and neither is fixed by changing the type or scope. It is
+	// decided before the first draft, because the first draft is the one the
+	// prefix applies to.
+	pinnedScope := s.decidePrefix(ctx, req, groupDiff)
 	for attempt := 1; attempt <= maxHookRetries; attempt++ {
 		if attempt == 1 {
 			s.out(req, "Drafting message: %d/%d...", groupIdx, totalGroups)
@@ -555,6 +913,7 @@ func (s *CommitService) generateGroupMessage(ctx context.Context, req CommitRequ
 		msg, err := s.gen.Generate(ctx, commit.GenerateRequest{
 			Diff: genDiff, Intent: req.Intent, Config: req.Config,
 			HookFeedback: hookFeedback, PreviousMessage: previousMessage,
+			PinnedScope: pinnedScope,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("generate commit message: %w", err)
