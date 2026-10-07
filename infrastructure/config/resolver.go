@@ -30,6 +30,12 @@ type ProviderConfig struct {
 	APIKey                  string
 	BaseURL                 string
 	Model                   string
+	JevAPIKey               string // TypeSafe key for the optional System One layer; empty disables that layer
+	JevBaseURL              string // empty = typesafe.DefaultBaseURL
+	JevModel                string // empty = typesafe.DefaultModel
+	JevMode                 string // off | shadow | on; empty = decision.DefaultMode
+	JevMinConfidence        float64
+	JevMaxCalls             int
 	SessionModel            string // active agent session model (PI_MODEL, etc.), used only for Co-Authored-By attribution — never for inference routing
 	CloudflareAIGatewayID   string
 	RequestTimeout          time.Duration // 0 = use DefaultRequestTimeout
@@ -40,14 +46,20 @@ type ProviderConfig struct {
 }
 
 type fileConfig struct {
-	APIKey                  string `yaml:"api_key"`
-	BaseURL                 string `yaml:"base_url"`
-	Model                   string `yaml:"model"`
-	CloudflareAIGatewayID   string `yaml:"cloudflare_ai_gateway_id"`
-	RequestTimeout          string `yaml:"request_timeout"`
-	HeartbeatInterval       string `yaml:"heartbeat_interval"`
-	RequireGitAgentCoAuthor bool   `yaml:"require_git_agent_co_author"`
-	RequireModelCoAuthor    bool   `yaml:"require_model_co_author"`
+	APIKey                  string  `yaml:"api_key"`
+	BaseURL                 string  `yaml:"base_url"`
+	Model                   string  `yaml:"model"`
+	JevAPIKey               string  `yaml:"jev_api_key"`
+	JevBaseURL              string  `yaml:"jev_base_url"`
+	JevModel                string  `yaml:"jev_model"`
+	JevMode                 string  `yaml:"jev_mode"`
+	JevMinConfidence        float64 `yaml:"jev_min_confidence"`
+	JevMaxCalls             int     `yaml:"jev_max_calls"`
+	CloudflareAIGatewayID   string  `yaml:"cloudflare_ai_gateway_id"`
+	RequestTimeout          string  `yaml:"request_timeout"`
+	HeartbeatInterval       string  `yaml:"heartbeat_interval"`
+	RequireGitAgentCoAuthor bool    `yaml:"require_git_agent_co_author"`
+	RequireModelCoAuthor    bool    `yaml:"require_model_co_author"`
 }
 
 // Resolve merges config from (highest to lowest priority):
@@ -72,6 +84,10 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 			file.APIKey = os.ExpandEnv(file.APIKey)
 			file.BaseURL = os.ExpandEnv(file.BaseURL)
 			file.Model = os.ExpandEnv(file.Model)
+			file.JevAPIKey = os.ExpandEnv(file.JevAPIKey)
+			file.JevBaseURL = os.ExpandEnv(file.JevBaseURL)
+			file.JevModel = os.ExpandEnv(file.JevModel)
+			file.JevMode = os.ExpandEnv(file.JevMode)
 			file.CloudflareAIGatewayID = os.ExpandEnv(file.CloudflareAIGatewayID)
 		}
 	}
@@ -132,6 +148,17 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.RequireGitAgentCoAuthor = flags.RequireGitAgentCoAuthor || file.RequireGitAgentCoAuthor
 	result.RequireModelCoAuthor = flags.RequireModelCoAuthor || file.RequireModelCoAuthor
 
+	// The System One layer is optional: an empty key leaves it off, and the
+	// CLI then makes every decision with the generative provider as before.
+	// The base URL and model stay empty here so the defaults live in one place,
+	// the TypeSafe client.
+	result.JevAPIKey = firstNonEmpty(flags.JevAPIKey, file.JevAPIKey, os.Getenv("TYPESAFE_API_KEY"))
+	result.JevBaseURL = firstNonEmpty(flags.JevBaseURL, file.JevBaseURL)
+	result.JevModel = firstNonEmpty(flags.JevModel, file.JevModel)
+	result.JevMode = firstNonEmpty(flags.JevMode, file.JevMode)
+	result.JevMinConfidence = firstPositiveFloat(flags.JevMinConfidence, file.JevMinConfidence)
+	result.JevMaxCalls = firstPositiveInt(flags.JevMaxCalls, file.JevMaxCalls)
+
 	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
 
@@ -159,6 +186,39 @@ func getSessionModelEnv() string {
 		}
 	}
 	return ""
+}
+
+// firstNonEmpty returns the first value that holds something other than
+// whitespace.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// firstPositiveFloat applies flag > file > zero, ignoring a non-positive value.
+func firstPositiveFloat(flag, fileValue float64) float64 {
+	if flag > 0 {
+		return flag
+	}
+	if fileValue > 0 {
+		return fileValue
+	}
+	return 0
+}
+
+// firstPositiveInt applies flag > file > zero, ignoring a non-positive value.
+func firstPositiveInt(flag, fileValue int) int {
+	if flag > 0 {
+		return flag
+	}
+	if fileValue > 0 {
+		return fileValue
+	}
+	return 0
 }
 
 // resolveDuration applies the precedence chain flag > file YAML > default,

@@ -55,6 +55,8 @@ func (e *shellHookExecutor) execute(ctx context.Context, hookPath string, input 
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, hookPath)
+	configureHookProcess(cmd)
+	cmd.Cancel = func() error { return cancelHookProcess(cmd) }
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stderr = &stderr
 

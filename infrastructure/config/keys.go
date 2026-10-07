@@ -27,6 +27,12 @@ var KeyRegistry = map[string]KeyDef{
 	"api_key":                     {Name: "api_key", Type: "string", AllowUser: true},
 	"base_url":                    {Name: "base_url", Type: "string", AllowUser: true},
 	"model":                       {Name: "model", Type: "string", AllowUser: true},
+	"jev_api_key":                 {Name: "jev_api_key", Type: "string", AllowUser: true},
+	"jev_base_url":                {Name: "jev_base_url", Type: "string", AllowUser: true},
+	"jev_model":                   {Name: "jev_model", Type: "string", AllowUser: true},
+	"jev_mode":                    {Name: "jev_mode", Type: "string", AllowUser: true},
+	"jev_min_confidence":          {Name: "jev_min_confidence", Type: "float", AllowUser: true},
+	"jev_max_calls":               {Name: "jev_max_calls", Type: "int", AllowUser: true},
 	"cloudflare_ai_gateway_id":    {Name: "cloudflare_ai_gateway_id", Type: "string", AllowUser: true},
 	"request_timeout":             {Name: "request_timeout", Type: "duration", AllowUser: true},
 	"heartbeat_interval":          {Name: "heartbeat_interval", Type: "duration", AllowUser: true},
@@ -46,6 +52,12 @@ var KeyRegistry = map[string]KeyDef{
 var KeyAliases = map[string]string{
 	"api-key":                     "api_key",
 	"base-url":                    "base_url",
+	"jev-api-key":                 "jev_api_key",
+	"jev-base-url":                "jev_base_url",
+	"jev-model":                   "jev_model",
+	"jev-mode":                    "jev_mode",
+	"jev-min-confidence":          "jev_min_confidence",
+	"jev-max-calls":               "jev_max_calls",
 	"cloudflare-ai-gateway-id":    "cloudflare_ai_gateway_id",
 	"request-timeout":             "request_timeout",
 	"heartbeat-interval":          "heartbeat_interval",
@@ -67,6 +79,9 @@ func coerceForWrite(key, value string) any {
 	case "int":
 		n, _ := strconv.Atoi(value)
 		return n
+	case "float":
+		f, _ := strconv.ParseFloat(value, 64)
+		return f
 	case "stringslice":
 		parts := strings.Split(value, ",")
 		var trimmed []string

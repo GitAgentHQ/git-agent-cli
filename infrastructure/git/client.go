@@ -185,7 +185,11 @@ var skipDirs = map[string]bool{
 }
 
 func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
-	entries, err := os.ReadDir(".")
+	root, err := c.RepoRoot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +205,7 @@ func (c *Client) TopLevelDirs(ctx context.Context) ([]string, error) {
 
 func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
 	// Try git ls-files first (works for repos with commits).
-	out, err := gitCmd(ctx, "ls-files").Output()
+	out, err := gitCmd(ctx, "ls-files", "--full-name").Output()
 	if err == nil {
 		files := splitNonEmpty(string(out))
 		if len(files) > 0 {
@@ -210,8 +214,12 @@ func (c *Client) ProjectFiles(ctx context.Context) ([]string, error) {
 	}
 
 	// Fallback: filesystem walk (for zero-commit repos).
+	root, rootErr := c.RepoRoot(ctx)
+	if rootErr != nil {
+		return nil, rootErr
+	}
 	var files []string
-	if walkErr := walkFiles(".", &files); walkErr != nil {
+	if walkErr := walkFiles(root, &files); walkErr != nil {
 		return nil, walkErr
 	}
 	return capFiles(files), nil
@@ -229,7 +237,11 @@ func walkFiles(root string, files *[]string) error {
 			}
 			return nil
 		}
-		*files = append(*files, path)
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		*files = append(*files, filepath.ToSlash(rel))
 		return nil
 	})
 }
