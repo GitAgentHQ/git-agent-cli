@@ -564,7 +564,10 @@ func TestAutonomousRoot_AutoInitScopeAndGitignore(t *testing.T) {
 		} else if strings.Contains(bodyStr, "Derive commit scopes") {
 			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
 		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
-			respContent = `{"groups":[{"files":["main.go"],"message":{"title":"feat(cli): initial commit"}}]}`
+			// The run commits whatever the index holds first, so the files the
+			// planner is asked about depend on what the flow had left. Answer
+			// with the files the prompt listed rather than a fixed path.
+			respContent = planFromPrompt(bodyStr)
 		} else {
 			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
 		}
@@ -631,7 +634,10 @@ func TestCommitCmd_SkippedAutoInitOnDisk(t *testing.T) {
 		} else if strings.Contains(bodyStr, "Derive commit scopes") {
 			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
 		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
-			respContent = `{"groups":[{"files":["main.go"],"message":{"title":"feat(cli): initial commit"}}]}`
+			// The run commits whatever the index holds first, so the files the
+			// planner is asked about depend on what the flow had left. Answer
+			// with the files the prompt listed rather than a fixed path.
+			respContent = planFromPrompt(bodyStr)
 		} else {
 			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
 		}
