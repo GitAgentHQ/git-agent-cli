@@ -90,6 +90,43 @@ func TestConfigSet_DefaultScopeForProviderKey(t *testing.T) {
 	}
 }
 
+func TestConfigSet_Hook_UserScopeStoresPathAbsoluteToSetupDirectory(t *testing.T) {
+	repo := newGitRepo(t)
+	shared := filepath.Join(filepath.Dir(repo), "shared")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatalf("create shared hook directory: %v", err)
+	}
+	hook := filepath.Join(shared, "pre-commit.sh")
+	writeFile(t, hook, "#!/bin/sh\nexit 0\n")
+	xdgDir := t.TempDir()
+	relativeHook := filepath.Join("..", "shared", "pre-commit.sh")
+
+	out, code := gitAgentEnv(t, repo, []string{"XDG_CONFIG_HOME=" + xdgDir},
+		"config", "set", "hook", relativeHook, "--user")
+	if code != 0 {
+		t.Fatalf("config set user hook: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(xdgDir, "git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("read user config: %v", err)
+	}
+	stored := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			stored = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		}
+	}
+	want, _ := filepath.EvalSymlinks(hook)
+	got, _ := filepath.EvalSymlinks(stored)
+	if stored == "" || !filepath.IsAbs(stored) || got != want {
+		t.Fatalf("user hook should be stored as setup-time absolute path %q, got:\n%s", want, data)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git-agent", "hooks", "pre-commit")); !os.IsNotExist(err) {
+		t.Fatalf("user hook must not install a repository-local copy, stat error: %v", err)
+	}
+}
+
 func TestConfigSet_CloudflareAIGatewayIDDefaultsToUserScope(t *testing.T) {
 	dir := newGitRepo(t)
 	xdgDir := t.TempDir()
