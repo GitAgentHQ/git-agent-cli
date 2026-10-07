@@ -1,9 +1,0 @@
-In the worktree /Users/FradSer/Developer/FradSer/git-agent/git-agent-hunks on branch feat/hunk-staging, the three gaps that remain after the logic fixes are closed:
-
-1. The two split settings get their defaults from a measurement instead of an assertion. A model-free harness measures, against this repository's own history, how often the splitter's region partition matches the way consecutive human commits partition the same change to the same file, for a grid of `split_hunks_gap` and `split_hunks_min_lines` values. The harness reports the agreement per setting and names the best setting. The shipped defaults are set to what the measurement supports, and the README and the decision note in .memory/ state the measured numbers. The harness never touches the repository it reads and needs no API key, so it runs in the normal test suite.
-
-2. A dry run with hunk staging on previews what a real run would do, and leaves the index as it found it. Today `startHunkRun` returns nil for DryRun, so the preview shows whole-file commits while a real run would commit regions, and a successful dry run leaves the last group's files staged. With the setting on, a dry run reads the snapshot, splits the plan, stages each group as a real run would so the per-group diff it shows is real, and restores the recorded index tree before returning.
-
-3. A setting that cannot take effect is reported. `split_hunks` with `--no-stage` is a silent no-op today, and `--amend` ignores it. Both are stated on the always-visible output stream or in the docs, whichever the flag's semantics call for, so a user never asks for hunk staging and silently gets neither a split nor a reason.
-
-The off path stays untouched: with split_hunks unset, every existing behavior, prompt, exit code, index state, and JSON field is byte-identical to develop.
