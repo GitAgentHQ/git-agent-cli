@@ -72,6 +72,10 @@ type mockCommitGitClient struct {
 	// invocations.
 	stagedDiffNumStat      func(ctx context.Context) (string, error)
 	stagedDiffNumStatCalls int
+	// indexTree is what a run records before a dry run, and restoredTrees records
+	// the trees a dry run gave back.
+	indexTree     string
+	restoredTrees []string
 }
 
 func (m *mockCommitGitClient) StagedDiff(_ context.Context) (*diff.StagedDiff, error) {
@@ -129,6 +133,18 @@ func (m *mockCommitGitClient) UnstageAll(_ context.Context) error {
 func (m *mockCommitGitClient) StageFiles(_ context.Context, files []string) error {
 	m.stageFilesCalls++
 	m.stagedFiles = append(m.stagedFiles, files)
+	return nil
+}
+
+func (m *mockCommitGitClient) IndexTree(_ context.Context) (string, bool, error) {
+	if m.indexTree == "" {
+		return "", false, nil
+	}
+	return m.indexTree, true, nil
+}
+
+func (m *mockCommitGitClient) RestoreIndexTree(_ context.Context, tree string) error {
+	m.restoredTrees = append(m.restoredTrees, tree)
 	return nil
 }
 
@@ -438,8 +454,20 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Commits) != 2 {
-		t.Errorf("expected 2 commits, got %d", len(result.Commits))
+	// The index content is committed as it stands and first, so the run makes one
+	// more commit than the plan has groups, and the planner works from the
+	// remainder alone.
+	if len(result.Commits) != 3 {
+		t.Errorf("expected the staged commit plus the plan's 2 groups, got %d", len(result.Commits))
+	}
+	if got := result.Commits[0].Files; len(got) != 1 || got[0] != "main.go" {
+		t.Errorf("the first commit must be exactly the staged content, got %v", got)
+	}
+	if planner.lastReq == nil {
+		t.Fatal("planner was not invoked for the remainder")
+	}
+	if got := planner.lastReq.StagedDiff.Files; len(got) != 0 {
+		t.Errorf("the planner must see no staged files, because the index is empty by then, got %v", got)
 	}
 }
 
@@ -464,32 +492,39 @@ func TestCommitService_AllChangedFiles_PropagatesError(t *testing.T) {
 	}
 }
 
-func TestCommitService_AllPreStaged_UnstagedEmpty(t *testing.T) {
+// TestCommitService_AllPreStaged_CommitsTheIndexOnly covers a run whose whole
+// change is already staged: it commits exactly that content and never plans,
+// because nothing is left for the file-level flow to group.
+func TestCommitService_AllPreStaged_CommitsTheIndexOnly(t *testing.T) {
 	gen := &mockCommitGenerator{msg: defaultMsg()}
 	preStaged := &diff.StagedDiff{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}
 	git := &mockCommitGitClient{
-		stagedDiffSeq: []*diff.StagedDiff{
-			preStaged, // pre-staged check: user has both files staged
-			{Files: []string{"a.go", "b.go"}, Content: "+a+b", Lines: 2}, // group execution
-		},
-		allChangedFiles: []string{"a.go", "b.go"},
+		stagedDiffSeq: []*diff.StagedDiff{preStaged},
+		// After the staged content is committed the working tree holds nothing
+		// new, which is what a real repository reports.
+		unstagedDiff:    &diff.StagedDiff{},
+		allChangedFiles: []string{},
 	}
 	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"a.go", "b.go"})}
 	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
 
 	req := application.CommitRequest{Config: &project.Config{}}
-	if _, err := svc.Commit(context.Background(), req); err != nil {
+	result, err := svc.Commit(context.Background(), req)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if planner.lastReq == nil {
-		t.Fatal("planner was not invoked")
+	if len(result.Commits) != 1 {
+		t.Fatalf("expected the one staged commit, got %d", len(result.Commits))
 	}
-	if got := planner.lastReq.StagedDiff.Files; len(got) != 2 {
-		t.Errorf("expected 2 staged files passed to planner, got %v", got)
+	if got := result.Commits[0].Files; len(got) != 2 {
+		t.Errorf("the commit must be exactly the staged content, got %v", got)
 	}
-	if got := planner.lastReq.UnstagedDiff.Files; len(got) != 0 {
-		t.Errorf("expected unstaged file list to be empty when all files are pre-staged, got %v", got)
+	if planner.lastReq != nil {
+		t.Errorf("nothing is left to plan, but the planner was called")
+	}
+	if !git.commitCalled {
+		t.Errorf("the staged content must be committed")
 	}
 }
 
@@ -522,13 +557,15 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	if planner.lastReq == nil {
 		t.Fatal("planner was not invoked")
 	}
+	// The index content is committed first, so the planner works from the
+	// remainder alone and never sees a staged file.
 	stagedFiles := planner.lastReq.StagedDiff.Files
-	if len(stagedFiles) != 1 || stagedFiles[0] != "a.go" {
-		t.Errorf("expected planner staged=[a.go], got %v", stagedFiles)
+	if len(stagedFiles) != 0 {
+		t.Errorf("expected planner staged to be empty, got %v", stagedFiles)
 	}
 	unstagedFiles := planner.lastReq.UnstagedDiff.Files
-	if len(unstagedFiles) != 2 {
-		t.Errorf("expected planner unstaged to contain both b.go and new.go, got %v", unstagedFiles)
+	if len(unstagedFiles) != 3 {
+		t.Errorf("expected planner unstaged to hold every changed path, got %v", unstagedFiles)
 	}
 	seen := map[string]bool{}
 	for _, f := range unstagedFiles {
@@ -537,8 +574,11 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	if !seen["b.go"] || !seen["new.go"] {
 		t.Errorf("expected unstaged to include b.go and new.go, got %v", unstagedFiles)
 	}
-	if len(result.Commits) != 2 {
-		t.Errorf("expected 2 commits, got %d", len(result.Commits))
+	if len(result.Commits) != 3 {
+		t.Errorf("expected the staged commit plus the plan's 2 groups, got %d", len(result.Commits))
+	}
+	if got := result.Commits[0].Files; len(got) != 1 || got[0] != "a.go" {
+		t.Errorf("the first commit must be exactly the staged content, got %v", got)
 	}
 }
 

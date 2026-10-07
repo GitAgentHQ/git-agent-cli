@@ -209,6 +209,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Verbose:      verbose,
 		LogWriter:    logWriter,
 		OutWriter:    outWriter,
+		// Warnings go to stderr whether or not a terminal is attached, so a
+		// scripted run also reads them.
+		WarnWriter: cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return renderCommitFailure(cmd, err)

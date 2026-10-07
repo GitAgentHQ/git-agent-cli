@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Commit the change a user staged exactly as staged and first, instead of unstaging the path and re-adding it whole, which swallowed the working tree regions the user had not staged and left `--no-stage` committing more than its help promises (cli)
+
+### Added
+- Report on standard error when a file the run is about to commit holds two or more regions, naming them and `git add -p`, so the user can split it without git-agent inventing a boundary (cli)
+
 ### Added
 - Add an optional System One (Jev) layer that owns the decisions git-agent can pose as closed questions: scope assignment, technology detection, commit grouping, and hook-rejection routing, while the text model keeps writing messages and descriptions; every judgment reads a structured summary and never the diff body (cli)
 - Add `shadow`, `on`, and `off` modes with a per-run call budget and a confidence floor, so an unmeasured judgment runs and records without replacing working behavior (cli)
