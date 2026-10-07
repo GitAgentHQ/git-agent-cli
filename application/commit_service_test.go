@@ -24,10 +24,13 @@ type mockCommitGenerator struct {
 	msg     *commit.CommitMessage
 	err     error
 	lastReq *commit.GenerateRequest
+	// reqs records every request in order, so a test can inspect the first one.
+	reqs []commit.GenerateRequest
 }
 
 func (m *mockCommitGenerator) Generate(_ context.Context, req commit.GenerateRequest) (*commit.CommitMessage, error) {
 	m.lastReq = &req
+	m.reqs = append(m.reqs, req)
 	return m.msg, m.err
 }
 
@@ -454,11 +457,11 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The index content is committed as it stands and first, so the run makes one
-	// more commit than the plan has groups, and the planner works from the
-	// remainder alone.
-	if len(result.Commits) != 3 {
-		t.Errorf("expected the staged commit plus the plan's 2 groups, got %d", len(result.Commits))
+	// The index content is committed as it stands and first. The path it covers is
+	// then excluded from the remainder, so the planner is asked only about what is
+	// left, and the run makes the staged commit plus the groups that survive.
+	if len(result.Commits) != 2 {
+		t.Errorf("expected the staged commit plus one remainder group, got %d", len(result.Commits))
 	}
 	if got := result.Commits[0].Files; len(got) != 1 || got[0] != "main.go" {
 		t.Errorf("the first commit must be exactly the staged content, got %v", got)
@@ -468,6 +471,11 @@ func TestCommitService_MultiCommit_StagedAndUnstaged(t *testing.T) {
 	}
 	if got := planner.lastReq.StagedDiff.Files; len(got) != 0 {
 		t.Errorf("the planner must see no staged files, because the index is empty by then, got %v", got)
+	}
+	for _, file := range planner.lastReq.UnstagedDiff.Files {
+		if file == "main.go" {
+			t.Errorf("the planner must not be asked again about the path the index already committed, got %v", planner.lastReq.UnstagedDiff.Files)
+		}
 	}
 }
 
@@ -563,9 +571,15 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	if len(stagedFiles) != 0 {
 		t.Errorf("expected planner staged to be empty, got %v", stagedFiles)
 	}
+	// The path the index already covers is not handed to the planner again.
 	unstagedFiles := planner.lastReq.UnstagedDiff.Files
-	if len(unstagedFiles) != 3 {
-		t.Errorf("expected planner unstaged to hold every changed path, got %v", unstagedFiles)
+	if len(unstagedFiles) != 2 {
+		t.Errorf("expected planner unstaged to hold the remainder alone, got %v", unstagedFiles)
+	}
+	for _, file := range unstagedFiles {
+		if file == "a.go" {
+			t.Errorf("the planner must not be asked again about the staged path, got %v", unstagedFiles)
+		}
 	}
 	seen := map[string]bool{}
 	for _, f := range unstagedFiles {
@@ -574,8 +588,8 @@ func TestCommitService_StagedUnstagedAndUntracked(t *testing.T) {
 	if !seen["b.go"] || !seen["new.go"] {
 		t.Errorf("expected unstaged to include b.go and new.go, got %v", unstagedFiles)
 	}
-	if len(result.Commits) != 3 {
-		t.Errorf("expected the staged commit plus the plan's 2 groups, got %d", len(result.Commits))
+	if len(result.Commits) != 2 {
+		t.Errorf("expected the staged commit plus one remainder group, got %d", len(result.Commits))
 	}
 	if got := result.Commits[0].Files; len(got) != 1 || got[0] != "a.go" {
 		t.Errorf("the first commit must be exactly the staged content, got %v", got)
@@ -1491,5 +1505,43 @@ func TestCommitService_AutoScope_InMemoryOnly(t *testing.T) {
 	// Verify scopes were set in memory on req.Config
 	if len(req.Config.Scopes) != 2 {
 		t.Errorf("expected 2 in-memory scopes on req.Config, got %d", len(req.Config.Scopes))
+	}
+}
+
+// TestCommitService_AutoScope_PrecedesTheStagedCommit covers the first commit of a
+// run whose project configures no scopes: the run generates them, and that commit's
+// message must be written from them, so scope resolution happens before any commit
+// rather than after the first one.
+func TestCommitService_AutoScope_PrecedesTheStagedCommit(t *testing.T) {
+	tmpDir := t.TempDir()
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		repoRoot:        tmpDir,
+		stagedDiff:      &diff.StagedDiff{Files: []string{"main.go"}, Content: "diff --git a/main.go b/main.go\n+func main(){}\n"},
+		unstagedDiff:    &diff.StagedDiff{},
+		allChangedFiles: []string{"main.go"},
+	}
+	planner := &mockCommitPlanner{plan: singleGroupPlan([]string{"main.go"})}
+	llm := &mockLLMClient{scopes: []project.Scope{{Name: "cli"}, {Name: "app"}}}
+	mockGit := &mockGitReader{commits: []string{"feat: init"}, dirs: []string{"cmd", "application"}, isGitRepo: true}
+	scopeSvc := application.NewScopeService(llm, mockGit, nil, nil)
+	svc := application.NewCommitService(gen, planner, git, noopHook(), scopeSvc, nil, nil, nil)
+
+	result, err := svc.Commit(context.Background(), application.CommitRequest{Config: &project.Config{}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Commits) != 1 {
+		t.Fatalf("the whole change is staged, so the run makes one commit, got %d", len(result.Commits))
+	}
+	if len(gen.reqs) == 0 {
+		t.Fatal("no message was generated")
+	}
+	first := gen.reqs[0]
+	if len(first.Config.Scopes) != 2 {
+		t.Fatalf("the staged commit must be written with the scopes the run generated, got %v", first.Config.Scopes)
+	}
+	if plan := planner.lastReq; plan != nil {
+		t.Errorf("nothing is left to plan, but the planner was called")
 	}
 }

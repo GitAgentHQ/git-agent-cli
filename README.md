@@ -305,6 +305,8 @@ leaves the CLI exactly as it was.
 
 When the index already holds changes, `git-agent` commits exactly that content as the first commit, from the diff the index holds. Nothing is unstaged and nothing is re-added, so a file the user staged with `git add -p` keeps its boundary: the region they staged is what the commit carries, and the rest of the working tree follows in later commits. `--no-stage` commits the index and nothing else, which is what its help says.
 
+When the index holds a complete file change, the commits are the same ones this run made before: the staged file forms its own commit and the other changes are grouped as usual. When the staged content is only part of a file's change, that file is committed in two parts, first what was staged and then the rest, because the region the user left alone must not ride along.
+
 When a file the run is about to commit as a whole holds two or more regions, the run says so on standard error, names the regions, and points at `git add -p <file>`. It reports; it never splits on its own. Where a commit boundary belongs is the user's judgment, and the index is how they express it.
 
 ## Project config (`.git-agent/config.yml`)

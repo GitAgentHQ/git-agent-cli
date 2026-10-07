@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Commit the change a user staged exactly as staged and first, instead of unstaging the path and re-adding it whole, which swallowed the working tree regions the user had not staged and left `--no-stage` committing more than its help promises (cli)
+- Commit the change a user staged exactly as staged and first, instead of unstaging the path and re-adding it whole, which swallowed the working tree regions the user had not staged and left `--no-stage` committing more than its help promises. A path whose staged content is only part of its change is now committed in two parts, first what was staged and then the rest; a path staged whole commits as before (cli)
 
 ### Added
 - Report on standard error when a file the run is about to commit holds two or more regions, naming them and `git add -p`, so the user can split it without git-agent inventing a boundary (cli)

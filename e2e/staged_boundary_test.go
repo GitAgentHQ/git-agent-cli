@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -238,5 +239,63 @@ func runCommit(t *testing.T, dir string, server *httptest.Server, want int, args
 	out, code := gitAgent(t, dir, full...)
 	if code != want {
 		t.Fatalf("git-agent commit exited %d, want %d:\n%s", code, want, out)
+	}
+}
+
+// TestCommitCmd_StagedBoundary_DryRunPreviewsAFullyStagedPathOnce covers a run whose
+// whole change is already in the index: the preview must report the one commit a
+// real run makes, not that commit twice. The index is left alone by the run, so the
+// file-level flow must not be handed a path the staged commit already covers.
+func TestCommitCmd_StagedBoundary_DryRunPreviewsAFullyStagedPathOnce(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir, _ := stagedBoundaryRepo(t)
+	writeFile(t, filepath.Join(dir, "app.go"),
+		strings.Replace(stagedBoundarySource, `return "beta"`, `return "BETA"`, 1))
+	runGit(t, dir, "add", "app.go")
+
+	before := gitOutput(t, dir, "diff", "--cached")
+	commitsBefore := len(commitSubjects(t, dir))
+
+	stdout, stderr, code := gitAgentSeparated(t, dir, "commit",
+		"--api-key", "test-key", "--base-url", server.URL, "--model", "test-model",
+		"--dry-run", "-o", "json")
+	if code != 0 {
+		t.Fatalf("dry run exited %d:\n%s", code, stderr)
+	}
+	var preview struct {
+		Commits []struct {
+			Title string   `json:"title"`
+			Files []string `json:"files"`
+		} `json:"commits"`
+		DryRun bool `json:"dry_run"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &preview); err != nil {
+		t.Fatalf("dry run did not print the envelope: %v\n%s", err, stdout)
+	}
+	if !preview.DryRun {
+		t.Fatalf("the envelope must report a dry run:\n%s", stdout)
+	}
+	if len(preview.Commits) != 1 {
+		t.Fatalf("the preview must report the one commit a real run makes, got %d: %s", len(preview.Commits), stdout)
+	}
+	if got := preview.Commits[0].Files; len(got) != 1 || got[0] != "app.go" {
+		t.Fatalf("the previewed commit must be the staged content of app.go, got %v", got)
+	}
+	if after := gitOutput(t, dir, "diff", "--cached"); after != before {
+		t.Fatalf("the dry run must give the index back unchanged:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if got := len(commitSubjects(t, dir)); got != commitsBefore {
+		t.Fatalf("a dry run must create nothing: %d commits before, %d after", commitsBefore, got)
+	}
+
+	// The real run then makes exactly the one commit the preview reported.
+	runCommit(t, dir, server, 0)
+	if got := len(commitSubjects(t, dir)) - commitsBefore; got != 1 {
+		t.Fatalf("the real run must make the one previewed commit, got %d", got)
+	}
+	if status := gitOutput(t, dir, "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("the change must be committed:\n%s", status)
 	}
 }

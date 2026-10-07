@@ -1,0 +1,7 @@
+On branch fix/staged-boundary in /Users/FradSer/Developer/FradSer/git-agent/git-agent-cli, the staged-boundary fix is complete: every remaining defect and inaccurate claim is resolved, with no region inference anywhere.
+
+1. A dry run whose index holds a complete file change previews exactly one commit for that path, not two. Reproduced today: with the whole of app.go staged and nothing loose, `--dry-run -o json` reported two identical commits for app.go. The remainder must exclude a path whose only difference from HEAD is the index, and must still include a path whose staged content is only part of its change.
+2. Auto-generated scopes exist before the staged commit's message is generated, so the first commit of a run that has no configured scopes is written with the scopes the run generated, as it was before this fix.
+3. The common case is pinned against develop: when the index holds complete file changes and other files are loose, a differential test with a prompt-respecting planner stub shows equal commit count, subjects and JSON envelope between the develop binary and this branch, so the earlier claim that such a run always gains a commit is corrected or confirmed by measurement rather than assertion.
+4. The behaviour difference is stated precisely in the docs: a path whose staged content is only part of its change is committed in two parts, first what was staged and then the rest.
+5. gofmt is clean, make build succeeds, and make test passes with no FAIL line.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -320,4 +321,155 @@ func TestCommitCmd_StagedBoundary_DryRunPreviewsAndRestores(t *testing.T) {
 	if status := gitOutput(t, dir, "status", "--porcelain"); strings.TrimSpace(status) != "" {
 		t.Fatalf("every change must be committed:\n%s", status)
 	}
+}
+
+// planRespectingStub answers the planner the way the prompt asks: the staged files
+// form the first group and the unstaged files the next, and each message names the
+// file its own diff covers. It exists so a comparison between two builds measures
+// the flow rather than a stub that groups everything into one commit.
+type planRespectingStub struct {
+	server *httptest.Server
+	mu     sync.Mutex
+	bodies []string
+}
+
+func newPlanRespectingStub(t *testing.T) *planRespectingStub {
+	t.Helper()
+	stub := &planRespectingStub{}
+	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		stub.mu.Lock()
+		stub.bodies = append(stub.bodies, body)
+		stub.mu.Unlock()
+
+		var content string
+		if strings.Contains(body, "meaningful atomic commits") {
+			staged, unstaged := promptSections(body)
+			var groups []string
+			for _, files := range [][]string{staged, unstaged} {
+				if len(files) == 0 {
+					continue
+				}
+				quoted, _ := json.Marshal(files)
+				groups = append(groups, fmt.Sprintf(`{"files":%s,"title":"feat(cli): group","bullets":["Group the files"],"explanation":"Groups the files."}`, quoted))
+			}
+			content = fmt.Sprintf(`{"groups":[%s]}`, strings.Join(groups, ","))
+		} else {
+			content = fmt.Sprintf(`{"title":"feat(cli): change %s","bullets":["Change it"],"explanation":"Changes it."}`, diffFile(body))
+		}
+		payload, _ := json.Marshal(content)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%s}}]}`, payload)
+	}))
+	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+// promptSections reads the staged and unstaged file lists the prompt printed. The
+// request body is JSON, so the prompt's newlines arrive escaped.
+func promptSections(body string) (staged, unstaged []string) {
+	mode := ""
+	for _, line := range strings.Split(body, `\n`) {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "Staged files"):
+			mode = "staged"
+			continue
+		case strings.HasPrefix(trimmed, "Unstaged files"):
+			mode = "unstaged"
+			continue
+		case trimmed == "":
+			mode = ""
+			continue
+		}
+		if !strings.Contains(trimmed, ".") {
+			continue
+		}
+		switch mode {
+		case "staged":
+			staged = append(staged, trimmed)
+		case "unstaged":
+			unstaged = append(unstaged, trimmed)
+		}
+	}
+	return staged, unstaged
+}
+
+// diffFile names the file a diff describes, which is what makes two runs' commit
+// messages comparable.
+func diffFile(body string) string {
+	match := regexp.MustCompile(`\+\+\+ b/([A-Za-z0-9_./-]+)`).FindStringSubmatch(body)
+	if len(match) < 2 {
+		return "unknown"
+	}
+	return match[1]
+}
+
+// TestCommitCmd_StagedBoundary_WholeFileStagedMatchesDevelop is the case that
+// earlier looked like it always gains a commit: the index holds a complete file
+// change and other files are loose. With a planner that groups what the prompt
+// asked, both builds must make the same commits.
+func TestCommitCmd_StagedBoundary_WholeFileStagedMatchesDevelop(t *testing.T) {
+	develop := developBinary(t)
+
+	fixture := func(t *testing.T) (*planRespectingStub, string) {
+		t.Helper()
+		stub := newPlanRespectingStub(t)
+		dir := newGitRepo(t)
+		writeFile(t, filepath.Join(dir, "a.go"), "package a\n\nfunc A() string {\n\treturn \"a\"\n}\n")
+		writeFile(t, filepath.Join(dir, "b.go"), "package b\n\nfunc B() string {\n\treturn \"b\"\n}\n")
+		writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+			"scopes:\n  - name: cli\n    description: CLI changes\nhook:\n  - empty\n")
+		runGit(t, dir, "add", "-A")
+		runGit(t, dir, "commit", "-m", "chore(cli): add fixture")
+		writeFile(t, filepath.Join(dir, "a.go"), "package a\n\nfunc A() string {\n\treturn \"A\"\n}\n")
+		writeFile(t, filepath.Join(dir, "b.go"), "package b\n\nfunc B() string {\n\treturn \"B\"\n}\n")
+		runGit(t, dir, "add", "a.go") // the whole of a.go is staged; b.go is loose
+		return stub, dir
+	}
+
+	args := func(stub *planRespectingStub) []string {
+		return []string{"commit", "--api-key", "test-key", "--base-url", stub.server.URL,
+			"--model", "test-model", "-o", "json"}
+	}
+
+	developStub, developDir := fixture(t)
+	developOut, developErr, developCode := runBinary(t, develop, developDir, args(developStub)...)
+
+	branchStub, branchDir := fixture(t)
+	branchOut, branchErr, branchCode := runBinary(t, agentBin, branchDir, args(branchStub)...)
+
+	if developCode != branchCode {
+		t.Fatalf("exit codes differ: develop %d, branch %d\n%s\n%s", developCode, branchCode, developErr, branchErr)
+	}
+	developSubjects, branchSubjects := commitSubjects(t, developDir), commitSubjects(t, branchDir)
+	if strings.Join(developSubjects, "|") != strings.Join(branchSubjects, "|") {
+		t.Fatalf("commit subjects differ:\ndevelop %v\nbranch  %v", developSubjects, branchSubjects)
+	}
+	normalize := func(raw string) string {
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+			t.Fatalf("stdout is not the JSON envelope: %v\n%s", err, raw)
+		}
+		if commits, ok := envelope["commits"].([]any); ok {
+			for _, entry := range commits {
+				if commit, ok := entry.(map[string]any); ok {
+					if _, ok := commit["sha"]; ok {
+						commit["sha"] = "X"
+					}
+				}
+			}
+		}
+		if _, ok := envelope["final_sha"]; ok {
+			envelope["final_sha"] = "X"
+		}
+		out, _ := json.Marshal(envelope)
+		return string(out)
+	}
+	if normalize(developOut) != normalize(branchOut) {
+		t.Fatalf("the JSON envelope differs:\ndevelop %s\nbranch  %s", normalize(developOut), normalize(branchOut))
+	}
+	t.Logf("whole-file staged: develop and branch both made %d commit(s): %v", len(developSubjects), developSubjects)
+	t.Logf("requests: develop %d, branch %d", len(developStub.bodies), len(branchStub.bodies))
 }

@@ -81,9 +81,15 @@ func (s *CommitService) commitStagedContent(ctx context.Context, req CommitReque
 //
 // The first part is what makes a partly staged file work. The working tree still
 // holds the region the user did not stage, and measuring it against the index
-// reports exactly that region and nothing the user already staged. A dry run needs
-// the same measurement, because it leaves the index alone.
-func (s *CommitService) remainderDiff(ctx context.Context) (*diff.StagedDiff, error) {
+// reports exactly that region and nothing the user already staged.
+//
+// A path whose only difference from HEAD is the index is excluded, because the
+// staged commit already accounts for it. In a real run those paths are committed
+// by then and never appear here. In a dry run the index is left alone, and without
+// this the preview would report the staged path twice: once as the staged commit
+// and once as a file the file-level flow would stage whole. stagedPaths carries
+// what the index held, so the exclusion holds on both paths.
+func (s *CommitService) remainderDiff(ctx context.Context, stagedPaths []string) (*diff.StagedDiff, error) {
 	remainder, err := s.git.UnstagedDiff(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unstaged diff: %w", err)
@@ -92,15 +98,20 @@ func (s *CommitService) remainderDiff(ctx context.Context) (*diff.StagedDiff, er
 	if err != nil {
 		return nil, fmt.Errorf("listing changed files: %w", err)
 	}
-	seen := make(map[string]bool, len(remainder.Files))
+	handled := make(map[string]bool, len(stagedPaths))
+	for _, file := range stagedPaths {
+		handled[file] = true
+	}
+	seen := make(map[string]bool, len(remainder.Files)+len(all))
 	for _, file := range remainder.Files {
 		seen[file] = true
 	}
 	for _, file := range all {
-		if !seen[file] {
-			seen[file] = true
-			remainder.Files = append(remainder.Files, file)
+		if seen[file] || handled[file] {
+			continue
 		}
+		seen[file] = true
+		remainder.Files = append(remainder.Files, file)
 	}
 	return remainder, nil
 }

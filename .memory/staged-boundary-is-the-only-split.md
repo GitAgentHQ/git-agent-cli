@@ -18,7 +18,11 @@ what the user expressed with `git add -p` and made `--no-stage` commit the whole
 file. Reproduced with the develop binary: one region staged by hand, and the
 commit carried the loose region too.
 
-**How to apply**: keep the split user-driven. A file whose change covers two or
+**How to apply**: keep the split user-driven. A path whose only difference from
+HEAD is the index is excluded from the remainder, so a fully staged path is never
+handed to the file-level flow twice: a run whose index holds complete file changes
+makes the commits it made before this fix, and only a path staged in part is
+committed in two parts. A file whose change covers two or
 more anchored regions is reported on `WarnWriter` (wired to stderr with or
 without a terminal), naming the regions and `git add -p`. Never infer a boundary,
 never rebuild content, and never call `StageFiles` for a path the index already

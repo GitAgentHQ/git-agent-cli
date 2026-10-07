@@ -281,6 +281,13 @@ func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (
 	restoreIndex := s.recordIndexForDryRun(ctx, req)
 	defer restoreIndex()
 
+	// Scopes are resolved before the first commit, because that commit's message is
+	// written from them: a run with no configured scopes generates them, and the
+	// staged commit would otherwise be the one commit written without a scope.
+	if err := s.ensureScopes(ctx, req); err != nil {
+		return nil, err
+	}
+
 	stagedFirst, err := s.commitStagedContent(ctx, req)
 	if err != nil {
 		return nil, err
@@ -299,7 +306,7 @@ func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (
 		return &CommitResult{Commits: []SingleCommitResult{*stagedFirst}, DryRun: req.DryRun}, nil
 	}
 
-	remainder, err := s.remainderDiff(ctx)
+	remainder, err := s.remainderDiff(ctx, stagedFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -316,9 +323,6 @@ func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (
 	allowed := allowedFiles(staged, unstaged)
 	s.vlog(req, "unstaged files: %v", unstaged.Files)
 
-	if err := s.ensureScopes(ctx, req); err != nil {
-		return nil, err
-	}
 	renamed, err := s.detectRenames(ctx, req)
 	if err != nil {
 		return nil, err
