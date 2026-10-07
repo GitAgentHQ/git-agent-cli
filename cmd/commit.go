@@ -353,7 +353,7 @@ func buildCommitDeps(
 
 	var scopeSvc *application.ScopeService
 	if projCfg == nil || len(projCfg.Scopes) == 0 {
-		scopeSvc = application.NewScopeService(llmClient, gitClient)
+		scopeSvc = application.NewScopeService(llmClient, gitClient, nil, heartbeatOut)
 	}
 
 	// Heuristic planner is wired unless the project explicitly opts out via
@@ -375,6 +375,12 @@ func buildCommitDeps(
 		infraDiff.NewLineTruncator(),
 		heuristicPlanner,
 	)
+
+	// The optional System One layer owns the decisions it can answer with
+	// confidence: how files group, the title prefix, and which lever a hook
+	// rejection needs. It is nil unless a TypeSafe key is configured.
+	newJevLayer(providerCfg, heartbeatOut).Apply(svc, scopeSvc)
+
 	return llmClient, svc
 }
 

@@ -102,11 +102,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Write hooks: full wizard writes [conventional]; --hook flag writes specified values.
 	if fullWizard {
-		if err := writeHooks(configPath, []string{"conventional"}); err != nil {
+		if err := cmd.Context().Err(); err != nil {
+			return err
+		}
+		if err := writeHooks(configPath, []string{"conventional"}, userChanged); err != nil {
 			return err
 		}
 	} else if hookChanged {
-		if err := writeHooks(configPath, hookValues); err != nil {
+		if err := cmd.Context().Err(); err != nil {
+			return err
+		}
+		if err := writeHooks(configPath, hookValues, userChanged); err != nil {
 			return err
 		}
 	}
@@ -120,7 +126,7 @@ func ensureGitRepo(cmd *cobra.Command) error {
 	if gitClient.IsGitRepo(cmd.Context()) {
 		return nil
 	}
-	c := exec.Command("git", "init")
+	c := exec.CommandContext(cmd.Context(), "git", "init")
 	out, err := c.CombinedOutput()
 	fmt.Fprint(cmd.OutOrStdout(), string(out))
 	return err
@@ -160,11 +166,15 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval, nil,
 	)
 	openaiClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
-	scopeSvc := application.NewScopeService(openaiClient, gitClient)
+	scopeSvc := application.NewScopeService(openaiClient, gitClient, nil, nil)
+	newJevLayer(providerCfg, nil).Apply(nil, scopeSvc)
 
 	existingScopes := application.ReadScopes(configPath)
 	scopes, err := scopeSvc.Generate(cmd.Context(), maxCommits, existingScopes)
 	if err != nil {
+		return err
+	}
+	if err := cmd.Context().Err(); err != nil {
 		return err
 	}
 
@@ -195,7 +205,18 @@ func writeScopes(path string, scopes []project.Scope) error {
 	return os.WriteFile(path, out, 0644)
 }
 
-func writeHooks(configPath string, hooks []string) error {
+func writeHooks(configPath string, hooks []string, userScope bool) error {
+	if userScope {
+		resolved := make([]string, len(hooks))
+		for i, hook := range hooks {
+			path, err := resolveUserHookPath(hook)
+			if err != nil {
+				return err
+			}
+			resolved[i] = path
+		}
+		hooks = resolved
+	}
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}

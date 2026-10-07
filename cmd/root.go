@@ -149,6 +149,10 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
+	// One layer for this run. runCommit builds its own commit service and its
+	// own layer, so the two do not share a call budget.
+	jev := newJevLayer(providerCfg, heartbeatWriter)
+
 	// 1. Autonomous check for .gitignore (create if missing, or update if missing mandatory rules)
 	gitignorePath := filepath.Join(root, ".gitignore")
 	existingGitignore, gitignoreErr := os.ReadFile(gitignorePath)
@@ -158,7 +162,7 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 			llmClient,
 			toptalClient,
 			gitClient,
-		)
+		).WithTechnologyClassifier(jev.TechClassifier()).WithDecisions(jev.Decisions())
 		techs, _, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
 		if err != nil {
 			fallback := application.EnsureMandatoryIgnoreRules("")
@@ -207,7 +211,8 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	if hasUncoveredDirs(allFiles, allAvailableScopes) {
-		scopeSvc := application.NewScopeService(llmClient, gitClient)
+		scopeSvc := application.NewScopeService(llmClient, gitClient, jev.ScopeDecider(), heartbeatWriter)
+		jev.Apply(nil, scopeSvc)
 		scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
@@ -232,15 +237,6 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	return runCommit(cmd, args)
 }
 
-var stdDirAbbrevs = map[string]string{
-	"application":    "app",
-	"infrastructure": "infra",
-	"cmd":            "cli",
-	"command":        "cli",
-	"documentation":  "docs",
-	"test":           "tests",
-}
-
 func autonomousHeartbeatWriter(cmd *cobra.Command) io.Writer {
 	if verbose || stderrIsTerminal() {
 		return cmd.ErrOrStderr()
@@ -248,6 +244,8 @@ func autonomousHeartbeatWriter(cmd *cobra.Command) io.Writer {
 	return nil
 }
 
+// hasUncoveredDirs reports whether a changed file sits outside every configured
+// scope, which is the trigger for scope generation.
 func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 	if len(scopes) == 0 {
 		return true
@@ -262,7 +260,7 @@ func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 			continue
 		}
 		covered := false
-		abbrev := stdDirAbbrevs[topDir]
+		abbrev := domainProject.DeriveScopeName(topDir)
 		for _, s := range scopes {
 			name := strings.ToLower(s.Name)
 			desc := strings.ToLower(s.Description)

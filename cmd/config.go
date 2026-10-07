@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gitagenthq/git-agent/domain/decision"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
 	"github.com/gitagenthq/git-agent/pkg/output"
@@ -68,6 +69,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 
 	switch scope {
 	case infraConfig.ScopeUser:
+		if key == "hook" {
+			value, err = resolveUserHookPath(value)
+			if err != nil {
+				return err
+			}
+		}
 		if err := infraConfig.WriteUserField(userConfigPath(), key, value); err != nil {
 			return fmt.Errorf("writing user config: %w", err)
 		}
@@ -108,6 +115,21 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// resolveUserHookPath anchors a user-scope hook at the directory where it was
+// configured. User config is shared across repositories, so resolving it from
+// each repository root would make a relative path change meaning on every run.
+func resolveUserHookPath(value string) (string, error) {
+	switch value {
+	case "conventional", "empty":
+		return value, nil
+	}
+	absPath, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("resolving user hook path %q: %w", value, err)
+	}
+	return filepath.Clean(absPath), nil
+}
+
 // installHookScript handles hook values that are file paths: copies the
 // script to .git-agent/hooks/pre-commit and returns the resolved absolute path.
 // For built-in values ("conventional", "empty") the value is returned unchanged.
@@ -119,13 +141,17 @@ func installHookScript(repoRoot, key, value string, out interface{ Write([]byte)
 	case "conventional", "empty":
 		return value, nil
 	}
-	absPath, err := filepath.Abs(value)
+	absPath := value
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(repoRoot, absPath)
+	}
+	absPath, err := filepath.Abs(absPath)
 	if err != nil {
 		return "", fmt.Errorf("resolving hook path %q: %w", value, err)
 	}
-	data, err := os.ReadFile(value)
+	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return "", fmt.Errorf("reading hook file %q: %w", value, err)
+		return "", fmt.Errorf("reading hook file %q: %w", absPath, err)
 	}
 	dest := filepath.Join(repoRoot, ".git-agent", "hooks", "pre-commit")
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
@@ -135,7 +161,14 @@ func installHookScript(repoRoot, key, value string, out interface{ Write([]byte)
 		return "", fmt.Errorf("installing hook: %w", err)
 	}
 	fmt.Fprintf(out, "installed hook: %s\n", value)
-	return absPath, nil
+	// Store the copied hook's repository-relative path so project config does
+	// not retain a machine-specific source path. LoadProjectConfig resolves
+	// this path against the repository root when executing it.
+	installedPath, err := filepath.Rel(repoRoot, dest)
+	if err != nil {
+		return "", fmt.Errorf("resolving installed hook path: %w", err)
+	}
+	return filepath.ToSlash(installedPath), nil
 }
 
 func runConfigGet(cmd *cobra.Command, args []string) error {
@@ -217,6 +250,15 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url: %s\n", cfg.BaseURL)
 	if cfg.CloudflareAIGatewayID != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "cloudflare_ai_gateway_id: %s\n", cfg.CloudflareAIGatewayID)
+	}
+	// The System One layer shows only whether it is on. An unset key means
+	// every decision goes to the generative provider.
+	if cfg.JevAPIKey != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "jev_api_key: %s\n", maskAPIKey(cfg.JevAPIKey))
+		fmt.Fprintf(cmd.OutOrStdout(), "jev_mode: %s\n", decision.ParseMode(cfg.JevMode))
+		if cfg.JevModel != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "jev_model: %s\n", cfg.JevModel)
+		}
 	}
 	return nil
 }
