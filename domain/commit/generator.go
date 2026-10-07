@@ -22,6 +22,15 @@ type GenerateRequest struct {
 	// attempt. When set alongside HookFeedback, the generator reformats this
 	// message instead of re-analyzing the diff.
 	PreviousMessage string
+	// DecidedPrefix pins the conventional-commit prefix of the title, such as
+	// "fix(app)". A judgment layer sets it after it chose the type and scope;
+	// the generator then writes only the description that follows. An empty
+	// value leaves the whole title to the generator.
+	DecidedPrefix string
+	// PinnedScope restricts the title to one scope without fixing the type: the
+	// scope is the part a judgment measures as reliable enough to pin. An empty
+	// value leaves the scope to the generator.
+	PinnedScope string
 }
 
 // CommitMessageGenerator generates commit messages from staged diffs.
