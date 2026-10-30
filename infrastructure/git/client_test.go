@@ -227,6 +227,66 @@ func TestClient_AllChangedFilesFromSubdirIsStageable(t *testing.T) {
 	}
 }
 
+func TestClient_TopLevelDirsFromSubdirUsesRepositoryRoot(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	if err := os.MkdirAll(filepath.Join(dir, "application", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir application: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "infrastructure"), 0o755); err != nil {
+		t.Fatalf("mkdir infrastructure: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git-agent"), 0o755); err != nil {
+		t.Fatalf("mkdir .git-agent: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(filepath.Join(dir, "application", "nested")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	dirs, err := NewClient().TopLevelDirs(context.Background())
+	if err != nil {
+		t.Fatalf("TopLevelDirs: %v", err)
+	}
+	if got, want := strings.Join(dirs, ","), "application,infrastructure"; got != want {
+		t.Fatalf("TopLevelDirs() = %q, want %q", got, want)
+	}
+}
+
+func TestClient_ProjectFilesFromSubdirAreRepositoryRelative(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	if err := os.MkdirAll(filepath.Join(dir, "application"), 0o755); err != nil {
+		t.Fatalf("mkdir application: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "application", "service.go"), []byte("package application\n"), 0o644); err != nil {
+		t.Fatalf("write service.go: %v", err)
+	}
+	runGit(t, dir, "add", ".")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(filepath.Join(dir, "application")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	files, err := NewClient().ProjectFiles(context.Background())
+	if err != nil {
+		t.Fatalf("ProjectFiles: %v", err)
+	}
+	if len(files) != 1 || files[0] != "application/service.go" {
+		t.Fatalf("ProjectFiles() = %v, want [application/service.go]", files)
+	}
+}
+
 func TestClient_AllChangedFiles_NonASCIIPath(t *testing.T) {
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q")

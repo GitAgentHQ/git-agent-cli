@@ -57,6 +57,24 @@ func TestCommitService_PlannerReturnsEmptyPlan(t *testing.T) {
 	}
 }
 
+func TestCommitService_PlannerReturnsNilPlan(t *testing.T) {
+	gen := &mockCommitGenerator{msg: defaultMsg()}
+	git := &mockCommitGitClient{
+		stagedDiff:      &diff.StagedDiff{},
+		allChangedFiles: []string{"main.go", "b.go"},
+	}
+	planner := &mockCommitPlanner{}
+	svc := application.NewCommitService(gen, planner, git, noopHook(), nil, nil, nil, nil)
+
+	_, err := svc.Commit(context.Background(), application.CommitRequest{Config: &project.Config{}})
+	if err == nil {
+		t.Fatal("expected an error for a nil plan, got nil")
+	}
+	if !strings.Contains(err.Error(), "nil commit plan") {
+		t.Fatalf("expected nil-plan error, got: %v", err)
+	}
+}
+
 func TestCommitService_LLMError(t *testing.T) {
 	llmErr := errors.New("LLM unavailable")
 	gen := &mockCommitGenerator{err: llmErr}

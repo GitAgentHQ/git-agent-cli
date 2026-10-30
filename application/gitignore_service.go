@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/gitagenthq/git-agent/domain/decision"
 	domainGitignore "github.com/gitagenthq/git-agent/domain/gitignore"
 )
 
@@ -22,6 +24,10 @@ type GitignoreService struct {
 	detector  domainGitignore.TechDetector
 	generator domainGitignore.ContentGenerator
 	git       GitReader
+	// classifier judges which technologies the project uses. A nil classifier
+	// leaves that decision to the detector, which asks the model.
+	classifier domainGitignore.TechnologyClassifier
+	decisions  *Decisions
 }
 
 func NewGitignoreService(
@@ -34,6 +40,18 @@ func NewGitignoreService(
 		generator: generator,
 		git:       git,
 	}
+}
+
+// WithTechnologyClassifier attaches the System One technology classifier.
+func (s *GitignoreService) WithTechnologyClassifier(c domainGitignore.TechnologyClassifier) *GitignoreService {
+	s.classifier = c
+	return s
+}
+
+// WithDecisions attaches the System One policy for one run.
+func (s *GitignoreService) WithDecisions(d *Decisions) *GitignoreService {
+	s.decisions = d
+	return s
 }
 
 // GitignoreRequest holds options for the Generate call.
@@ -52,13 +70,7 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 		return nil, false, fmt.Errorf("reading project files: %w", err)
 	}
 
-	osName := runtimeOS()
-
-	techs, err := s.detector.DetectTechnologies(ctx, domainGitignore.DetectRequest{
-		OS:    osName,
-		Dirs:  dirs,
-		Files: files,
-	})
+	techs, err := s.detectTechnologies(ctx, dirs, files)
 	if err != nil {
 		return nil, false, fmt.Errorf("detecting technologies: %w", err)
 	}
@@ -66,6 +78,9 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 	generated, err := s.generator.Generate(ctx, techs)
 	if err != nil {
 		return nil, false, fmt.Errorf("generating gitignore content: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 
 	// Use the technology list actually reflected in the Toptal response URL,
@@ -100,12 +115,63 @@ func (s *GitignoreService) Generate(ctx context.Context, req GitignoreRequest) (
 
 	modified := string(existing) != final
 	if modified {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if err := os.WriteFile(gitignorePath, []byte(final), 0644); err != nil {
 			return nil, false, fmt.Errorf("writing .gitignore: %w", err)
 		}
 	}
 
 	return techs, modified, nil
+}
+
+// detectTechnologies returns the technology list for the project. The
+// classifier judges it as a closed set when the layer is on and confident; every
+// other path asks the model. A shadow run does both and records the difference,
+// because a wrong identifier adds ignore rules for files the project lacks.
+func (s *GitignoreService) detectTechnologies(ctx context.Context, dirs, files []string) ([]string, error) {
+	session := s.decisions.Begin()
+	if s.classifier != nil && session.Take(SeamTechStack) {
+		started := time.Now()
+		verdict, err := s.classifier.ClassifyTechnologies(ctx, domainGitignore.ClassifyRequest{
+			OS: runtimeOS(), Dirs: dirs, Files: files,
+		})
+		if err != nil {
+			session.Report(started, decision.Observation{Seam: SeamTechStack, Err: err.Error()})
+		} else if session.AdoptAt(SeamTechStack, verdict.Confidence, techFloorOf(s.classifier)) {
+			session.Report(started, decision.Observation{
+				Seam:       SeamTechStack,
+				Decision:   strings.Join(verdict.Technologies, ","),
+				Adopted:    true,
+				Confidence: verdict.Confidence,
+			})
+			return verdict.Technologies, nil
+		} else {
+			session.Report(started, decision.Observation{
+				Seam:       SeamTechStack,
+				Decision:   strings.Join(verdict.Technologies, ","),
+				Confidence: verdict.Confidence,
+			})
+		}
+	}
+
+	techs, err := s.detector.DetectTechnologies(ctx, domainGitignore.DetectRequest{
+		OS: runtimeOS(), Dirs: dirs, Files: files,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return techs, nil
+}
+
+// techFloorOf reads the seam's own floor. A classifier that publishes none is
+// trusted no further than the policy floor.
+func techFloorOf(classifier domainGitignore.TechnologyClassifier) float64 {
+	if floored, ok := classifier.(interface{ TechFloor() float64 }); ok {
+		return floored.TechFloor()
+	}
+	return 0
 }
 
 // toptalTechs extracts the technology list from the "# Created by" line in a

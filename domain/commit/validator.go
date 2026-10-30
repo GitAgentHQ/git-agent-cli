@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 // Severity indicates how serious a validation issue is.
@@ -103,7 +105,7 @@ func ValidateConventionalWithLanguage(raw string, allowedScopes []string, langua
 
 func isNonEnglishLanguage(language, intent string) bool {
 	language = strings.TrimSpace(language)
-	if language == "" || strings.EqualFold(language, "auto") {
+	if strings.EqualFold(language, "auto") {
 		for _, r := range intent {
 			if r > unicode.MaxASCII && unicode.IsLetter(r) {
 				return true
@@ -111,16 +113,14 @@ func isNonEnglishLanguage(language, intent string) bool {
 		}
 		return false
 	}
+	if language == "" {
+		return false
+	}
 	return !isEnglishLanguage(language)
 }
 
 func isEnglishLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
-		return true
-	default:
-		return false
-	}
+	return project.IsEnglishLanguage(language)
 }
 
 func checkHeader(result *ValidationResult, header string, allowedScopes []string, nonEnglish bool) {

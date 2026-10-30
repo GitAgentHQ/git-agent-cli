@@ -272,7 +272,7 @@ const englishCaseInstruction = "For English output, keep the title description A
 // languages keep their natural capitalization and orthography.
 func languageInstruction(language, intent string) string {
 	language = strings.TrimSpace(language)
-	if language == "" || strings.EqualFold(language, "auto") {
+	if strings.EqualFold(language, "auto") {
 		if strings.TrimSpace(intent) != "" {
 			instruction := "Write the title description, bullets, and explanation in the same language as the PRIMARY DIRECTIVE."
 			if isLikelyEnglish(intent) {
@@ -282,19 +282,21 @@ func languageInstruction(language, intent string) string {
 		}
 		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
 	}
+	if language == "" {
+		if strings.TrimSpace(intent) != "" {
+			return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
+		}
+		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
+	}
 	if isEnglishLanguage(language) {
 		return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
 	}
-	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", language)
+	displayName := project.ResolveLanguageDisplayName(language)
+	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", displayName)
 }
 
 func isEnglishLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
-		return true
-	default:
-		return false
-	}
+	return project.IsEnglishLanguage(language)
 }
 
 func isLikelyEnglish(text string) bool {
@@ -319,7 +321,10 @@ func effectiveLanguage(override string, cfg *project.Config) string {
 	if strings.TrimSpace(override) != "" {
 		return override
 	}
-	return languageForConfig(cfg)
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Language
 }
 
 const planSystemPrompt = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
@@ -379,7 +384,7 @@ Rules (STRICTLY enforce):
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
 - ALL scope names MUST be short — single words or abbreviations only
 - Single-word names: use as-is, EXCEPT apply well-known short forms for long words ("application" -> "app", "infrastructure" -> "infra", "cmd" -> "cli")
-- Hyphenated or multi-word names: MUST convert to initials/acronym ("git-agent-proxy" -> "gap", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
+- Hyphenated or multi-word names: MUST convert to initials/acronym ("payment-service" -> "ps", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
 - If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation over any derived form
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes
@@ -637,6 +642,15 @@ func (c *Client) Generate(ctx context.Context, req commit.GenerateRequest) (*com
 			req.Diff.Content,
 			strings.Join(req.Diff.Files, ", "),
 		))
+		if req.DecidedPrefix != "" {
+			promptParts = append(promptParts, "DECIDED PREFIX — the title MUST start with exactly `"+
+				req.DecidedPrefix+": ` and you write only the description that follows it. "+
+				"Do not restate the prefix inside the description.")
+		} else if req.PinnedScope != "" {
+			promptParts = append(promptParts, "PINNED SCOPE — the title MUST use exactly this scope: `"+
+				req.PinnedScope+"`. Write the commit type yourself and the description after it. "+
+				"Do not write any other scope.")
+		}
 		userPrompt = strings.Join(promptParts, "\n\n")
 		userPrompt += "\n\n" + languageInstruction(language, req.Intent)
 		if req.HookFeedback != "" {
@@ -864,6 +878,51 @@ func (c *Client) DetectTechnologies(ctx context.Context, req domainGitignore.Det
 	}
 
 	return result.Technologies, nil
+}
+
+const describeScopesSystemPrompt = `You are an expert software engineer. Write one concise description per proposed commit scope.
+
+Respond ONLY with valid JSON: {"scopes": [{"name": "...", "description": "..."}]}
+
+Rules (STRICTLY enforce):
+- Return exactly one entry per proposed scope, using each proposed name verbatim and unchanged
+- Never add a scope that was not proposed and never drop one
+- Each description must be under 20 words and must (1) name the responsibilities the scope covers, (2) include the source directory path naturally, and (3) state what the scope does NOT cover when its name could be confused with another scope
+- Do NOT use a "dir/ — text" prefix format
+- Descriptions are the primary signal a later step uses to pick the correct scope, so a vague or overlapping description causes scope misassignment`
+
+// DescribeScopes writes one description per proposed scope. The model chooses
+// the wording only: which scopes exist is already decided elsewhere, and the
+// caller keeps the proposed names.
+func (c *Client) DescribeScopes(ctx context.Context, proposed []project.ProposedScope) ([]project.Scope, error) {
+	if len(proposed) == 0 {
+		return nil, nil
+	}
+
+	var lines []string
+	for _, p := range proposed {
+		lines = append(lines, fmt.Sprintf("- %s (directory: %s/)", p.Name, p.Dir))
+	}
+	userPrompt := "Proposed scopes:\n" + strings.Join(lines, "\n")
+
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		raw, err := c.callLLM(ctx, describeScopesSystemPrompt, userPrompt, 2048, scopesMaxTokensCeiling)
+		if err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Scopes []project.Scope `json:"scopes"`
+		}
+		if err := unmarshalLLMJSON(raw, "scopes", &result); err != nil {
+			lastErr = err
+			continue
+		}
+		return result.Scopes, nil
+	}
+	return nil, lastErr
 }
 
 func (c *Client) GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error) {

@@ -19,7 +19,7 @@ func TestScopeService_Generate(t *testing.T) {
 		dirs:      []string{"cmd", "application"},
 		isGitRepo: true,
 	}
-	svc := application.NewScopeService(llm, git)
+	svc := application.NewScopeService(llm, git, nil, nil)
 
 	scopes, err := svc.Generate(context.Background(), 20, nil)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestScopeService_Generate(t *testing.T) {
 func TestScopeService_Generate_LLMError(t *testing.T) {
 	llm := &mockLLMClient{err: errors.New("llm down")}
 	git := &mockGitReader{isGitRepo: true}
-	svc := application.NewScopeService(llm, git)
+	svc := application.NewScopeService(llm, git, nil, nil)
 
 	_, err := svc.Generate(context.Background(), 20, nil)
 	if err == nil {
@@ -47,7 +47,7 @@ func TestScopeService_Generate_LLMError(t *testing.T) {
 func TestScopeService_Generate_EmptyScopes(t *testing.T) {
 	llm := &mockLLMClient{scopes: []project.Scope{}, reasoning: "fresh repo"}
 	git := &mockGitReader{isGitRepo: true}
-	svc := application.NewScopeService(llm, git)
+	svc := application.NewScopeService(llm, git, nil, nil)
 
 	scopes, err := svc.Generate(context.Background(), 20, nil)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestScopeService_MergeAndSave_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "project.yml")
 
-	svc := application.NewScopeService(nil, nil)
+	svc := application.NewScopeService(nil, nil, nil, nil)
 	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,11 +72,27 @@ func TestScopeService_MergeAndSave_CreatesFile(t *testing.T) {
 	}
 }
 
+func TestScopeService_MergeAndSave_HonorsCanceledContext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "project.yml")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc := application.NewScopeService(nil, nil, nil, nil)
+
+	if _, err := svc.MergeAndSave(ctx, path, []project.Scope{{Name: "cli"}}); err == nil {
+		t.Fatal("expected canceled context error")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected canceled write to leave no config, stat error: %v", err)
+	}
+}
+
 func TestScopeService_MergeAndSave_DeduplicatesScopes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "project.yml")
 
-	svc := application.NewScopeService(nil, nil)
+	svc := application.NewScopeService(nil, nil, nil, nil)
 
 	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "cmd"}, {Name: "app"}}); err != nil {
 		t.Fatalf("unexpected error on first write: %v", err)
@@ -107,7 +123,7 @@ func TestScopeService_MergeAndSave_CaseInsensitiveDedupe(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "project.yml")
 
-	svc := application.NewScopeService(nil, nil)
+	svc := application.NewScopeService(nil, nil, nil, nil)
 
 	if _, err := svc.MergeAndSave(context.Background(), path, []project.Scope{{Name: "CMD"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -13,7 +13,7 @@
 **Homebrew（macOS/Linux）：**
 
 ```bash
-brew install GitAgentHQ/brew/git-agent
+brew install gitagenthq/brew/git-agent
 ```
 
 **Go install：**

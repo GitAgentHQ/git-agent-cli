@@ -9,6 +9,10 @@ import (
 
 type LLMClient interface {
 	GenerateScopes(ctx context.Context, commits []string, dirs []string, files []string, existingScopes []project.Scope) ([]project.Scope, string, error)
+	// DescribeScopes writes one description per proposed scope. The model only
+	// chooses the wording of scopes that another layer already selected, so it
+	// must return the proposed names unchanged.
+	DescribeScopes(ctx context.Context, proposed []project.ProposedScope) ([]project.Scope, error)
 }
 
 type GitReader interface {
@@ -41,7 +45,9 @@ func (s *InitService) Init(ctx context.Context, req InitRequest) error {
 		return fmt.Errorf("not a git repository")
 	}
 
-	scopeSvc := NewScopeService(s.llm, s.git)
+	// The CLI wires the optional scope decision layer through NewScopeService,
+	// so InitService runs the plain model path.
+	scopeSvc := NewScopeService(s.llm, s.git, nil, nil)
 
 	existingScopes := ReadScopes(req.ProjectYMLPath)
 	scopes, err := scopeSvc.Generate(ctx, req.MaxCommits, existingScopes)

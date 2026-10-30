@@ -18,20 +18,19 @@ func TestConfigShowCmd_Runs(t *testing.T) {
 	}
 }
 
-// TestConfigShow_ModeNotFreeForCustomBaseURL locks in the mode label: an
-// arbitrary OpenAI-compatible endpoint with no api_key is NOT the shared
-// gateway, so config show -o json must report mode "configured", never "free".
-func TestConfigShow_ModeNotFreeForCustomBaseURL(t *testing.T) {
+// TestConfigShow_HasNoModeKey: the mode label existed only to distinguish the
+// shared gateway from a user endpoint, so it is gone with the gateway.
+func TestConfigShow_HasNoModeKey(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "config", "show", "-o", "json", "--base-url", "http://localhost:11434/v1")
 	if code != 0 {
 		t.Fatalf("git-agent config show: exit code %d\noutput: %s", code, out)
 	}
-	if !strings.Contains(out, `"mode": "configured"`) {
-		t.Errorf("expected mode configured for custom base_url, got: %s", out)
+	if strings.Contains(out, `"mode"`) {
+		t.Errorf("config show must not report a mode, got: %s", out)
 	}
-	if strings.Contains(out, `"mode": "free"`) {
-		t.Errorf("custom base_url must not be labeled free mode, got: %s", out)
+	if !strings.Contains(out, `"base_url": "http://localhost:11434/v1"`) {
+		t.Errorf("expected the configured base_url in the output, got: %s", out)
 	}
 }
 
@@ -87,6 +86,43 @@ func TestConfigSet_DefaultScopeForProviderKey(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "gpt-4o") {
 		t.Errorf("expected 'gpt-4o' in user config.yml, got:\n%s", data)
+	}
+}
+
+func TestConfigSet_Hook_UserScopeStoresPathAbsoluteToSetupDirectory(t *testing.T) {
+	repo := newGitRepo(t)
+	shared := filepath.Join(filepath.Dir(repo), "shared")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatalf("create shared hook directory: %v", err)
+	}
+	hook := filepath.Join(shared, "pre-commit.sh")
+	writeFile(t, hook, "#!/bin/sh\nexit 0\n")
+	xdgDir := t.TempDir()
+	relativeHook := filepath.Join("..", "shared", "pre-commit.sh")
+
+	out, code := gitAgentEnv(t, repo, []string{"XDG_CONFIG_HOME=" + xdgDir},
+		"config", "set", "hook", relativeHook, "--user")
+	if code != 0 {
+		t.Fatalf("config set user hook: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(xdgDir, "git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("read user config: %v", err)
+	}
+	stored := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			stored = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		}
+	}
+	want, _ := filepath.EvalSymlinks(hook)
+	got, _ := filepath.EvalSymlinks(stored)
+	if stored == "" || !filepath.IsAbs(stored) || got != want {
+		t.Fatalf("user hook should be stored as setup-time absolute path %q, got:\n%s", want, data)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git-agent", "hooks", "pre-commit")); !os.IsNotExist(err) {
+		t.Fatalf("user hook must not install a repository-local copy, stat error: %v", err)
 	}
 }
 
@@ -156,5 +192,31 @@ func TestConfigGet_UnknownKey(t *testing.T) {
 	_, code := gitAgent(t, dir, "config", "get", "nonexistent_key")
 	if code == 0 {
 		t.Fatal("expected non-zero exit for unknown key, got 0")
+	}
+}
+
+func TestConfigSet_Language_ISOValid(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "config", "set", "language", "zh_cn", "--project")
+	if code != 0 {
+		t.Fatalf("config set language: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("config.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "language: zh-CN") {
+		t.Errorf("expected normalized 'zh-CN' in config.yml, got:\n%s", data)
+	}
+}
+
+func TestConfigSet_Language_ISOInvalid_Fails(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "config", "set", "language", "invalid_lang_code", "--project")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for invalid language code, got 0\noutput: %s", out)
+	}
+	if !strings.Contains(out, "ISO 639") {
+		t.Errorf("expected error message to mention ISO 639, got: %s", out)
 	}
 }

@@ -74,35 +74,28 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 	apiKey, _ := cmd.Flags().GetString("api-key")
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
-	forceFree, _ := cmd.Flags().GetBool("free")
 	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:           apiKey,
-		Model:            model,
-		BaseURL:          baseURL,
-		ForceFreeGateway: forceFree,
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: baseURL,
 	}, userConfigPath())
 }
 
 // providerConfigError validates the resolved provider config.
 //
-// Two modes:
-//   - Direct: the user set an api_key, so they are calling their own endpoint
-//     and must also provide base_url and model.
-//   - Free shared gateway: no api_key, so requests go to the built-in (or
-//     user-configured) gateway URL. The Worker pins the model server-side, so
-//     model may be empty.
+// The CLI ships no built-in endpoint. The user configures one of two shapes:
+// an OpenAI-compatible base_url with a model, optionally with an api_key; or
+// the same endpoint plus a cloudflare_ai_gateway_id, which routes the request
+// through the user's own AI Gateway. The message names every remedy, because a
+// fresh install has nothing else to go on.
 func providerConfigError(cfg *infraConfig.ProviderConfig) string {
-	if cfg == nil {
-		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set --api-key / base_url / model"
+	if cfg == nil || cfg.BaseURL == "" {
+		return "error: no provider configured\n" +
+			"hint: set base_url and model in ~/.config/git-agent/config.yml, or pass --base-url and --model\n" +
+			"      add --api-key for a hosted endpoint, or cloudflare_ai_gateway_id to route through your AI Gateway"
 	}
-	if cfg.APIKey != "" {
-		if cfg.BaseURL == "" || cfg.Model == "" {
-			return "error: incomplete AI provider configuration\nhint: set base_url and model in ~/.config/git-agent/config.yml or pass --base-url and --model"
-		}
-		return ""
-	}
-	if cfg.BaseURL == "" {
-		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set base_url to an OpenAI-compatible endpoint"
+	if cfg.Model == "" {
+		return "error: no model configured\nhint: set model in ~/.config/git-agent/config.yml or pass --model"
 	}
 	return ""
 }
@@ -149,6 +142,10 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	)
 	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
 
+	// One layer for this run. runCommit builds its own commit service and its
+	// own layer, so the two do not share a call budget.
+	jev := newJevLayer(providerCfg, heartbeatWriter)
+
 	// 1. Autonomous check for .gitignore (create if missing, or update if missing mandatory rules)
 	gitignorePath := filepath.Join(root, ".gitignore")
 	existingGitignore, gitignoreErr := os.ReadFile(gitignorePath)
@@ -158,7 +155,7 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 			llmClient,
 			toptalClient,
 			gitClient,
-		)
+		).WithTechnologyClassifier(jev.TechClassifier()).WithDecisions(jev.Decisions())
 		techs, _, err := gitignoreSvc.Generate(cmd.Context(), application.GitignoreRequest{})
 		if err != nil {
 			fallback := application.EnsureMandatoryIgnoreRules("")
@@ -207,7 +204,8 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	if hasUncoveredDirs(allFiles, allAvailableScopes) {
-		scopeSvc := application.NewScopeService(llmClient, gitClient)
+		scopeSvc := application.NewScopeService(llmClient, gitClient, jev.ScopeDecider(), heartbeatWriter)
+		jev.Apply(nil, scopeSvc)
 		scopes, err := scopeSvc.Generate(cmd.Context(), 200, existingScopes)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: auto-scope failed: %v\n", err)
@@ -232,15 +230,6 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	return runCommit(cmd, args)
 }
 
-var stdDirAbbrevs = map[string]string{
-	"application":    "app",
-	"infrastructure": "infra",
-	"cmd":            "cli",
-	"command":        "cli",
-	"documentation":  "docs",
-	"test":           "tests",
-}
-
 func autonomousHeartbeatWriter(cmd *cobra.Command) io.Writer {
 	if verbose || stderrIsTerminal() {
 		return cmd.ErrOrStderr()
@@ -248,6 +237,8 @@ func autonomousHeartbeatWriter(cmd *cobra.Command) io.Writer {
 	return nil
 }
 
+// hasUncoveredDirs reports whether a changed file sits outside every configured
+// scope, which is the trigger for scope generation.
 func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 	if len(scopes) == 0 {
 		return true
@@ -262,7 +253,7 @@ func hasUncoveredDirs(allFiles []string, scopes []domainProject.Scope) bool {
 			continue
 		}
 		covered := false
-		abbrev := stdDirAbbrevs[topDir]
+		abbrev := domainProject.DeriveScopeName(topDir)
 		for _, s := range scopes {
 			name := strings.ToLower(s.Name)
 			desc := strings.ToLower(s.Description)
@@ -283,7 +274,6 @@ func init() {
 	rootCmd.PersistentFlags().String("api-key", "", "API key for the AI provider")
 	rootCmd.PersistentFlags().String("model", "", "model to use for generation")
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
-	rootCmd.PersistentFlags().Bool("free", false, "force routing through the free shared gateway, overriding api_key / base_url / model")
 
 	addCommitBehaviorFlags(rootCmd)
 	addOutputFlagWithDefault(rootCmd, "text")

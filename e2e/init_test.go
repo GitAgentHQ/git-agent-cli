@@ -84,6 +84,65 @@ func TestConfigSet_HookScript_CopiesFile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit")); err != nil {
 		t.Errorf(".git-agent/hooks/pre-commit not created: %v", err)
 	}
+	configData, err := os.ReadFile(filepath.Join(dir, ".git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("read config.yml: %v", err)
+	}
+	if !strings.Contains(string(configData), ".git-agent/hooks/pre-commit") {
+		t.Errorf("config should reference the installed hook, got:\n%s", configData)
+	}
+}
+
+func TestConfigSet_HookScript_RelativePathResolvesFromRepoRoot(t *testing.T) {
+	dir := newGitRepo(t)
+	hookPath := filepath.Join(dir, "my-hook.sh")
+	writeFile(t, hookPath, "#!/bin/sh\nexit 0\n")
+	subdir := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatalf("create nested directory: %v", err)
+	}
+
+	out, code := gitAgent(t, subdir, "config", "set", "hook", "my-hook.sh")
+	if code != 0 {
+		t.Fatalf("config set hook from subdirectory: exit code %d\noutput: %s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git-agent", "hooks", "pre-commit")); err != nil {
+		t.Fatalf(".git-agent/hooks/pre-commit not created: %v", err)
+	}
+}
+
+func TestInit_Hook_UserScopeStoresPathAbsoluteToSetupDirectory(t *testing.T) {
+	repo := newGitRepo(t)
+	shared := filepath.Join(filepath.Dir(repo), "shared")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatalf("create shared hook directory: %v", err)
+	}
+	hook := filepath.Join(shared, "pre-commit.sh")
+	writeFile(t, hook, "#!/bin/sh\nexit 0\n")
+	xdgDir := t.TempDir()
+	relativeHook := filepath.Join("..", "shared", "pre-commit.sh")
+
+	out, code := gitAgentEnv(t, repo, []string{"XDG_CONFIG_HOME=" + xdgDir},
+		"init", "--hook", relativeHook, "--user")
+	if code != 0 {
+		t.Fatalf("init user hook: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(xdgDir, "git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("read user config: %v", err)
+	}
+	stored := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			stored = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		}
+	}
+	want, _ := filepath.EvalSymlinks(hook)
+	got, _ := filepath.EvalSymlinks(stored)
+	if stored == "" || !filepath.IsAbs(stored) || got != want {
+		t.Fatalf("user hook should be stored as setup-time absolute path %q, got:\n%s", want, data)
+	}
 }
 
 func TestConfigSet_HookScript_FileNotFound_Fails(t *testing.T) {

@@ -28,11 +28,9 @@ Use your code-search tools and targeted tests to explore the current codebase be
    No provider flags on the first attempt. Use `git-agent commit` only when the
    explicit commit subcommand is specifically needed.
 
-3. **On auth error (401 / missing key)** — official release binaries already
-   route through the free shared gateway with zero config. If an auth error
-   still appears, retry with `--free` to force routing through the shared
-   gateway, overriding any local `api_key` / `base_url` / `model`. If that still
-   fails, guide the user to bring their own key via
+3. **On auth error (401 / missing key)** — the CLI has no built-in endpoint, so
+   an auth error means the endpoint rejected the configured credential. Check
+   `base_url`, `model`, and `api_key`, then set them in
    `~/.config/git-agent/config.yml`:
    ```yaml
    base_url: https://api.openai.com/v1
@@ -52,6 +50,20 @@ Use your code-search tools and targeted tests to explore the current codebase be
    Or shrink what the planner has to reason about: sharpen `--intent`, cap the
    diff with `--max-diff-lines <n>` / `--max-diff-bytes <n>`, or switch to a
    more capable model via `--model`.
+
+5. **Optional System One layer** — when a TypeSafe key is set, Jev answers the
+   decisions git-agent can pose as closed questions: which scope covers which
+   directory, which technologies the project uses, how changed files group into
+   commits, and which lever a hook rejection needs. The text model keeps writing
+   every message and scope description.
+   ```
+   git-agent config set jev_api_key YOUR_TYPESAFE_KEY
+   git-agent config set jev_mode on    # shadow is the default and only measures
+   ```
+   Without a key, every decision stays with the text model. With a key that cannot
+   be reached, git-agent falls back to the text model, so the layer never blocks a
+   commit. Run with `-v` to see one line per judgment and its agreement with the
+   model.
 
 ### Structured output (`-o json`)
 

@@ -5,8 +5,9 @@ description: Use git-agent by default for coding-agent Git work. The bare git-ag
 
 # Git Agent CLI
 
-AI-powered Git CLI for atomic AI commits. It is online and LLM-backed;
-official releases provide a shared gateway, so no personal API key is required.
+AI-powered Git CLI for atomic AI commits. It is online and LLM-backed, so
+every install configures its own endpoint: `base_url` and `model`, plus an
+`api_key` for a hosted provider.
 
 ## Start here
 
@@ -55,5 +56,5 @@ instructions never go stale.
 - **Auto-scope**: generates commit scopes from git history automatically
 - **Scope & `.gitignore` optimization**: regenerates scopes from latest history (`init --scope --force`) and re-derives `.gitignore` while preserving custom rules (`init --gitignore`)
 - **Hook validation**: conventional-commit validation built in; custom hooks via shell scripts
-- **Config precedence**: CLI flag > `git config --local` > `~/.config/git-agent/config.yml` > free shared-gateway default; `--free` forces the gateway and ignores the rest. Agent-session env vars (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`) never set the inference model — it resolves only from flag / local git config / user config; the session model is read separately for `Co-Authored-By` attribution
+- **Config precedence**: CLI flag > `git config --local` > `~/.config/git-agent/config.yml`. There is no built-in endpoint: set `base_url` and `model`, plus an `api_key` for a hosted endpoint or `cloudflare_ai_gateway_id` to route through your own AI Gateway. Agent-session env vars (`PI_MODEL`, `CLAUDE_CODE_MODEL`, `CODEX_MODEL`) never set the inference model — it resolves only from flag / local git config / user config; the session model is read separately for `Co-Authored-By` attribution
 - **Structured output**: `-o json` on every read command for scripting

@@ -13,7 +13,7 @@ AI-powered Git CLI that analyzes your staged and unstaged changes, splits them i
 **Homebrew (macOS/Linux):**
 
 ```bash
-brew install GitAgentHQ/brew/git-agent
+brew install gitagenthq/brew/git-agent
 ```
 
 **Go install:**
@@ -182,30 +182,35 @@ api_key: sk-...
 model: gpt-4o
 ```
 
-### Free shared gateway (zero config)
+### Endpoint configuration (required)
 
-Official release binaries point at a free shared gateway by default, so **no
-configuration is required** — just run `git-agent commit`. Your requests are
-routed through a Cloudflare Worker that holds the upstream credential
-server-side (never in the binary) and rate-limits anonymous free usage.
-
-To opt out and use your own endpoint, set `base_url` (and optionally `api_key`
-/ `model`) — any user config overrides the built-in gateway URL.
-
-Examples for other providers:
+git-agent ships no built-in endpoint. Set one endpoint and one model, either in
+`~/.config/git-agent/config.yml`:
 
 ```yaml
-# Bring your own key — Cloudflare AI Gateway + Workers AI
+base_url: https://api.example.com/v1
+api_key: YOUR_TOKEN     # omit for a local endpoint that needs no key
+model: your-model-name
+```
+
+or per run with `--base-url`, `--api-key`, and `--model`. The CLI reads, from
+highest priority: CLI flag, `git config --local git-agent.*`, then
+`~/.config/git-agent/config.yml`. A missing `base_url` or `model` stops the run
+and names every remedy.
+
+Provider examples:
+
+```yaml
+# Cloudflare AI Gateway + Workers AI
 base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
 api_key: YOUR_CLOUDFLARE_API_TOKEN
 model: "@cf/zai-org/glm-4.7-flash"
 cloudflare_ai_gateway_id: YOUR_GATEWAY_ID # use "default" for the default gateway
 ```
 
-When you bring your own key, git-agent routes requests through that endpoint
-directly; for Cloudflare, `cloudflare_ai_gateway_id` opts into the gateway,
-disables prompt/response payload storage while retaining metadata, and leaves
-retries to the CLI so retry layers cannot multiply.
+`cloudflare_ai_gateway_id` routes requests through your own AI Gateway, disables
+prompt/response payload storage while retaining metadata, and leaves retries to
+the CLI, so retry layers cannot multiply.
 
 ```yaml
 # Local Ollama
@@ -213,7 +218,103 @@ base_url: http://localhost:11434/v1
 model: llama3
 ```
 
-### Project config (`.git-agent/config.yml`)
+### Optional System One layer (Jev)
+
+git-agent can hand the decisions it can answer to [TypeSafe](https://typesafe.ai)'s
+System One model, Jev, and keep the text model for wording. The split follows
+what each model is for:
+
+| Decision | Owner | Why |
+| --- | --- | --- |
+| Which scope covers which top-level directory | Jev, when the mode is `on` | Measured correct on this repository's own scopes |
+| Which technologies a project uses | **The text model** | Measured: exact on a Go repository, one of four on a React repository |
+| The scope in a commit title | Jev, above a 0.7 confidence floor | Measured in agreement with the recorded titles more often than the baseline |
+| How changed files group into commits | **The text model** | Measured worse: it over-splits one change into one commit per directory |
+| The commit type | **The text model** | Measured worse than the baseline, and its confidence carries no signal |
+| Which lever a rejected commit needs | **The text model** | Not yet measured |
+| Commit message wording, scope descriptions | The text model | Jev writes no text |
+
+A judgment runs on a structured summary: changed paths, line counts, and the
+symbols the diff touched. The diff body never travels to the second provider,
+which keeps the cost down and the source code inside the repository's existing
+provider boundary.
+
+### Modes
+
+| Mode | Behavior |
+| --- | --- |
+| `shadow` (default with a key) | Every judgment runs and is recorded; the text model still decides |
+| `on` | A confident judgment decides |
+| `off` | No judgment runs |
+
+Shadow mode is the default because a judgment has to be compared with the
+behavior it replaces before it replaces it. It costs both providers: one Jev
+request per seam plus the model's own call.
+
+```bash
+git-agent config set jev_api_key YOUR_TYPESAFE_KEY   # or export TYPESAFE_API_KEY
+git-agent config set jev_mode on                     # shadow is the default
+git-agent config set jev_min_confidence 0.7         # default 0.7
+git-agent config set jev_max_calls 4                # per-run call budget
+git-agent config set jev_model jev-latest            # optional, this is the default
+```
+
+Run `git-agent -v commit` to read one line per judgment: what it decided, what the
+model decided, whether they agree, the latency, and the state size.
+
+Every judgment falls back to the text model when the service is unreachable,
+when the answer is less confident than its floor, or when the per-run call budget
+is spent. A judgment never blocks a commit.
+
+A seam that misses its floor twice in one run stops being called for the rest of
+that run, so a seam that cannot reach its floor costs two calls instead of one
+per commit. Shadow mode is exempt: there a miss is the expected outcome, because
+measuring is the purpose of the mode.
+
+### Measuring a seam
+
+The evaluation harness replays a repository's own history through a judgment and
+reports agreement with the recorded commit titles. It needs a key and never runs
+in the normal suite:
+
+```bash
+TYPESAFE_API_KEY=... JEV_EVAL_REPO=. go test -tags jevlive -v ./infrastructure/eval/
+```
+
+The report separates the two halves of a commit prefix, because they are gated
+separately, and it lists the confidence each disagreement happened at. A floor
+only means something when the wrong answers arrive below it.
+
+Scoring a judgment against the human title is not enough. A judgment is only
+worth adopting when it beats the behavior it replaces, so the comparison that
+matters runs the generative provider and the judgment over the same commits:
+
+```bash
+TYPESAFE_API_KEY=... AB_BASE_URL=... AB_MODEL=... \
+  go test -tags jevlive -v -run TestLiveAgainstBaseline ./infrastructure/eval/
+```
+
+Run over three repositories, that comparison is what moved the grouping, type and
+technology seams back to the text model: the judgment lost the type in 21 of 32
+samples against 26 of 32 for the baseline, it split changes the baseline kept
+whole, and it found one of four technologies in a React repository. All three
+still run in shadow mode, so they stay measured and nothing replaces a working
+decision. Only the per-directory scope judgment remains adoptable, because it
+decided a repository's own scopes correctly and costs one request.
+
+If the measurements never move, delete the layer. It is additive: no seam is
+required by any other, and removing `infrastructure/typesafe` plus its wiring
+leaves the CLI exactly as it was.
+
+## Staged changes lead, and are committed as staged
+
+When the index already holds changes, `git-agent` commits exactly that content as the first commit, from the diff the index holds. Nothing is unstaged and nothing is re-added, so a file the user staged with `git add -p` keeps its boundary: the region they staged is what the commit carries, and the rest of the working tree follows in later commits. `--no-stage` commits the index and nothing else, which is what its help says.
+
+When the index holds a complete file change, the commits are the same ones this run made before: the staged file forms its own commit and the other changes are grouped as usual. When the staged content is only part of a file's change, that file is committed in two parts, first what was staged and then the rest, because the region the user left alone must not ride along.
+
+When a file the run is about to commit as a whole holds two or more regions, the run says so on standard error, names the regions, and points at `git add -p <file>`. It reports; it never splits on its own. Where a commit boundary belongs is the user's judgment, and the index is how they express it.
+
+## Project config (`.git-agent/config.yml`)
 
 Generated by `git-agent init`. Defines commit scopes and hook configuration. Also reads `.git-agent/project.yml` for backward compatibility:
 
