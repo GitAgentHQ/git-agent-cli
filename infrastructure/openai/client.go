@@ -379,7 +379,7 @@ Rules (STRICTLY enforce):
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
 - ALL scope names MUST be short — single words or abbreviations only
 - Single-word names: use as-is, EXCEPT apply well-known short forms for long words ("application" -> "app", "infrastructure" -> "infra", "cmd" -> "cli")
-- Hyphenated or multi-word names: MUST convert to initials/acronym ("git-agent-proxy" -> "gap", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
+- Hyphenated or multi-word names: MUST convert to initials/acronym ("payment-service" -> "ps", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
 - If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation over any derived form
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes

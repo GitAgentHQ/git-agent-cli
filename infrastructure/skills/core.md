@@ -28,11 +28,9 @@ Use your code-search tools and targeted tests to explore the current codebase be
    No provider flags on the first attempt. Use `git-agent commit` only when the
    explicit commit subcommand is specifically needed.
 
-3. **On auth error (401 / missing key)** — official release binaries already
-   route through the free shared gateway with zero config. If an auth error
-   still appears, retry with `--free` to force routing through the shared
-   gateway, overriding any local `api_key` / `base_url` / `model`. If that still
-   fails, guide the user to bring their own key via
+3. **On auth error (401 / missing key)** — the CLI has no built-in endpoint, so
+   an auth error means the endpoint rejected the configured credential. Check
+   `base_url`, `model`, and `api_key`, then set them in
    `~/.config/git-agent/config.yml`:
    ```yaml
    base_url: https://api.openai.com/v1

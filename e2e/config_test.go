@@ -18,20 +18,19 @@ func TestConfigShowCmd_Runs(t *testing.T) {
 	}
 }
 
-// TestConfigShow_ModeNotFreeForCustomBaseURL locks in the mode label: an
-// arbitrary OpenAI-compatible endpoint with no api_key is NOT the shared
-// gateway, so config show -o json must report mode "configured", never "free".
-func TestConfigShow_ModeNotFreeForCustomBaseURL(t *testing.T) {
+// TestConfigShow_HasNoModeKey: the mode label existed only to distinguish the
+// shared gateway from a user endpoint, so it is gone with the gateway.
+func TestConfigShow_HasNoModeKey(t *testing.T) {
 	dir := newGitRepo(t)
 	out, code := gitAgent(t, dir, "config", "show", "-o", "json", "--base-url", "http://localhost:11434/v1")
 	if code != 0 {
 		t.Fatalf("git-agent config show: exit code %d\noutput: %s", code, out)
 	}
-	if !strings.Contains(out, `"mode": "configured"`) {
-		t.Errorf("expected mode configured for custom base_url, got: %s", out)
+	if strings.Contains(out, `"mode"`) {
+		t.Errorf("config show must not report a mode, got: %s", out)
 	}
-	if strings.Contains(out, `"mode": "free"`) {
-		t.Errorf("custom base_url must not be labeled free mode, got: %s", out)
+	if !strings.Contains(out, `"base_url": "http://localhost:11434/v1"`) {
+		t.Errorf("expected the configured base_url in the output, got: %s", out)
 	}
 }
 

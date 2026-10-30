@@ -136,7 +136,6 @@ func defaultMeasuredRepos() []string {
 	for _, candidate := range []string{
 		"/Users/FradSer/Developer/FradSer/git-agent/git-agent-cli",
 		"/Users/FradSer/Developer/FradSer/git-agent/git-agent-home",
-		"/Users/FradSer/Developer/FradSer/git-agent/git-agent-proxy",
 		"/Users/FradSer/Developer/FradSer/campbase",
 		"/Users/FradSer/Developer/FradSer/mai",
 	} {

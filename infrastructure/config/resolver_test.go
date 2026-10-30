@@ -144,41 +144,32 @@ func TestResolve_GenericModelEnvNotCapturedForAttribution(t *testing.T) {
 	}
 }
 
-// TestResolve_BuildBaseURLFallback locks in the zero-config free-gateway
-// path: when no user config sets base_url, the build-time embedded gateway
-// URL (official release binary) becomes the default.
-func TestResolve_BuildBaseURLFallback(t *testing.T) {
-	orig := config.BuildBaseURL
-	config.BuildBaseURL = "https://git-agent-gateway.example.com"
-	defer func() { config.BuildBaseURL = orig }()
-
+// TestResolve_NoBuiltInEndpoint locks in the absence of a built-in endpoint:
+// with no flag, no git config, and no config file, base_url stays empty, so the
+// caller reports a configuration error instead of routing somewhere.
+func TestResolve_NoBuiltInEndpoint(t *testing.T) {
 	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.BaseURL != "https://git-agent-gateway.example.com" {
-		t.Errorf("expected BuildBaseURL fallback, got %q", got.BaseURL)
+	if got.BaseURL != "" {
+		t.Errorf("expected no built-in endpoint, got %q", got.BaseURL)
 	}
-	// api_key stays empty in free mode — the gateway holds the real credential.
 	if got.APIKey != "" {
-		t.Errorf("expected empty APIKey in free mode, got %q", got.APIKey)
+		t.Errorf("expected no built-in credential, got %q", got.APIKey)
 	}
 }
 
-// TestResolve_UserBaseURLOverridesBuildBaseURL ensures explicit user config
-// still wins over the built-in gateway URL.
-func TestResolve_UserBaseURLOverridesBuildBaseURL(t *testing.T) {
-	orig := config.BuildBaseURL
-	config.BuildBaseURL = "https://git-agent-gateway.example.com"
-	defer func() { config.BuildBaseURL = orig }()
-
-	path := writeTempConfig(t, "base_url: \"https://custom.api.com/v1\"\n")
+// TestResolve_UserBaseURLIsUsed: a configured base_url is the only source of
+// the endpoint.
+func TestResolve_UserBaseURLIsUsed(t *testing.T) {
+	path := writeTempConfig(t, "base_url: \"https://api.example.com/v1\"\n")
 	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.BaseURL != "https://custom.api.com/v1" {
-		t.Errorf("expected user base_url to override built-in, got %q", got.BaseURL)
+	if got.BaseURL != "https://api.example.com/v1" {
+		t.Errorf("expected the configured base_url, got %q", got.BaseURL)
 	}
 }
 
@@ -260,82 +251,19 @@ func TestResolve_FlagBaseURLOverridesFile(t *testing.T) {
 	}
 }
 
-// TestResolve_ForceFreeGatewayOverridesEverything locks in the --free semantic:
-// with the embedded gateway URL present, api_key/base_url/model from flags, git
-// config, and the YAML file are all discarded and routing is pinned to the free
-// shared gateway (Worker pins the model server-side, credential held upstream).
-func TestResolve_ForceFreeGatewayOverridesEverything(t *testing.T) {
-	orig := config.BuildBaseURL
-	config.BuildBaseURL = "https://git-agent-gateway.example.com"
-	defer func() { config.BuildBaseURL = orig }()
-
-	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\ncloudflare_ai_gateway_id: \"file-gateway\"\n")
-
-	flags := config.ProviderConfig{
-		APIKey:           "flag-key",
-		BaseURL:          "https://custom.api.com/v1",
-		Model:            "claude-3-5-haiku",
-		ForceFreeGateway: true,
-	}
-	got, err := config.Resolve(context.Background(), flags, path)
+// TestResolve_CloudflareAIGatewayIDSurvivesEndpointResolution: the AI Gateway id
+// is a routing modifier on the user's own endpoint, so it always stays.
+func TestResolve_CloudflareAIGatewayIDSurvivesEndpointResolution(t *testing.T) {
+	path := writeTempConfig(t, "base_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\ncloudflare_ai_gateway_id: \"my-gateway\"\n")
+	got, err := config.Resolve(context.Background(), config.ProviderConfig{}, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.APIKey != "" {
-		t.Errorf("expected empty APIKey in forced-free mode, got %q", got.APIKey)
+	if got.CloudflareAIGatewayID != "my-gateway" {
+		t.Errorf("expected the configured gateway id, got %q", got.CloudflareAIGatewayID)
 	}
-	if got.BaseURL != "https://git-agent-gateway.example.com" {
-		t.Errorf("expected BaseURL pinned to embedded gateway, got %q", got.BaseURL)
-	}
-	if got.Model != "" {
-		t.Errorf("expected empty Model (Worker pins it) in forced-free mode, got %q", got.Model)
-	}
-	if got.CloudflareAIGatewayID != "" {
-		t.Errorf("expected empty CloudflareAIGatewayID in forced-free mode, got %q", got.CloudflareAIGatewayID)
-	}
-}
-
-// TestResolve_ForceFreeGatewayOverridesZeroConfig: --free still resolves without
-// a config file; the routing fields come solely from the embedded gateway URL.
-func TestResolve_ForceFreeGatewayOverridesZeroConfig(t *testing.T) {
-	orig := config.BuildBaseURL
-	config.BuildBaseURL = "https://git-agent-gateway.example.com"
-	defer func() { config.BuildBaseURL = orig }()
-
-	got, err := config.Resolve(context.Background(), config.ProviderConfig{ForceFreeGateway: true}, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.APIKey != "" {
-		t.Errorf("expected empty APIKey, got %q", got.APIKey)
-	}
-	if got.BaseURL != "https://git-agent-gateway.example.com" {
-		t.Errorf("expected BaseURL %q, got %q", "https://git-agent-gateway.example.com", got.BaseURL)
-	}
-}
-
-// TestResolve_ForceFreeGatewayDevBuildNoBaseURL: on a dev build (no embedded
-// gateway URL), --free leaves base_url empty so providerConfigError can surface
-// the "install an official release binary" hint instead of silently routing
-// nowhere.
-func TestResolve_ForceFreeGatewayDevBuildNoBaseURL(t *testing.T) {
-	orig := config.BuildBaseURL
-	config.BuildBaseURL = ""
-	defer func() { config.BuildBaseURL = orig }()
-
-	path := writeTempConfig(t, "api_key: \"file-key\"\nbase_url: \"https://api.example.com/v1\"\nmodel: \"gpt-4\"\n")
-	got, err := config.Resolve(context.Background(), config.ProviderConfig{ForceFreeGateway: true}, path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.APIKey != "" {
-		t.Errorf("expected empty APIKey, got %q", got.APIKey)
-	}
-	if got.BaseURL != "" {
-		t.Errorf("expected empty BaseURL on dev build, got %q", got.BaseURL)
-	}
-	if got.Model != "" {
-		t.Errorf("expected empty Model, got %q", got.Model)
+	if got.BaseURL != "https://api.example.com/v1" {
+		t.Errorf("expected the configured endpoint, got %q", got.BaseURL)
 	}
 }
 

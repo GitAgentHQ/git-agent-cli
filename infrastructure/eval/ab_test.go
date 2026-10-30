@@ -119,7 +119,7 @@ func measureRepo(t *testing.T, repo string, limit int) {
 	judge := typesafe.NewTypeScopeJudge(liveClient(t))
 	grouper := typesafe.NewGroupDecider(liveClient(t))
 
-	// Two passes, because the free shared gateway rate-limits and Jev does not.
+	// Two passes, because the configured endpoint rate-limits and Jev does not.
 	// Measuring both sides inside one loop starves the baseline and turns a
 	// measurement into a comparison of nothing.
 	delay := abDelay()
@@ -418,7 +418,7 @@ func absPath(dir string) string {
 	return abs
 }
 
-// abDelay spaces the baseline calls so the free shared gateway does not
+// abDelay spaces the baseline calls so the configured endpoint does not
 // rate-limit the side being measured.
 func abDelay() time.Duration {
 	if v := os.Getenv("AB_DELAY"); v != "" {

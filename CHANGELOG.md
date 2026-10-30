@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Remove the free shared gateway and the `--free` flag: the CLI ships no built-in endpoint any more. Configure `base_url` and `model` in `~/.config/git-agent/config.yml` or pass `--base-url` and `--model`, with `--api-key` for a hosted endpoint or `cloudflare_ai_gateway_id` to route through your own AI Gateway; a missing endpoint stops with that guidance, and `git-agent config show -o json` no longer reports a `mode` field (cli)
+
 ### Fixed
 - Commit the change a user staged exactly as staged and first, instead of unstaging the path and re-adding it whole, which swallowed the working tree regions the user had not staged and left `--no-stage` committing more than its help promises. A path whose staged content is only part of its change is now committed in two parts, first what was staged and then the rest; a path staged whole commits as before (cli)
 

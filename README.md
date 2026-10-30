@@ -182,30 +182,35 @@ api_key: sk-...
 model: gpt-4o
 ```
 
-### Free shared gateway (zero config)
+### Endpoint configuration (required)
 
-Official release binaries point at a free shared gateway by default, so **no
-configuration is required** — just run `git-agent commit`. Your requests are
-routed through a Cloudflare Worker that holds the upstream credential
-server-side (never in the binary) and rate-limits anonymous free usage.
-
-To opt out and use your own endpoint, set `base_url` (and optionally `api_key`
-/ `model`) — any user config overrides the built-in gateway URL.
-
-Examples for other providers:
+git-agent ships no built-in endpoint. Set one endpoint and one model, either in
+`~/.config/git-agent/config.yml`:
 
 ```yaml
-# Bring your own key — Cloudflare AI Gateway + Workers AI
+base_url: https://api.example.com/v1
+api_key: YOUR_TOKEN     # omit for a local endpoint that needs no key
+model: your-model-name
+```
+
+or per run with `--base-url`, `--api-key`, and `--model`. The CLI reads, from
+highest priority: CLI flag, `git config --local git-agent.*`, then
+`~/.config/git-agent/config.yml`. A missing `base_url` or `model` stops the run
+and names every remedy.
+
+Provider examples:
+
+```yaml
+# Cloudflare AI Gateway + Workers AI
 base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
 api_key: YOUR_CLOUDFLARE_API_TOKEN
 model: "@cf/zai-org/glm-4.7-flash"
 cloudflare_ai_gateway_id: YOUR_GATEWAY_ID # use "default" for the default gateway
 ```
 
-When you bring your own key, git-agent routes requests through that endpoint
-directly; for Cloudflare, `cloudflare_ai_gateway_id` opts into the gateway,
-disables prompt/response payload storage while retaining metadata, and leaves
-retries to the CLI so retry layers cannot multiply.
+`cloudflare_ai_gateway_id` routes requests through your own AI Gateway, disables
+prompt/response payload storage while retaining metadata, and leaves retries to
+the CLI, so retry layers cannot multiply.
 
 ```yaml
 # Local Ollama
