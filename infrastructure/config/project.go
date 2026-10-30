@@ -66,6 +66,7 @@ type rawProjectConfig struct {
 	Language                string     `yaml:"language,omitempty"`
 	RequireGitAgentCoAuthor *bool      `yaml:"require_git_agent_co_author,omitempty"`
 	RequireModelCoAuthor    *bool      `yaml:"require_model_co_author,omitempty"`
+	AutoModelCoAuthor       *bool      `yaml:"auto_model_co_author,omitempty"`
 }
 
 func loadRawProjectConfig(path string) rawProjectConfig {
@@ -165,11 +166,19 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	if local.RequireModelCoAuthor != nil {
 		merged.RequireModelCoAuthor = local.RequireModelCoAuthor
 	}
+	if local.AutoModelCoAuthor != nil {
+		merged.AutoModelCoAuthor = local.AutoModelCoAuthor
+	} else if proj.AutoModelCoAuthor != nil {
+		merged.AutoModelCoAuthor = proj.AutoModelCoAuthor
+	} else if user.AutoModelCoAuthor != nil {
+		merged.AutoModelCoAuthor = user.AutoModelCoAuthor
+	}
 	if len(merged.Scopes) == 0 && len(merged.Hooks) == 0 && merged.MaxDiffLines == nil &&
 		merged.MaxDiffBytes == nil && merged.MaxInputTokens == nil && merged.MaxPlanFiles == nil && merged.PlanFallback == "" &&
 		merged.RequireGitAgentCoAuthor == nil &&
 		merged.Language == "" &&
-		merged.RequireModelCoAuthor == nil {
+		merged.RequireModelCoAuthor == nil &&
+		merged.AutoModelCoAuthor == nil {
 		return nil
 	}
 
@@ -201,6 +210,9 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 	}
 	if merged.RequireModelCoAuthor != nil {
 		cfg.RequireModelCoAuthor = *merged.RequireModelCoAuthor
+	}
+	if merged.AutoModelCoAuthor != nil {
+		cfg.AutoModelCoAuthor = merged.AutoModelCoAuthor
 	}
 	return cfg
 }

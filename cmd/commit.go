@@ -99,6 +99,12 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 		projCfg.RequireModelCoAuthor = true
 	}
+	if providerCfg.AutoModelCoAuthor != nil {
+		if projCfg == nil {
+			projCfg = &project.Config{}
+		}
+		projCfg.AutoModelCoAuthor = providerCfg.AutoModelCoAuthor
+	}
 
 	var trailers []commit.Trailer
 	for _, a := range coAuthors {
@@ -122,8 +128,10 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	// coding agent that generated the code changes. The model configured for
 	// git-agent's own inference (providerCfg.Model) is strictly for commit
 	// drafting/planning and must NEVER be attributed as a co-author.
+	// Gated by auto_model_co_author (default true); set to false to disable.
+	autoModelCoAuthor := projCfg == nil || projCfg.AutoModelCoAuthor == nil || *projCfg.AutoModelCoAuthor
 	domains := project.DefaultModelCoAuthorDomains
-	if !commit.HasModelCoAuthor(trailers, domains) && providerCfg.SessionModel != "" {
+	if autoModelCoAuthor && !commit.HasModelCoAuthor(trailers, domains) && providerCfg.SessionModel != "" {
 		if inferred, ok := commit.InferModelCoAuthor(providerCfg.SessionModel); ok {
 			trailers = append(trailers, inferred)
 		}
@@ -209,6 +217,9 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		Verbose:      verbose,
 		LogWriter:    logWriter,
 		OutWriter:    outWriter,
+		// Warnings go to stderr whether or not a terminal is attached, so a
+		// scripted run also reads them.
+		WarnWriter: cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return renderCommitFailure(cmd, err)

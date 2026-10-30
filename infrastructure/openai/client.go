@@ -272,7 +272,7 @@ const englishCaseInstruction = "For English output, keep the title description A
 // languages keep their natural capitalization and orthography.
 func languageInstruction(language, intent string) string {
 	language = strings.TrimSpace(language)
-	if language == "" || strings.EqualFold(language, "auto") {
+	if strings.EqualFold(language, "auto") {
 		if strings.TrimSpace(intent) != "" {
 			instruction := "Write the title description, bullets, and explanation in the same language as the PRIMARY DIRECTIVE."
 			if isLikelyEnglish(intent) {
@@ -282,19 +282,21 @@ func languageInstruction(language, intent string) string {
 		}
 		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
 	}
+	if language == "" {
+		if strings.TrimSpace(intent) != "" {
+			return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
+		}
+		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
+	}
 	if isEnglishLanguage(language) {
 		return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
 	}
-	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", language)
+	displayName := project.ResolveLanguageDisplayName(language)
+	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", displayName)
 }
 
 func isEnglishLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "english", "en", "en-us", "en-gb", "en-au", "en-ca":
-		return true
-	default:
-		return false
-	}
+	return project.IsEnglishLanguage(language)
 }
 
 func isLikelyEnglish(text string) bool {
@@ -319,7 +321,10 @@ func effectiveLanguage(override string, cfg *project.Config) string {
 	if strings.TrimSpace(override) != "" {
 		return override
 	}
-	return languageForConfig(cfg)
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Language
 }
 
 const planSystemPrompt = `You are an expert software engineer. Analyse the provided file paths and split them into meaningful atomic commits.
@@ -379,7 +384,7 @@ Rules (STRICTLY enforce):
 - Use the commit log (subject + changed files) to understand which directories represent distinct concerns and how they are named in practice
 - ALL scope names MUST be short — single words or abbreviations only
 - Single-word names: use as-is, EXCEPT apply well-known short forms for long words ("application" -> "app", "infrastructure" -> "infra", "cmd" -> "cli")
-- Hyphenated or multi-word names: MUST convert to initials/acronym ("git-agent-proxy" -> "gap", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
+- Hyphenated or multi-word names: MUST convert to initials/acronym ("payment-service" -> "ps", "my-frontend" -> "mf"); use the final segment only when it is already short and unambiguous on its own
 - If commit history shows a consistent scope abbreviation for a directory, prefer that abbreviation over any derived form
 - NEVER invent scopes from file names or internal package names (e.g. do NOT derive "cs" from "commit_service.go")
 - NEVER use commit types (feat, fix, chore, docs, refactor, test, style, perf) as scopes

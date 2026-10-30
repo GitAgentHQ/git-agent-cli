@@ -74,35 +74,28 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 	apiKey, _ := cmd.Flags().GetString("api-key")
 	model, _ := cmd.Flags().GetString("model")
 	baseURL, _ := cmd.Flags().GetString("base-url")
-	forceFree, _ := cmd.Flags().GetBool("free")
 	return infraConfig.Resolve(cmd.Context(), infraConfig.ProviderConfig{
-		APIKey:           apiKey,
-		Model:            model,
-		BaseURL:          baseURL,
-		ForceFreeGateway: forceFree,
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: baseURL,
 	}, userConfigPath())
 }
 
 // providerConfigError validates the resolved provider config.
 //
-// Two modes:
-//   - Direct: the user set an api_key, so they are calling their own endpoint
-//     and must also provide base_url and model.
-//   - Free shared gateway: no api_key, so requests go to the built-in (or
-//     user-configured) gateway URL. The Worker pins the model server-side, so
-//     model may be empty.
+// The CLI ships no built-in endpoint. The user configures one of two shapes:
+// an OpenAI-compatible base_url with a model, optionally with an api_key; or
+// the same endpoint plus a cloudflare_ai_gateway_id, which routes the request
+// through the user's own AI Gateway. The message names every remedy, because a
+// fresh install has nothing else to go on.
 func providerConfigError(cfg *infraConfig.ProviderConfig) string {
-	if cfg == nil {
-		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set --api-key / base_url / model"
+	if cfg == nil || cfg.BaseURL == "" {
+		return "error: no provider configured\n" +
+			"hint: set base_url and model in ~/.config/git-agent/config.yml, or pass --base-url and --model\n" +
+			"      add --api-key for a hosted endpoint, or cloudflare_ai_gateway_id to route through your AI Gateway"
 	}
-	if cfg.APIKey != "" {
-		if cfg.BaseURL == "" || cfg.Model == "" {
-			return "error: incomplete AI provider configuration\nhint: set base_url and model in ~/.config/git-agent/config.yml or pass --base-url and --model"
-		}
-		return ""
-	}
-	if cfg.BaseURL == "" {
-		return "error: no provider configured\nhint: install an official release binary (free shared gateway) or set base_url to an OpenAI-compatible endpoint"
+	if cfg.Model == "" {
+		return "error: no model configured\nhint: set model in ~/.config/git-agent/config.yml or pass --model"
 	}
 	return ""
 }
@@ -281,7 +274,6 @@ func init() {
 	rootCmd.PersistentFlags().String("api-key", "", "API key for the AI provider")
 	rootCmd.PersistentFlags().String("model", "", "model to use for generation")
 	rootCmd.PersistentFlags().String("base-url", "", "base URL for the AI provider")
-	rootCmd.PersistentFlags().Bool("free", false, "force routing through the free shared gateway, overriding api_key / base_url / model")
 
 	addCommitBehaviorFlags(rootCmd)
 	addOutputFlagWithDefault(rootCmd, "text")

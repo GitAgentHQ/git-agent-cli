@@ -59,6 +59,12 @@ type CommitGitClient interface {
 	DetectRenames(ctx context.Context) ([]diff.Rename, error)
 	StageFiles(ctx context.Context, files []string) error
 	UnstageAll(ctx context.Context) error
+	// IndexTree writes the index out as a tree object. ok is false when the
+	// index cannot be written as one, such as while a merge conflict stands.
+	IndexTree(ctx context.Context) (tree string, ok bool, err error)
+	// RestoreIndexTree makes the index hold tree again, leaving the working tree
+	// alone.
+	RestoreIndexTree(ctx context.Context, tree string) error
 	Commit(ctx context.Context, message string) (string, error)
 	CommitHash(ctx context.Context) (string, error)
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
@@ -79,7 +85,13 @@ type CommitRequest struct {
 	MaxPlanFiles int // 0 = commit.DefaultMaxPlanFiles; caps planner prompt file-list size
 	Verbose      bool
 	LogWriter    io.Writer // verbose-only output
-	OutWriter    io.Writer // always-visible output (hook block context, retries)
+	// OutWriter carries progress lines. A caller that is not a terminal may
+	// leave it nil, which is why nothing that must reach the user goes here.
+	OutWriter io.Writer
+	// WarnWriter carries the lines a run must not swallow, such as a file that
+	// holds several regions and could be split by the user. It is nil only in a
+	// caller that wants them on OutWriter instead.
+	WarnWriter io.Writer
 }
 
 type CommitService struct {
@@ -263,17 +275,54 @@ func (s *CommitService) Commit(ctx context.Context, req CommitRequest) (*CommitR
 }
 
 func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (*CommitResult, error) {
-	staged, unstaged, err := s.collectChanges(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	allowed := allowedFiles(staged, unstaged)
-	s.vlog(req, "staged files: %v", staged.Files)
-	s.vlog(req, "unstaged files: %v", unstaged.Files)
+	// The index is the only split the run acts on. Whatever the user staged is
+	// committed as staged, and first, so no later step can restage the path whole
+	// and pull the rest of the working tree into it.
+	restoreIndex := s.recordIndexForDryRun(ctx, req)
+	defer restoreIndex()
 
+	// Scopes are resolved before the first commit, because that commit's message is
+	// written from them: a run with no configured scopes generates them, and the
+	// staged commit would otherwise be the one commit written without a scope.
 	if err := s.ensureScopes(ctx, req); err != nil {
 		return nil, err
 	}
+
+	stagedFirst, err := s.commitStagedContent(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	// The run reports the two file lists it works from on every path: what the
+	// index held, and what is left over.
+	var stagedFiles []string
+	if stagedFirst != nil {
+		stagedFiles = stagedFirst.Files
+	}
+	s.vlog(req, "staged files: %v", stagedFiles)
+	if req.NoStage {
+		if stagedFirst == nil {
+			return nil, fmt.Errorf("no staged changes (hint: stage files with git add, or remove --no-stage)")
+		}
+		return &CommitResult{Commits: []SingleCommitResult{*stagedFirst}, DryRun: req.DryRun}, nil
+	}
+
+	remainder, err := s.remainderDiff(ctx, stagedFiles)
+	if err != nil {
+		return nil, err
+	}
+	s.reportSplittableFiles(req, remainder)
+	if len(remainder.Files) == 0 {
+		if stagedFirst != nil {
+			return &CommitResult{Commits: []SingleCommitResult{*stagedFirst}, DryRun: req.DryRun}, nil
+		}
+		return nil, fmt.Errorf("no changes")
+	}
+
+	// From here the run is develop's file-level flow, over the remainder alone.
+	staged, unstaged := stagedBoundaryPlanInputs(remainder)
+	allowed := allowedFiles(staged, unstaged)
+	s.vlog(req, "unstaged files: %v", unstaged.Files)
+
 	renamed, err := s.detectRenames(ctx, req)
 	if err != nil {
 		return nil, err
@@ -282,47 +331,36 @@ func (s *CommitService) commitWorkflow(ctx context.Context, req CommitRequest) (
 	if err != nil {
 		return nil, err
 	}
-	return s.commitGroups(ctx, req, plan, allowed, renamed)
+	result, err := s.commitGroups(ctx, req, plan, allowed, renamed)
+	if err != nil {
+		return nil, err
+	}
+	if stagedFirst != nil {
+		result.Commits = append([]SingleCommitResult{*stagedFirst}, result.Commits...)
+	}
+	return result, nil
 }
 
-func (s *CommitService) collectChanges(ctx context.Context, req CommitRequest) (*diff.StagedDiff, *diff.StagedDiff, error) {
-	if req.NoStage {
-		staged, err := s.git.StagedDiff(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("staged diff: %w", err)
-		}
-		if len(staged.Files) == 0 {
-			return nil, nil, fmt.Errorf("no staged changes (hint: stage files with git add, or remove --no-stage)")
-		}
-		return staged, &diff.StagedDiff{}, nil
+// recordIndexForDryRun returns a function that puts the index back after a dry
+// run.
+//
+// A dry run stages each group to show the diff it would commit, and that staging
+// would otherwise clear the very boundary this fix exists to respect. The recorded
+// tree is the index as the user left it. A real run needs nothing here, because it
+// commits the staged content instead of discarding it.
+func (s *CommitService) recordIndexForDryRun(ctx context.Context, req CommitRequest) func() {
+	if !req.DryRun {
+		return func() {}
 	}
-	preStaged, err := s.git.StagedDiff(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("staged diff: %w", err)
+	tree, ok, err := s.git.IndexTree(ctx)
+	if err != nil || !ok {
+		return func() {}
 	}
-	stagedSet := make(map[string]bool, len(preStaged.Files))
-	for _, file := range preStaged.Files {
-		stagedSet[file] = true
-	}
-	allFiles, err := s.git.AllChangedFiles(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("listing changed files: %w", err)
-	}
-	if len(allFiles) == 0 {
-		return nil, nil, fmt.Errorf("no changes")
-	}
-	if len(stagedSet) == 0 {
-		return &diff.StagedDiff{}, &diff.StagedDiff{Files: allFiles}, nil
-	}
-	var stagedFiles, unstagedFiles []string
-	for _, file := range allFiles {
-		if stagedSet[file] {
-			stagedFiles = append(stagedFiles, file)
-		} else {
-			unstagedFiles = append(unstagedFiles, file)
+	return func() {
+		if err := s.git.RestoreIndexTree(context.WithoutCancel(ctx), tree); err != nil {
+			s.vlog(req, "index restore after the dry run failed: %v", err)
 		}
 	}
-	return &diff.StagedDiff{Files: stagedFiles}, &diff.StagedDiff{Files: unstagedFiles}, nil
 }
 
 func allowedFiles(staged, unstaged *diff.StagedDiff) map[string]bool {
@@ -858,6 +896,21 @@ func (s *CommitService) prepareGroup(ctx context.Context, req CommitRequest, gro
 		return nil, nil, nil
 	}
 
+	genDiff, err := s.preparedForModel(ctx, req, groupDiff, fmt.Sprintf("commit %d/%d", groupIdx, totalGroups))
+	if err != nil {
+		return nil, nil, err
+	}
+	return groupDiff, genDiff, nil
+}
+
+// preparedForModel applies the content filter and both size caps to a diff the run
+// is about to describe to the model, and falls back to a stat synopsis when one
+// file alone saturates the byte cap. label names the commit in the warning lines.
+//
+// Every path that shows a diff to the model goes through here: a diff that skips
+// the caps can exceed what the endpoint accepts, and one that skips the filter
+// sends lock files and binaries the model does not need.
+func (s *CommitService) preparedForModel(ctx context.Context, req CommitRequest, groupDiff *diff.StagedDiff, label string) (*diff.StagedDiff, error) {
 	genDiff := groupDiff
 	if s.filter != nil {
 		if filtered, filterErr := s.filter.Filter(ctx, groupDiff); filterErr == nil {
@@ -865,20 +918,20 @@ func (s *CommitService) prepareGroup(ctx context.Context, req CommitRequest, gro
 		}
 	}
 	if s.truncator == nil {
-		return groupDiff, genDiff, nil
+		return genDiff, nil
 	}
 
 	maxBytes := effectiveMaxBytes(req.MaxBytes)
 	truncated, didTruncate, err := s.truncator.Truncate(ctx, genDiff, req.MaxLines, maxBytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("truncate group diff: %w", err)
+		return nil, fmt.Errorf("truncate group diff: %w", err)
 	}
 	if didTruncate {
 		s.vlog(req, "group diff truncated (%s)", truncationLimitDesc(req.MaxLines, maxBytes))
 	}
 	genDiff = truncated
 	if !didTruncate {
-		return groupDiff, genDiff, nil
+		return genDiff, nil
 	}
 
 	if len(genDiff.Files) == 1 && len(genDiff.Content) == maxBytes {
@@ -886,15 +939,15 @@ func (s *CommitService) prepareGroup(ctx context.Context, req CommitRequest, gro
 		if statErr == nil {
 			synopsis := buildSynopsis(genDiff.Files[0], stat, len(groupDiff.Content), maxBytes)
 			genDiff = &diff.StagedDiff{Files: genDiff.Files, Content: synopsis, Lines: strings.Count(synopsis, "\n")}
-			s.out(req, "Warning: commit %d/%d: falling back to diff synopsis for %s", groupIdx, totalGroups, genDiff.Files[0])
+			s.warn(req, "Warning: %s: falling back to diff synopsis for %s", label, genDiff.Files[0])
 		} else {
 			s.vlog(req, "stat fallback failed (continuing with truncated diff): %v", statErr)
-			s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+			s.warn(req, "Warning: %s: diff exceeds limit, truncating to %d bytes", label, maxBytes)
 		}
 	} else {
-		s.out(req, "Warning: commit %d/%d: diff exceeds limit, truncating to %d bytes", groupIdx, totalGroups, maxBytes)
+		s.warn(req, "Warning: %s: diff exceeds limit, truncating to %d bytes", label, maxBytes)
 	}
-	return groupDiff, genDiff, nil
+	return genDiff, nil
 }
 
 func (s *CommitService) generateGroupMessage(ctx context.Context, req CommitRequest, genDiff, groupDiff *diff.StagedDiff, groupIdx, totalGroups int, inheritedFeedback string) (*generatedGroupMessage, error) {

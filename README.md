@@ -182,30 +182,35 @@ api_key: sk-...
 model: gpt-4o
 ```
 
-### Free shared gateway (zero config)
+### Endpoint configuration (required)
 
-Official release binaries point at a free shared gateway by default, so **no
-configuration is required** — just run `git-agent commit`. Your requests are
-routed through a Cloudflare Worker that holds the upstream credential
-server-side (never in the binary) and rate-limits anonymous free usage.
-
-To opt out and use your own endpoint, set `base_url` (and optionally `api_key`
-/ `model`) — any user config overrides the built-in gateway URL.
-
-Examples for other providers:
+git-agent ships no built-in endpoint. Set one endpoint and one model, either in
+`~/.config/git-agent/config.yml`:
 
 ```yaml
-# Bring your own key — Cloudflare AI Gateway + Workers AI
+base_url: https://api.example.com/v1
+api_key: YOUR_TOKEN     # omit for a local endpoint that needs no key
+model: your-model-name
+```
+
+or per run with `--base-url`, `--api-key`, and `--model`. The CLI reads, from
+highest priority: CLI flag, `git config --local git-agent.*`, then
+`~/.config/git-agent/config.yml`. A missing `base_url` or `model` stops the run
+and names every remedy.
+
+Provider examples:
+
+```yaml
+# Cloudflare AI Gateway + Workers AI
 base_url: https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
 api_key: YOUR_CLOUDFLARE_API_TOKEN
 model: "@cf/zai-org/glm-4.7-flash"
 cloudflare_ai_gateway_id: YOUR_GATEWAY_ID # use "default" for the default gateway
 ```
 
-When you bring your own key, git-agent routes requests through that endpoint
-directly; for Cloudflare, `cloudflare_ai_gateway_id` opts into the gateway,
-disables prompt/response payload storage while retaining metadata, and leaves
-retries to the CLI so retry layers cannot multiply.
+`cloudflare_ai_gateway_id` routes requests through your own AI Gateway, disables
+prompt/response payload storage while retaining metadata, and leaves retries to
+the CLI, so retry layers cannot multiply.
 
 ```yaml
 # Local Ollama
@@ -300,6 +305,14 @@ decided a repository's own scopes correctly and costs one request.
 If the measurements never move, delete the layer. It is additive: no seam is
 required by any other, and removing `infrastructure/typesafe` plus its wiring
 leaves the CLI exactly as it was.
+
+## Staged changes lead, and are committed as staged
+
+When the index already holds changes, `git-agent` commits exactly that content as the first commit, from the diff the index holds. Nothing is unstaged and nothing is re-added, so a file the user staged with `git add -p` keeps its boundary: the region they staged is what the commit carries, and the rest of the working tree follows in later commits. `--no-stage` commits the index and nothing else, which is what its help says.
+
+When the index holds a complete file change, the commits are the same ones this run made before: the staged file forms its own commit and the other changes are grouped as usual. When the staged content is only part of a file's change, that file is committed in two parts, first what was staged and then the rest, because the region the user left alone must not ride along.
+
+When a file the run is about to commit as a whole holds two or more regions, the run says so on standard error, names the regions, and points at `git add -p <file>`. It reports; it never splits on its own. Where a commit boundary belongs is the user's judgment, and the index is how they express it.
 
 ## Project config (`.git-agent/config.yml`)
 

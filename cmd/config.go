@@ -220,15 +220,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if outputFormat(cmd) == output.FormatJSON {
-		// mode: "free" only when routing via the embedded shared gateway
-		// (no api_key AND base_url equals the built-in gateway URL),
-		// "configured" when the user brings their own key or endpoint.
-		mode := "configured"
-		if cfg.APIKey == "" && cfg.BaseURL != "" && cfg.BaseURL == infraConfig.BuildBaseURL {
-			mode = "free"
-		}
 		result := map[string]any{
-			"mode":     mode,
 			"api_key":  maskAPIKey(cfg.APIKey),
 			"model":    cfg.Model,
 			"base_url": cfg.BaseURL,

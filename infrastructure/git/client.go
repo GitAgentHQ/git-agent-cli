@@ -549,6 +549,32 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 	return nil
 }
 
+// IndexTree writes the index out as a tree object and returns its name. ok is
+// false when the index holds an unmerged path, which a tree cannot represent.
+func (c *Client) IndexTree(ctx context.Context) (tree string, ok bool, err error) {
+	out, err := gitCmd(ctx, "write-tree").Output()
+	if err != nil {
+		return "", false, nil
+	}
+	tree = strings.TrimSpace(string(out))
+	if tree == "" {
+		return "", false, nil
+	}
+	return tree, true, nil
+}
+
+// RestoreIndexTree makes the index hold exactly tree again, which is how a dry run
+// gives back the staging it borrowed. The working tree is not touched.
+func (c *Client) RestoreIndexTree(ctx context.Context, tree string) error {
+	if tree == "" {
+		return nil
+	}
+	if out, err := gitCmd(ctx, "read-tree", tree).CombinedOutput(); err != nil {
+		return fmt.Errorf("read-tree %s: %w: %s", tree, err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 func (c *Client) LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error) {
 	contentOut, err := gitCmd(ctx, "diff", "HEAD~1..HEAD", "--ignore-submodules=all").Output()
 	if err != nil {

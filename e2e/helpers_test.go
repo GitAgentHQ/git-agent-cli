@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -195,4 +197,32 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// planFromPrompt builds a planner reply that groups every path the prompt listed,
+// so a fixture does not have to know which files a flow asks about. The request
+// body carries the prompt as JSON, so its newlines arrive escaped.
+func planFromPrompt(prompt string) string {
+	var files []string
+	inList := false
+	for _, line := range strings.Split(prompt, `\n`) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Staged files") || strings.HasPrefix(trimmed, "Unstaged files") {
+			inList = true
+			continue
+		}
+		if !inList {
+			continue
+		}
+		if trimmed == "" {
+			inList = false
+			continue
+		}
+		files = append(files, trimmed)
+	}
+	quoted, err := json.Marshal(files)
+	if err != nil {
+		return `{"groups":[]}`
+	}
+	return fmt.Sprintf(`{"groups":[{"files":%s,"message":{"title":"feat(cli): initial commit"}}]}`, quoted)
 }

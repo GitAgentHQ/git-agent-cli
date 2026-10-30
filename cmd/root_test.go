@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gitagenthq/git-agent/cmd"
@@ -8,13 +9,24 @@ import (
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 )
 
-// TestProviderConfigError_FreeGateway allows zero-config free mode: an empty
-// api_key + a base_url (the built-in shared gateway) passes without a model,
-// because the Worker pins the model server-side.
-func TestProviderConfigError_FreeGateway(t *testing.T) {
-	cfg := &infraConfig.ProviderConfig{BaseURL: "https://git-agent-gateway.example.com"}
-	if got := cmd.ProviderConfigErrorForTest(cfg); got != "" {
-		t.Errorf("expected free-gateway config to pass, got error: %q", got)
+// TestProviderConfigError_EndpointRequiresModel: an endpoint alone is no longer
+// enough, because nothing pins the model server-side any more.
+func TestProviderConfigError_EndpointRequiresModel(t *testing.T) {
+	cfg := &infraConfig.ProviderConfig{BaseURL: "https://api.example.com/v1"}
+	if got := cmd.ProviderConfigErrorForTest(cfg); got == "" {
+		t.Fatal("expected an error when the model is missing, got none")
+	}
+}
+
+// TestProviderConfigError_NamesEveryRemedy: a fresh install must be able to
+// recover from the message alone, so it names the endpoint, the model, and the
+// user config file.
+func TestProviderConfigError_NamesEveryRemedy(t *testing.T) {
+	got := cmd.ProviderConfigErrorForTest(&infraConfig.ProviderConfig{})
+	for _, want := range []string{"base_url", "model", "config.yml"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error %q does not mention %q", got, want)
+		}
 	}
 }
 

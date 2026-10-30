@@ -77,3 +77,6 @@ git-agent-proxy/.wrangler
 *.db-shm
 *.db-wal
 *.db-journal
+
+# Local agent session state
+.pi/

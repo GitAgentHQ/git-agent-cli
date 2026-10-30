@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Remove the free shared gateway and the `--free` flag: the CLI ships no built-in endpoint any more. Configure `base_url` and `model` in `~/.config/git-agent/config.yml` or pass `--base-url` and `--model`, with `--api-key` for a hosted endpoint or `cloudflare_ai_gateway_id` to route through your own AI Gateway; a missing endpoint stops with that guidance, and `git-agent config show -o json` no longer reports a `mode` field (cli)
+
+### Fixed
+- Commit the change a user staged exactly as staged and first, instead of unstaging the path and re-adding it whole, which swallowed the working tree regions the user had not staged and left `--no-stage` committing more than its help promises. A path whose staged content is only part of its change is now committed in two parts, first what was staged and then the rest; a path staged whole commits as before (cli)
+
+### Added
+- Add `auto_model_co_author` configuration option to control automatic model co-author inference from session model (config)
+- Add ISO 639 / BCP 47 language code validation with English as default commit message language (domain)
+- Report on standard error when a file the run is about to commit holds two or more regions, naming them and `git add -p`, so the user can split it without git-agent inventing a boundary (cli)
+
 ### Added
 - Add an optional System One (Jev) layer that owns the decisions git-agent can pose as closed questions: scope assignment, technology detection, commit grouping, and hook-rejection routing, while the text model keeps writing messages and descriptions; every judgment reads a structured summary and never the diff body (cli)
 - Add `shadow`, `on`, and `off` modes with a per-run call budget and a confidence floor, so an unmeasured judgment runs and records without replacing working behavior (cli)

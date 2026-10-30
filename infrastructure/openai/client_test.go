@@ -1137,3 +1137,76 @@ func TestClient_GenerateScopes_EmptyIsNotAnError(t *testing.T) {
 		t.Errorf("expected reasoning preserved, got %q", reasoning)
 	}
 }
+
+func TestClient_GenerateDefaultLanguage_TranslatesNonEnglishIntentToEnglish(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: fix login","bullets":["Fix login"],"explanation":"Fixes login."}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	// No Language configured in Config (default)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "修复登录问题",
+		Config: &project.Config{},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(user, "Write the title description, bullets, and explanation in English") {
+		t.Errorf("default language must instruct English output even for non-English intent: %q", user)
+	}
+	if !strings.Contains(user, "ALL LOWERCASE") {
+		t.Errorf("default English output must include lowercase case instruction: %q", user)
+	}
+}
+
+func TestClient_GenerateISOLanguagePrompt_ZhCN(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: 修复问题","bullets":["修复问题"],"explanation":"修复说明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "修复问题",
+		Config: &project.Config{Language: "zh-CN"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(user, "Simplified Chinese") {
+		t.Errorf("expected prompt to resolve zh-CN to 'Simplified Chinese': %q", user)
+	}
+}
+
+func TestClient_GenerateISOLanguagePrompt_Ja(t *testing.T) {
+	var user string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, user = requestMessages(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(chatCompletionBody(t, `{"title":"fix: 問題を修正","bullets":["問題を修正"],"explanation":"修正の説明。"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient("test-key", server.URL, "test-model", 5*time.Second, 0, nil)
+	_, err := c.Generate(context.Background(), commit.GenerateRequest{
+		Intent: "問題を修正",
+		Config: &project.Config{Language: "ja"},
+		Diff:   &diff.StagedDiff{Files: []string{"login.go"}, Content: "+fix", Lines: 1},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(user, "Japanese") {
+		t.Errorf("expected prompt to resolve ja to 'Japanese': %q", user)
+	}
+}

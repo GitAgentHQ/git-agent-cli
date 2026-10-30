@@ -96,12 +96,16 @@ func twoDirDiff() *diff.StagedDiff {
 	}
 }
 
-// newJudgmentGit returns a repository with one file per two directories.
+// newJudgmentGit returns a repository with one file per two directories and an
+// empty index, because these tests measure the seams the file-level flow uses and
+// that flow runs over the remainder. One diff entry per read: the index check
+// first, then one per group.
 func newJudgmentGit() *mockCommitGitClient {
+	group := twoDirDiff()
 	return &mockCommitGitClient{
 		repoRoot:        "/repo",
-		stagedDiff:      twoDirDiff(),
-		unstagedDiff:    twoDirDiff(),
+		stagedDiffSeq:   []*diff.StagedDiff{{}, group, group, group, group, group},
+		unstagedDiff:    group,
 		allChangedFiles: []string{"application/commit_service.go", "cmd/commit.go", "cmd/root.go"},
 		stagedDiffNumStat: func(context.Context) (string, error) {
 			return "2\t1\tapplication/commit_service.go\n3\t0\tcmd/commit.go\n1\t1\tcmd/root.go\n", nil

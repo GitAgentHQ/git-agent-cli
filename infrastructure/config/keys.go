@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 const (
@@ -46,6 +48,7 @@ var KeyRegistry = map[string]KeyDef{
 	"language":                    {Name: "language", Type: "string", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_git_agent_co_author": {Name: "require_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 	"require_model_co_author":     {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"auto_model_co_author":        {Name: "auto_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 }
 
 // KeyAliases maps kebab-case flag names to their canonical snake_case registry keys.
@@ -67,6 +70,7 @@ var KeyAliases = map[string]string{
 	"plan-fallback":               "plan_fallback",
 	"require-git-agent-co-author": "require_git_agent_co_author",
 	"require-model-co-author":     "require_model_co_author",
+	"auto-model-co-author":        "auto_model_co_author",
 }
 
 // coerceForWrite converts a raw string value into the right Go type for the
@@ -155,6 +159,9 @@ func NormalizeValue(key, raw string) (string, error) {
 	def, ok := KeyRegistry[key]
 	if !ok {
 		return "", fmt.Errorf("unknown config key %q", key)
+	}
+	if key == "language" {
+		return project.ValidateLanguage(raw)
 	}
 	switch def.Type {
 	case "bool":

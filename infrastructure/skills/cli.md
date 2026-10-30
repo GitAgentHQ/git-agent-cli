@@ -15,7 +15,6 @@ AI-first Git CLI for automated commit message generation.
 | `--api-key` | string | API key for the AI provider |
 | `--base-url` | string | Base URL for the AI provider |
 | `--model` | string | Model to use for generation |
-| `--free` | bool | Force routing through the free shared gateway, overriding `api_key` / `base_url` / `model` from flags, `git config`, and the config file |
 | `--verbose`, `-v` | bool | Verbose output |
 
 ### Provider config resolution (highest to lowest priority)
@@ -23,12 +22,9 @@ AI-first Git CLI for automated commit message generation.
 1. Global CLI flags (`--api-key`, `--model`, `--base-url`)
 2. `git config --local git-agent.{model,base-url}`
 3. `~/.config/git-agent/config.yml` (supports `$ENV_VAR` expansion)
-4. Build-time default: free shared-gateway URL embedded in official release binaries
 
-`--free` short-circuits the chain for the routing fields: it forces `base_url`
-to the embedded gateway URL, clears `api_key`, and lets the Worker pin the
-model — regardless of flags, `git config`, or the config file. On a dev build
-(no embedded URL) it errors with the "install an official release binary" hint.
+There is no built-in endpoint: when `base_url` or `model` stays empty, the run
+stops and the error names the config file and the flags.
 
 ---
 
@@ -231,7 +227,7 @@ Manage git-agent configuration.
 git-agent config show [flags]
 ```
 
-Show the resolved provider configuration (`api_key` masked, `model`, `base_url`). Respects global flags — pass `--api-key`/`--model`/`--base-url` to preview what the resolved config would look like with those overrides, or `--free` to preview the forced free-gateway routing.
+Show the resolved provider configuration (`api_key` masked, `model`, `base_url`). Respects global flags — pass `--api-key`/`--model`/`--base-url` to preview what the resolved config would look like with those overrides.
 
 Output format:
 ```
@@ -240,9 +236,8 @@ model:
 base_url: https://git-agent-gateway.example.com
 ```
 
-Official release binaries embed the free shared-gateway URL as the default
-`base_url`, so `api_key`/`model` may be empty. Any user config (api_key,
-base_url, model) overrides the built-in gateway.
+Nothing is embedded: `base_url` and `model` come from a flag, `git config`, or
+the config file, and they are empty until the user sets them.
 
 ---
 
@@ -350,10 +345,9 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ### Provider defaults
 
-Official release binaries embed the free shared-gateway URL as the zero-config
-`base_url`. Development builds do not embed a provider endpoint, so configure
-`base_url` (and, for direct providers, `api_key` and `model`) before running
-generation commands. The shared gateway selects the model server-side.
+No build embeds a provider endpoint, so configure `base_url` and `model` (and
+`api_key` for a hosted provider) before running generation commands. The CLI
+reads them from a flag, `git config --local`, or `~/.config/git-agent/config.yml`.
 
 ### Legacy config migration
 
