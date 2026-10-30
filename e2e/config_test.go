@@ -194,3 +194,29 @@ func TestConfigGet_UnknownKey(t *testing.T) {
 		t.Fatal("expected non-zero exit for unknown key, got 0")
 	}
 }
+
+func TestConfigSet_Language_ISOValid(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "config", "set", "language", "zh_cn", "--project")
+	if code != 0 {
+		t.Fatalf("config set language: exit code %d\noutput: %s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git-agent", "config.yml"))
+	if err != nil {
+		t.Fatalf("config.yml not created: %v", err)
+	}
+	if !strings.Contains(string(data), "language: zh-CN") {
+		t.Errorf("expected normalized 'zh-CN' in config.yml, got:\n%s", data)
+	}
+}
+
+func TestConfigSet_Language_ISOInvalid_Fails(t *testing.T) {
+	dir := newGitRepo(t)
+	out, code := gitAgent(t, dir, "config", "set", "language", "invalid_lang_code", "--project")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for invalid language code, got 0\noutput: %s", out)
+	}
+	if !strings.Contains(out, "ISO 639") {
+		t.Errorf("expected error message to mention ISO 639, got: %s", out)
+	}
+}

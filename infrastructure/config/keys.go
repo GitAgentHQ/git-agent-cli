@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gitagenthq/git-agent/domain/project"
 )
 
 const (
@@ -157,6 +159,9 @@ func NormalizeValue(key, raw string) (string, error) {
 	def, ok := KeyRegistry[key]
 	if !ok {
 		return "", fmt.Errorf("unknown config key %q", key)
+	}
+	if key == "language" {
+		return project.ValidateLanguage(raw)
 	}
 	switch def.Type {
 	case "bool":

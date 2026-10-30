@@ -305,3 +305,40 @@ func TestKeyRegistry_AutoModelCoAuthor_AllScopes(t *testing.T) {
 			def.AllowUser, def.AllowProject, def.AllowLocal)
 	}
 }
+
+func TestNormalizeValue_Language_ISO(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"en", "en"},
+		{"zh", "zh"},
+		{"zh-CN", "zh-CN"},
+		{"zh_cn", "zh-CN"},
+		{"ja", "ja"},
+		{"English", "en"},
+		{"chinese", "zh"},
+		{"auto", "auto"},
+	}
+
+	for _, tc := range cases {
+		got, err := config.NormalizeValue("language", tc.input)
+		if err != nil {
+			t.Errorf("NormalizeValue(language, %q) failed: %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("NormalizeValue(language, %q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeValue_Language_Invalid(t *testing.T) {
+	cases := []string{"invalid", "123", "en-TOOLONG"}
+	for _, tc := range cases {
+		_, err := config.NormalizeValue("language", tc)
+		if err == nil {
+			t.Errorf("NormalizeValue(language, %q) expected error, got nil", tc)
+		}
+	}
+}

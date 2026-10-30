@@ -38,7 +38,7 @@ type Config struct {
 	MaxInputTokens          int      `json:"maxInputTokens"`              // 0 = built-in default preflight ceiling (1M tokens)
 	MaxPlanFiles            int      `json:"maxPlanFiles"`                // 0 = built-in default cap
 	PlanFallback            string   `json:"planFallback"`                // PlanFallbackNone | PlanFallbackHeuristic | PlanFallbackAuto; empty = auto
-	Language                string   `json:"language"`                    // Generated commit message language; empty = auto
+	Language                string   `json:"language"`                    // Generated commit message language (ISO 639-1 code or BCP 47 tag); empty = DefaultLanguage ("en")
 	RequireGitAgentCoAuthor bool     `json:"requireGitAgentCoAuthor"`     // When true, append Co-Authored-By: Git Agent trailer
 	RequireModelCoAuthor    bool     `json:"requireModelCoAuthor"`        // When true, every commit must carry a Co-Authored-By from a built-in AI-provider domain
 	AutoModelCoAuthor       *bool    `json:"autoModelCoAuthor,omitempty"` // When false, disable automatic model co-author inference from session model (default: true)
@@ -71,6 +71,14 @@ var DefaultModelCoAuthorDomains = []string{
 	// Fallback domain for inferred trailers of session models that map to no
 	// known provider other than Ox Alpha (see commit.fallbackCoAuthorDomain).
 	"models.git-agent.dev",
+}
+
+// EffectiveLanguage returns the configured language, or DefaultLanguage ("en") when not configured.
+func (c *Config) EffectiveLanguage() string {
+	if c == nil || strings.TrimSpace(c.Language) == "" {
+		return DefaultLanguage
+	}
+	return c.Language
 }
 
 // ScopeNames returns just the scope name strings.
