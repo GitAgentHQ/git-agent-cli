@@ -10,13 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// BuildBaseURL is the shared free-gateway URL embedded at build time via
-// -ldflags "-X .../config.BuildBaseURL=...". It is a URL only — never a
-// credential. Official release binaries point here so a user with zero
-// configuration gets the free shared gateway; any user-provided base_url
-// overrides it. Empty for dev builds (no built-in default).
-var BuildBaseURL = ""
-
 // DefaultRequestTimeout bounds the per-HTTP-request deadline given to the LLM
 // client, including streamed completions. Chosen to comfortably exceed a slow
 // 10 KB/s response while still cutting the wire if the upstream stalls.
@@ -40,9 +33,9 @@ type ProviderConfig struct {
 	CloudflareAIGatewayID   string
 	RequestTimeout          time.Duration // 0 = use DefaultRequestTimeout
 	HeartbeatInterval       time.Duration // 0 = use DefaultHeartbeatInterval
-	ForceFreeGateway        bool          // When true, route via the free shared gateway (--free), overriding api_key/base_url/model
 	RequireGitAgentCoAuthor bool          // When true, append Co-Authored-By: Git Agent trailer (opt-in)
 	RequireModelCoAuthor    bool          // When true, every commit must carry a Co-Authored-By from an AI-provider domain
+	AutoModelCoAuthor       *bool         // When false, disable automatic model co-author inference (nil = true, backward compatible)
 }
 
 type fileConfig struct {
@@ -60,16 +53,14 @@ type fileConfig struct {
 	HeartbeatInterval       string  `yaml:"heartbeat_interval"`
 	RequireGitAgentCoAuthor bool    `yaml:"require_git_agent_co_author"`
 	RequireModelCoAuthor    bool    `yaml:"require_model_co_author"`
+	AutoModelCoAuthor       *bool   `yaml:"auto_model_co_author"`
 }
 
 // Resolve merges config from (highest to lowest priority):
-// CLI flags > git config --local git-agent.* > YAML file > build-time default
-// (BuildBaseURL, free shared gateway) > empty.
+// CLI flags > git config --local git-agent.* > YAML file > empty.
 //
-// ForceFreeGateway (--free) overrides the merge for the routing fields only:
-// the request goes to the embedded shared gateway regardless of any user
-// api_key / base_url / model. Non-routing fields (timeouts, co-author policy)
-// still resolve normally.
+// There is no built-in endpoint: an unset base_url or model stays empty, and
+// providerConfigError turns that into an actionable message.
 func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*ProviderConfig, error) {
 	var file fileConfig
 	if configPath != "" {
@@ -109,8 +100,6 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 		result.BaseURL = gitBaseURL
 	} else if file.BaseURL != "" {
 		result.BaseURL = file.BaseURL
-	} else if BuildBaseURL != "" {
-		result.BaseURL = BuildBaseURL
 	}
 
 	// Model resolution precedence:
@@ -122,7 +111,7 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	// CODEX_MODEL, MODEL, ...) are deliberately NOT part of this chain: a
 	// session-injected model must not silently override the endpoint model the
 	// user configured (flag / local git config / user config), which would send
-	// unexpected model names to a BYOK proxy or the shared gateway.
+	// unexpected model names to the user's endpoint.
 	if flags.Model != "" {
 		result.Model = flags.Model
 	} else if gitModel != "" {
@@ -133,20 +122,14 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.SessionModel = getSessionModelEnv()
 	result.CloudflareAIGatewayID = file.CloudflareAIGatewayID
 
-	// --free forces routing through the embedded shared gateway: clear api_key
-	// (the Worker holds the credential server-side), pin base_url to the
-	// build-time gateway URL, and let the Worker pick the model. BuildBaseURL is
-	// empty for dev builds, so the caller's providerConfigError then surfaces the
-	// "install an official release binary" hint.
-	if flags.ForceFreeGateway {
-		result.APIKey = ""
-		result.BaseURL = BuildBaseURL
-		result.Model = ""
-		result.CloudflareAIGatewayID = ""
-	}
-
 	result.RequireGitAgentCoAuthor = flags.RequireGitAgentCoAuthor || file.RequireGitAgentCoAuthor
 	result.RequireModelCoAuthor = flags.RequireModelCoAuthor || file.RequireModelCoAuthor
+	// AutoModelCoAuthor: flags take precedence, then file, then nil (default true)
+	if flags.AutoModelCoAuthor != nil {
+		result.AutoModelCoAuthor = flags.AutoModelCoAuthor
+	} else if file.AutoModelCoAuthor != nil {
+		result.AutoModelCoAuthor = file.AutoModelCoAuthor
+	}
 
 	// The System One layer is optional: an empty key leaves it off, and the
 	// CLI then makes every decision with the generative provider as before.

@@ -229,6 +229,7 @@ func TestResolveKey_KebabAliases(t *testing.T) {
 		want string
 	}{
 		{"require-model-co-author", "require_model_co_author"},
+		{"auto-model-co-author", "auto_model_co_author"},
 	}
 	for _, tc := range cases {
 		got, err := config.ResolveKey(tc.in)
@@ -239,5 +240,68 @@ func TestResolveKey_KebabAliases(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("ResolveKey(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestLoadProjectConfig_AutoModelCoAuthor_False(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "auto_model_co_author: false\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config when auto_model_co_author is set")
+	}
+	if cfg.AutoModelCoAuthor == nil {
+		t.Fatal("expected AutoModelCoAuthor to be non-nil")
+	}
+	if *cfg.AutoModelCoAuthor {
+		t.Errorf("expected AutoModelCoAuthor false, got true")
+	}
+}
+
+func TestLoadProjectConfig_AutoModelCoAuthor_DefaultNil(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "scopes:\n  - app\n")
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.AutoModelCoAuthor != nil {
+		t.Errorf("expected AutoModelCoAuthor to be nil by default, got %v", *cfg.AutoModelCoAuthor)
+	}
+}
+
+func TestLoadProjectConfig_AutoModelCoAuthor_LocalOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "auto_model_co_author: true\n")
+	if err := os.WriteFile(
+		filepath.Join(dir, ".git-agent", "config.local.yml"),
+		[]byte("auto_model_co_author: false\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write local: %v", err)
+	}
+
+	cfg := config.LoadProjectConfig(dir, "")
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.AutoModelCoAuthor == nil || *cfg.AutoModelCoAuthor {
+		t.Errorf("expected local override to set AutoModelCoAuthor false")
+	}
+}
+
+func TestKeyRegistry_AutoModelCoAuthor_AllScopes(t *testing.T) {
+	def, ok := config.KeyRegistry["auto_model_co_author"]
+	if !ok {
+		t.Fatal("expected auto_model_co_author in KeyRegistry")
+	}
+	if def.Type != "bool" {
+		t.Errorf("expected bool type, got %q", def.Type)
+	}
+	if !def.AllowUser || !def.AllowProject || !def.AllowLocal {
+		t.Errorf("expected all three scopes allowed, got user=%v project=%v local=%v",
+			def.AllowUser, def.AllowProject, def.AllowLocal)
 	}
 }

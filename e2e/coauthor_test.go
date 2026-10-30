@@ -306,3 +306,80 @@ func TestAgentSession_UnmappedSessionModelAddsCoAuthorTrailer(t *testing.T) {
 		t.Errorf("expected fallback-domain session model Co-Authored-By trailer, got:\n%s", msg)
 	}
 }
+
+// TestAgentSession_AutoModelCoAuthorFalse_DisablesInference ensures that when
+// auto_model_co_author is set to false in the project config, the automatic
+// model co-author inference from the session model is suppressed even when
+// PI_MODEL is set.
+func TestAgentSession_AutoModelCoAuthorFalse_DisablesInference(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\nauto_model_co_author: false\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit",
+		"--api-key", "test-key",
+		"--base-url", server.URL,
+		"--model", "test-model",
+		"--no-stage",
+	)
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+		"PI_MODEL=gemini-3.1-flash-lite",
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if strings.Contains(msg, "Co-Authored-By") {
+		t.Errorf("expected no Co-Authored-By trailer when auto_model_co_author is false, got:\n%s", msg)
+	}
+}
+
+// TestAgentSession_AutoModelCoAuthorUserScope_DisablesInference ensures that
+// auto_model_co_author: false in the user-scope config also disables inference.
+func TestAgentSession_AutoModelCoAuthorUserScope_DisablesInference(t *testing.T) {
+	server := newFastLLMServer(t, 0)
+	defer server.Close()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "git-agent", "config.yml"),
+		fmt.Sprintf("api_key: test-key\nbase_url: %s/v1\nmodel: test-model\nauto_model_co_author: false\n", server.URL))
+
+	dir := newGitRepo(t)
+	writeFile(t, filepath.Join(dir, ".git-agent", "config.yml"),
+		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
+	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
+	runGit(t, dir, "add", "readme.txt")
+
+	c := exec.Command(agentBin, "commit", "--no-stage")
+	c.Dir = dir
+	c.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"PI_MODEL=claude-sonnet-4-20250514",
+	}
+	var stderr, stdout bytes.Buffer
+	c.Stderr = &stderr
+	c.Stdout = &stdout
+	if err := c.Run(); err != nil {
+		t.Fatalf("git-agent commit failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	msg := gitLogBody(t, dir)
+	if strings.Contains(msg, "Co-Authored-By") {
+		t.Errorf("expected no Co-Authored-By trailer when user-scope auto_model_co_author is false, got:\n%s", msg)
+	}
+}
