@@ -29,10 +29,6 @@ var rootCmd = &cobra.Command{
 	RunE:         runAutonomousRoot,
 }
 
-func Execute() {
-	exitFromError(rootCmd.Execute())
-}
-
 // ExecuteContext is the signal-aware entry point used by main(). The supplied
 // context is wired through to every cmd.Context() consumer (RunE handlers,
 // PersistentPreRunE, etc.) so a SIGINT/SIGTERM propagates as ctx.Done()
@@ -41,8 +37,8 @@ func ExecuteContext(ctx context.Context) {
 	exitFromError(rootCmd.ExecuteContext(ctx))
 }
 
-// exitFromError centralises the exit-code mapping so Execute and ExecuteContext
-// agree on how errors translate to process exit codes.
+// exitFromError centralises the exit-code mapping for ExecuteContext and
+// ExecuteArgs.
 func exitFromError(err error) {
 	if err == nil {
 		return
@@ -79,6 +75,17 @@ func resolveProviderConfig(cmd *cobra.Command) (*infraConfig.ProviderConfig, err
 		Model:   model,
 		BaseURL: baseURL,
 	}, userConfigPath())
+}
+
+// newLLMClient builds the provider client and wires the Cloudflare AI Gateway.
+func newLLMClient(cfg *infraConfig.ProviderConfig, heartbeat io.Writer) *infraOpenAI.Client {
+	client := infraOpenAI.NewClient(
+		cfg.APIKey, cfg.BaseURL, cfg.Model,
+		cfg.RequestTimeout, cfg.HeartbeatInterval,
+		heartbeat,
+	)
+	client.SetCloudflareAIGateway(cfg.CloudflareAIGatewayID)
+	return client
 }
 
 // providerConfigError validates the resolved provider config.
@@ -135,12 +142,7 @@ func runAutonomousRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	heartbeatWriter := autonomousHeartbeatWriter(cmd)
-	llmClient := infraOpenAI.NewClient(
-		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
-		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
-		heartbeatWriter,
-	)
-	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
+	llmClient := newLLMClient(providerCfg, heartbeatWriter)
 
 	// One layer for this run. runCommit builds its own commit service and its
 	// own layer, so the two do not share a call budget.

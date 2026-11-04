@@ -153,28 +153,27 @@ func TestCommitCmd_StagedBoundary_DevelopAbsorbsWhatTheBranchKeepsApart(t *testi
 	}
 }
 
-// capturingStub records the request bodies it is asked to answer, so two runs can
-// be compared on the prompts they sent as well as on what they committed.
-type capturingStub struct {
-	server *httptest.Server
-	mu     sync.Mutex
-	bodies []string
+// llmStub records the request bodies it is asked to answer, so two runs can be
+// compared on the prompts they sent as well as on what they committed. respond
+// builds the assistant reply for one request body.
+type llmStub struct {
+	server  *httptest.Server
+	mu      sync.Mutex
+	bodies  []string
+	respond func(body string) string
 }
 
-func newCapturingStub(t *testing.T) *capturingStub {
+func newLLMStub(t *testing.T, respond func(body string) string) *llmStub {
 	t.Helper()
-	stub := &capturingStub{}
+	stub := &llmStub{respond: respond}
 	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
 		stub.mu.Lock()
-		stub.bodies = append(stub.bodies, string(raw))
+		stub.bodies = append(stub.bodies, body)
 		stub.mu.Unlock()
 
-		content := `{"title":"feat(cli): initial commit","bullets":["Change the files"],"explanation":"Changes the files."}`
-		if strings.Contains(string(raw), "meaningful atomic commits") {
-			content = planFromPrompt(string(raw))
-		}
-		payload, _ := json.Marshal(content)
+		payload, _ := json.Marshal(stub.respond(body))
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%s}}]}`, payload)
 	}))
@@ -182,15 +181,27 @@ func newCapturingStub(t *testing.T) *capturingStub {
 	return stub
 }
 
-func (s *capturingStub) captured() []string {
+func (s *llmStub) captured() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.bodies...)
 }
 
+// newCapturingStub answers every request with a fixed message, except the
+// planner which it answers with the files its prompt listed.
+func newCapturingStub(t *testing.T) *llmStub {
+	t.Helper()
+	return newLLMStub(t, func(body string) string {
+		if strings.Contains(body, "meaningful atomic commits") {
+			return planFromPrompt(body)
+		}
+		return `{"title":"feat(cli): initial commit","bullets":["Change the files"],"explanation":"Changes the files."}`
+	})
+}
+
 // emptyIndexFixture is a repository with two changed files and nothing staged, so
 // the run takes the file-level path and asks the planner once.
-func emptyIndexFixture(t *testing.T) (*capturingStub, string) {
+func emptyIndexFixture(t *testing.T) (*llmStub, string) {
 	t.Helper()
 	stub := newCapturingStub(t)
 	dir := newGitRepo(t)
@@ -210,7 +221,7 @@ func emptyIndexFixture(t *testing.T) (*capturingStub, string) {
 // print the same envelope, and send the same prompts as develop.
 func TestCommitCmd_StagedBoundary_EmptyIndexMatchesDevelop(t *testing.T) {
 	develop := developBinary(t)
-	args := func(stub *capturingStub) []string {
+	args := func(stub *llmStub) []string {
 		return []string{"commit", "--api-key", "test-key", "--base-url", stub.server.URL,
 			"--model", "test-model", "-o", "json"}
 	}
@@ -323,27 +334,14 @@ func TestCommitCmd_StagedBoundary_DryRunPreviewsAndRestores(t *testing.T) {
 	}
 }
 
-// planRespectingStub answers the planner the way the prompt asks: the staged files
-// form the first group and the unstaged files the next, and each message names the
-// file its own diff covers. It exists so a comparison between two builds measures
-// the flow rather than a stub that groups everything into one commit.
-type planRespectingStub struct {
-	server *httptest.Server
-	mu     sync.Mutex
-	bodies []string
-}
-
-func newPlanRespectingStub(t *testing.T) *planRespectingStub {
+// newPlanRespectingStub answers the planner the way the prompt asks: the staged
+// files form the first group and the unstaged files the next, and each message
+// names the file its own diff covers. It exists so a comparison between two
+// builds measures the flow rather than a stub that groups everything into one
+// commit.
+func newPlanRespectingStub(t *testing.T) *llmStub {
 	t.Helper()
-	stub := &planRespectingStub{}
-	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body := string(raw)
-		stub.mu.Lock()
-		stub.bodies = append(stub.bodies, body)
-		stub.mu.Unlock()
-
-		var content string
+	return newLLMStub(t, func(body string) string {
 		if strings.Contains(body, "meaningful atomic commits") {
 			staged, unstaged := promptSections(body)
 			var groups []string
@@ -354,16 +352,10 @@ func newPlanRespectingStub(t *testing.T) *planRespectingStub {
 				quoted, _ := json.Marshal(files)
 				groups = append(groups, fmt.Sprintf(`{"files":%s,"title":"feat(cli): group","bullets":["Group the files"],"explanation":"Groups the files."}`, quoted))
 			}
-			content = fmt.Sprintf(`{"groups":[%s]}`, strings.Join(groups, ","))
-		} else {
-			content = fmt.Sprintf(`{"title":"feat(cli): change %s","bullets":["Change it"],"explanation":"Changes it."}`, diffFile(body))
+			return fmt.Sprintf(`{"groups":[%s]}`, strings.Join(groups, ","))
 		}
-		payload, _ := json.Marshal(content)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%s}}]}`, payload)
-	}))
-	t.Cleanup(stub.server.Close)
-	return stub
+		return fmt.Sprintf(`{"title":"feat(cli): change %s","bullets":["Change it"],"explanation":"Changes it."}`, diffFile(body))
+	})
 }
 
 // promptSections reads the staged and unstaged file lists the prompt printed. The
@@ -413,7 +405,7 @@ func diffFile(body string) string {
 func TestCommitCmd_StagedBoundary_WholeFileStagedMatchesDevelop(t *testing.T) {
 	develop := developBinary(t)
 
-	fixture := func(t *testing.T) (*planRespectingStub, string) {
+	fixture := func(t *testing.T) (*llmStub, string) {
 		t.Helper()
 		stub := newPlanRespectingStub(t)
 		dir := newGitRepo(t)
@@ -429,7 +421,7 @@ func TestCommitCmd_StagedBoundary_WholeFileStagedMatchesDevelop(t *testing.T) {
 		return stub, dir
 	}
 
-	args := func(stub *planRespectingStub) []string {
+	args := func(stub *llmStub) []string {
 		return []string{"commit", "--api-key", "test-key", "--base-url", stub.server.URL,
 			"--model", "test-model", "-o", "json"}
 	}

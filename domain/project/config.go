@@ -73,14 +73,6 @@ var DefaultModelCoAuthorDomains = []string{
 	"models.git-agent.dev",
 }
 
-// EffectiveLanguage returns the configured language, or DefaultLanguage ("en") when not configured.
-func (c *Config) EffectiveLanguage() string {
-	if c == nil || strings.TrimSpace(c.Language) == "" {
-		return DefaultLanguage
-	}
-	return c.Language
-}
-
 // ScopeNames returns just the scope name strings.
 func (c *Config) ScopeNames() []string {
 	names := make([]string, len(c.Scopes))

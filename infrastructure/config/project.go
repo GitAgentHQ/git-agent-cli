@@ -120,7 +120,6 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 
 	merged := proj
 	merged.Hooks = migrateHooks(proj)
-	merged.HookTypeLegacy = ""
 
 	// scopes: local > project > user
 	if len(local.Scopes) > 0 {
@@ -220,16 +219,7 @@ func LoadProjectConfig(repoRoot, userConfigPath string) *project.Config {
 // WriteProjectField writes a key-value pair to the given config file,
 // preserving all existing keys.
 func WriteProjectField(path, key, value string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	rawMap := ReadYAMLMap(path)
-	rawMap[key] = coerceForWrite(key, value)
-	data, err := yaml.Marshal(rawMap)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
+	return writeField(path, key, value, 0644, false)
 }
 
 // ReadProjectField reads a single key from a specific config file.

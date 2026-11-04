@@ -14,7 +14,6 @@ import (
 	"github.com/gitagenthq/git-agent/domain/project"
 	infraConfig "github.com/gitagenthq/git-agent/infrastructure/config"
 	infraGit "github.com/gitagenthq/git-agent/infrastructure/git"
-	infraOpenAI "github.com/gitagenthq/git-agent/infrastructure/openai"
 )
 
 var initCmd = &cobra.Command{
@@ -89,7 +88,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if doGitignore {
-		if err := runGitignore(cmd, cmd.OutOrStdout()); err != nil {
+		if err := runGitignore(cmd); err != nil {
 			return err
 		}
 	}
@@ -101,18 +100,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Write hooks: full wizard writes [conventional]; --hook flag writes specified values.
-	if fullWizard {
+	if fullWizard || hookChanged {
+		hooks := hookValues
+		if fullWizard {
+			hooks = []string{"conventional"}
+		}
 		if err := cmd.Context().Err(); err != nil {
 			return err
 		}
-		if err := writeHooks(configPath, []string{"conventional"}, userChanged); err != nil {
-			return err
-		}
-	} else if hookChanged {
-		if err := cmd.Context().Err(); err != nil {
-			return err
-		}
-		if err := writeHooks(configPath, hookValues, userChanged); err != nil {
+		if err := writeHooks(configPath, hooks, userChanged); err != nil {
 			return err
 		}
 	}
@@ -161,11 +157,7 @@ func runInitScope(cmd *cobra.Command, force bool, maxCommits int, configPath str
 
 	gitClient := infraGit.NewClient()
 
-	openaiClient := infraOpenAI.NewClient(
-		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
-		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval, nil,
-	)
-	openaiClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
+	openaiClient := newLLMClient(providerCfg, nil)
 	scopeSvc := application.NewScopeService(openaiClient, gitClient, nil, nil)
 	newJevLayer(providerCfg, nil).Apply(nil, scopeSvc)
 
@@ -223,16 +215,9 @@ func writeHooks(configPath string, hooks []string, userScope bool) error {
 	return infraConfig.WriteProjectField(configPath, "hook", strings.Join(hooks, ","))
 }
 
-// ResetInitFlags resets all init command flags to their defaults.
-// Required for testing since cobra retains flag values across invocations.
-func ResetInitFlags() {
-	initCmd.Flags().Set("scope", "false")
-	initCmd.Flags().Set("gitignore", "false")
-	initCmd.Flags().Set("force", "false")
-	initCmd.Flags().Set("max-commits", "200")
-	initCmd.Flags().Set("local", "false")
-	initCmd.Flags().Set("user", "false")
-	initCmd.ResetFlags()
+// registerInitFlags registers the init command flags. ResetFlags wipes
+// annotations, so this must be called after any ResetFlags().
+func registerInitFlags() {
 	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
 	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
 	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
@@ -243,14 +228,14 @@ func ResetInitFlags() {
 	initCmd.MarkFlagsMutuallyExclusive("user", "local")
 }
 
+// ResetInitFlags resets all init command flags to their defaults.
+// Required for testing since cobra retains flag values across invocations.
+func ResetInitFlags() {
+	initCmd.ResetFlags()
+	registerInitFlags()
+}
+
 func init() {
-	initCmd.Flags().Bool("scope", false, "generate scopes via AI")
-	initCmd.Flags().Bool("gitignore", false, "generate .gitignore via AI")
-	initCmd.Flags().Bool("force", false, "overwrite existing config/.gitignore")
-	initCmd.Flags().Int("max-commits", 200, "max commits to analyze for scope generation")
-	initCmd.Flags().StringArray("hook", nil, "hook to configure: 'conventional', 'empty', or a file path (repeatable)")
-	initCmd.Flags().Bool("local", false, "write config to .git-agent/config.local.yml")
-	initCmd.Flags().Bool("user", false, "write config to ~/.config/git-agent/config.yml")
-	initCmd.MarkFlagsMutuallyExclusive("user", "local")
+	registerInitFlags()
 	rootCmd.AddCommand(initCmd)
 }

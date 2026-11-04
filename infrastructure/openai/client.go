@@ -112,6 +112,7 @@ func NewClient(
 	}
 	gatewayTransport := &cloudflareAIGatewayTransport{base: http.DefaultTransport}
 	cfg.HTTPClient = &http.Client{Timeout: requestTimeout, Transport: gatewayTransport}
+	parsedURL, parseErr := url.Parse(baseURL)
 	c := &Client{
 		inner:             goopenai.NewClientWithConfig(cfg),
 		model:             model,
@@ -119,14 +120,9 @@ func NewClient(
 		heartbeatInterval: heartbeatInterval,
 		out:               out,
 		gatewayTransport:  gatewayTransport,
-		cloudflareAI:      isCloudflareAIBaseURL(baseURL),
+		cloudflareAI:      parseErr == nil && isCloudflareAIURL(parsedURL),
 	}
 	return c
-}
-
-func isCloudflareAIBaseURL(baseURL string) bool {
-	u, err := url.Parse(baseURL)
-	return err == nil && isCloudflareAIURL(u)
 }
 
 // RequestTimeout reports the per-attempt HTTP timeout this client applies to
@@ -288,15 +284,11 @@ func languageInstruction(language, intent string) string {
 		}
 		return "Use English for the title description, bullets, and explanation because no PRIMARY DIRECTIVE provides a clear language. " + englishCaseInstruction
 	}
-	if isEnglishLanguage(language) {
+	if project.IsEnglishLanguage(language) {
 		return "Write the title description, bullets, and explanation in English. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. " + englishCaseInstruction
 	}
 	displayName := project.ResolveLanguageDisplayName(language)
 	return fmt.Sprintf("Write the title description, bullets, and explanation in %s. Keep conventional commit type and scope tokens in their standard lowercase syntax (for example, feat(scope): description); translate only the natural-language description and body text. Preserve that language's natural capitalization and orthography.", displayName)
-}
-
-func isEnglishLanguage(language string) bool {
-	return project.IsEnglishLanguage(language)
 }
 
 func isLikelyEnglish(text string) bool {
@@ -308,13 +300,6 @@ func isLikelyEnglish(text string) bool {
 	// Directives without letters have no detectable language, so preserve the
 	// English fallback used when no directive is provided.
 	return true
-}
-
-func languageForConfig(cfg *project.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	return cfg.Language
 }
 
 func effectiveLanguage(override string, cfg *project.Config) string {

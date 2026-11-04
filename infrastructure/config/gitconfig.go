@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
@@ -18,14 +17,4 @@ func ReadGitConfig(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\n"), nil
-}
-
-// ReadGitConfigBool reads a boolean git-agent.* key from the local git config.
-// Returns (false, nil) when the key is not set.
-func ReadGitConfigBool(ctx context.Context, key string) (bool, error) {
-	val, err := ReadGitConfig(ctx, key)
-	if err != nil || val == "" {
-		return false, err
-	}
-	return strconv.ParseBool(val)
 }

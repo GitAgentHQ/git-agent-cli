@@ -14,6 +14,7 @@ package decision
 import (
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -230,7 +231,7 @@ func NewRecorder(w io.Writer) Recorder {
 			line += " latency=" + o.Latency.Round(time.Millisecond).String()
 		}
 		if o.InputTokens > 0 {
-			line += " in_tokens=" + itoa(o.InputTokens)
+			line += " in_tokens=" + strconv.Itoa(o.InputTokens)
 		}
 		if o.Err != "" {
 			line += " error=" + o.Err
@@ -240,19 +241,5 @@ func NewRecorder(w io.Writer) Recorder {
 }
 
 func fmtConfidence(c float64) string {
-	return " confidence=" + itoa(int(c*100+0.5))
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
+	return " confidence=" + strconv.Itoa(int(c*100+0.5))
 }

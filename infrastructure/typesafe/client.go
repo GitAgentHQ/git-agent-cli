@@ -114,9 +114,6 @@ type Answer struct {
 // Probability returns the probability the answer assigned to one option. A
 // missing option or a non-distribution answer returns 0.
 func (a Answer) Probability(option string) float64 {
-	if a.Probabilities == nil {
-		return 0
-	}
 	return a.Probabilities[option]
 }
 
@@ -136,9 +133,6 @@ type Result struct {
 // Answer returns the answer for one question id. The second result reports
 // whether the question was part of the request.
 func (r *Result) Answer(id string) (Answer, bool) {
-	if r == nil {
-		return Answer{}, false
-	}
 	a, ok := r.Answers[id]
 	return a, ok
 }
@@ -175,9 +169,6 @@ func NewClient(apiKey, baseURL, model string, requestTimeout time.Duration) *Cli
 		maxStateTokens: maxStateTokens,
 	}
 }
-
-// Model reports the model id this client sends.
-func (c *Client) Model() string { return c.model }
 
 // Evaluate sends one request holding the state and every question. Questions
 // run in parallel and each one sees the same state, so one call carries the

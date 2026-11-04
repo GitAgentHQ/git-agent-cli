@@ -55,7 +55,7 @@ func (s *ScopeService) Generate(ctx context.Context, maxCommits int, existingSco
 		return nil, err
 	}
 
-	session := s.session()
+	session := s.decisions.Begin()
 	var shadow *pendingScopeJudgment
 	if s.decider != nil && session.Take(SeamScopeSet) {
 		scopes, pending, err := s.decideScopes(ctx, session, ev, existingScopes)
@@ -95,11 +95,6 @@ func (s *ScopeService) Generate(ctx context.Context, maxCommits int, existingSco
 	}
 
 	return filterConventionalTypes(scopes), nil
-}
-
-// session returns the layer for one run, or nil when the layer is off.
-func (s *ScopeService) session() *Session {
-	return s.decisions.Begin()
 }
 
 // pendingScopeJudgment carries a shadowed verdict until the model's answer

@@ -27,16 +27,9 @@ func (o *outputValue) Set(v string) error {
 
 func (o *outputValue) Type() string { return "format" }
 
-// addOutputFlag registers the shared -o/--output flag defaulting to auto (JSON
-// when stdout is piped, text on a TTY).
-func addOutputFlag(cmd *cobra.Command) {
-	addOutputFlagWithDefault(cmd, "auto")
-}
-
-// addOutputFlagWithDefault is addOutputFlag with an explicit default value.
-// Action commands (commit, version) default to "text" so piping a human-facing
+// addOutputFlagWithDefault registers the shared -o/--output flag with an
+// explicit default value. Commands default to "text" so piping a human-facing
 // command does not silently switch it to JSON; an agent opts in with -o json.
-// Query commands default to "auto".
 func addOutputFlagWithDefault(cmd *cobra.Command, def string) {
 	v := outputValue(def)
 	cmd.Flags().VarP(&v, "output", "o", "output format: auto, json, or text")

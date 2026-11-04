@@ -16,9 +16,6 @@ import (
 type Decisions struct {
 	Policy   decision.Policy
 	Recorder decision.Recorder
-	// Log receives the human-readable form of each observation. It is the
-	// verbose output the operator reads, and it is nil when verbose is off.
-	Log io.Writer
 	// misses is shared by every session of one run, like the call budget. A
 	// private map per session would never accumulate, and the seam breaker
 	// would never fire.
@@ -38,14 +35,8 @@ func NewDecisions(mode decision.Mode, minConfidence float64, maxCalls int, recor
 	return &Decisions{
 		Policy:   decision.NewPolicy(mode, minConfidence, maxCalls),
 		Recorder: recorder,
-		Log:      log,
 		misses:   map[string]int{},
 	}
-}
-
-// Enabled reports whether any judgment may run.
-func (d *Decisions) Enabled() bool {
-	return d != nil && d.Policy.Enabled()
 }
 
 // Session is one command run's view of the layer. It hands each seam its own
@@ -82,18 +73,7 @@ func (d *Decisions) Begin() *Session {
 // commit. In shadow mode a miss is the expected outcome, so nothing is skipped
 // and the comparison keeps running.
 func (s *Session) Take(seam string) bool {
-	return s.reserve(seam)
-}
-
-// blocked reports whether a seam has run out of chances in this run.
-func (s *Session) blocked(seam string) bool {
-	return s.policy.Mode == decision.ModeOn && s.misses[seam] >= SeamMissLimit
-}
-
-// Take reserves the call before checking the breaker, so a blocked seam spends
-// nothing.
-func (s *Session) reserve(seam string) bool {
-	if s == nil || s.blocked(seam) {
+	if s == nil || (s.policy.Mode == decision.ModeOn && s.misses[seam] >= SeamMissLimit) {
 		return false
 	}
 	return s.policy.Take()

@@ -114,7 +114,7 @@ func scopeState(req project.ScopeDecisionRequest, dirs []string) map[string]any 
 		state["files"] = req.Files
 	}
 	if len(req.Commits) > 0 {
-		state["recentCommits"] = capItems(req.Commits, maxStateCommits)
+		state["recentCommits"] = capStrings(req.Commits, maxStateCommits)
 	}
 	return state
 }
@@ -122,13 +122,6 @@ func scopeState(req project.ScopeDecisionRequest, dirs []string) map[string]any 
 // maxStateCommits bounds the commit log in the state so one long history cannot
 // crowd out the file list.
 const maxStateCommits = 60
-
-func capItems(items []string, max int) []string {
-	if len(items) <= max {
-		return items
-	}
-	return items[:max]
-}
 
 // scopeOptions lists the existing scopes with their descriptions, plus the two
 // decision options. An option is missing from the map when it was not offered,

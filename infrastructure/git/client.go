@@ -42,19 +42,28 @@ func (c *Client) StagedDiffNumStat(ctx context.Context) (string, error) {
 	return string(out), nil
 }
 
-func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
+// runDiff runs the content and name-status diffs concurrently and assembles a
+// StagedDiff. extraArgs go after "diff": "--staged" for staged changes, none
+// for the worktree. Both keep --ignore-submodules=all and gitCmd's
+// core.quotePath=false behavior.
+func (c *Client) runDiff(ctx context.Context, extraArgs ...string) (*diff.StagedDiff, error) {
 	var contentOut, namesOut []byte
 	var contentErr, namesErr error
+
+	contentArgs := append([]string{"diff"}, extraArgs...)
+	contentArgs = append(contentArgs, "--ignore-submodules=all")
+	namesArgs := append([]string{"diff"}, extraArgs...)
+	namesArgs = append(namesArgs, "--name-status", "--ignore-submodules=all")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		contentOut, contentErr = gitCmd(ctx, "diff", "--staged", "--ignore-submodules=all").Output()
+		contentOut, contentErr = gitCmd(ctx, contentArgs...).Output()
 	}()
 	go func() {
 		defer wg.Done()
-		namesOut, namesErr = gitCmd(ctx, "diff", "--staged", "--name-status", "--ignore-submodules=all").Output()
+		namesOut, namesErr = gitCmd(ctx, namesArgs...).Output()
 	}()
 	wg.Wait()
 
@@ -71,6 +80,10 @@ func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
 		Content: content,
 		Lines:   strings.Count(content, "\n"),
 	}, nil
+}
+
+func (c *Client) StagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
+	return c.runDiff(ctx, "--staged")
 }
 
 func (c *Client) Commit(ctx context.Context, message string) (string, error) {
@@ -103,31 +116,6 @@ func (c *Client) CommitHash(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func (c *Client) AddAll(ctx context.Context) error {
-	if out, err := gitCmd(ctx, "add", "-A").CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
-	}
-	return nil
-}
-
-func (c *Client) CommitSubjects(ctx context.Context, max int) ([]string, error) {
-	out, err := gitCmd(ctx, "log", "--format=%s", "--max-count", strconv.Itoa(max)).Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
-			return []string{}, nil
-		}
-		return nil, err
-	}
-
-	var subjects []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if line != "" {
-			subjects = append(subjects, line)
-		}
-	}
-	return subjects, nil
 }
 
 // CommitLog returns one entry per commit formatted as "subject\n  file1\n  file2",
@@ -327,12 +315,33 @@ func (c *Client) AllChangedFiles(ctx context.Context) ([]string, error) {
 // splitUnquoted splits git output into non-empty lines and removes git's
 // C-style path quoting from each. Used for `ls-files` output, which is a plain
 // path per line (no status prefix, so parseNameStatus does not apply).
+//
+// Trailing-slash entries are dropped: `git ls-files --others` reports an
+// embedded (nested) git repository as a directory entry ("path/"), a gitlink
+// candidate rather than a file. `git add -f` cannot stage an unborn nested repo
+// ("does not have a commit checked out") and would abort the whole commit;
+// staging a committed one would silently record a broken gitlink. Plain
+// untracked directories are reported as their contained files, never as a
+// directory entry, so dropping trailing-slash lines loses no real work.
 func splitUnquoted(out []byte) []string {
 	lines := splitNonEmpty(string(out))
-	for i, f := range lines {
-		lines[i] = gitUnquote(f)
+	kept := lines[:0]
+	for _, f := range lines {
+		p := gitUnquote(f)
+		if isDirEntry(p) {
+			continue
+		}
+		kept = append(kept, p)
 	}
-	return lines
+	return kept
+}
+
+// isDirEntry reports whether an unquoted path is a trailing-slash directory
+// entry from `ls-files --others`, i.e. an embedded git repository rather than a
+// file. Callers must unquote C-quoted lines first: the slash sits inside the
+// quotes (e.g. "\344\270\255/").
+func isDirEntry(path string) bool {
+	return strings.HasSuffix(path, "/")
 }
 
 // DetectRenames returns the file moves among the current changes: for each,
@@ -414,8 +423,21 @@ func (c *Client) hashUntracked(ctx context.Context) (shas, paths []string, err e
 	if err != nil {
 		return nil, nil, err
 	}
-	paths = splitNonEmpty(string(listOut))
-	if len(paths) == 0 {
+	// `ls-files --others` reports an embedded git repository as a trailing-slash
+	// directory entry; hash-object cannot hash a directory and would fail the
+	// whole --stdin-paths batch, silently disabling rename detection. Keep the
+	// raw (still C-quoted) lines of real files so hash-object resolves them, and
+	// return the matching unquoted paths.
+	var stdinLines, filePaths []string
+	for _, line := range splitNonEmpty(string(listOut)) {
+		path := gitUnquote(line)
+		if isDirEntry(path) {
+			continue
+		}
+		stdinLines = append(stdinLines, line)
+		filePaths = append(filePaths, path)
+	}
+	if len(stdinLines) == 0 {
 		return nil, nil, nil
 	}
 
@@ -424,19 +446,16 @@ func (c *Client) hashUntracked(ctx context.Context) (shas, paths []string, err e
 	if rootErr == nil {
 		h.Dir = root
 	}
-	h.Stdin = bytes.NewReader(listOut)
+	h.Stdin = strings.NewReader(strings.Join(stdinLines, "\n") + "\n")
 	hashOut, err := h.Output()
 	if err != nil {
 		return nil, nil, err
 	}
 	shas = splitNonEmpty(string(hashOut))
-	if len(shas) != len(paths) {
-		return nil, nil, fmt.Errorf("hash-object returned %d shas for %d paths", len(shas), len(paths))
+	if len(shas) != len(filePaths) {
+		return nil, nil, fmt.Errorf("hash-object returned %d shas for %d paths", len(shas), len(filePaths))
 	}
-	for i := range paths {
-		paths[i] = gitUnquote(paths[i])
-	}
-	return shas, paths, nil
+	return shas, filePaths, nil
 }
 
 func (c *Client) IsGitRepo(ctx context.Context) bool {
@@ -457,43 +476,8 @@ func (c *Client) RepoRoot(ctx context.Context) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-func (c *Client) GitDir(ctx context.Context) (string, error) {
-	out, err := gitCmd(ctx, "rev-parse", "--absolute-git-dir").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\n"), nil
-}
-
 func (c *Client) UnstagedDiff(ctx context.Context) (*diff.StagedDiff, error) {
-	var contentOut, namesOut []byte
-	var contentErr, namesErr error
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		contentOut, contentErr = gitCmd(ctx, "diff", "--ignore-submodules=all").Output()
-	}()
-	go func() {
-		defer wg.Done()
-		namesOut, namesErr = gitCmd(ctx, "diff", "--name-status", "--ignore-submodules=all").Output()
-	}()
-	wg.Wait()
-
-	if contentErr != nil {
-		return nil, contentErr
-	}
-	if namesErr != nil {
-		return nil, namesErr
-	}
-
-	content := string(contentOut)
-	return &diff.StagedDiff{
-		Files:   parseNameStatus(namesOut),
-		Content: content,
-		Lines:   strings.Count(content, "\n"),
-	}, nil
+	return c.runDiff(ctx)
 }
 
 func (c *Client) StageFiles(ctx context.Context, files []string) error {
@@ -509,6 +493,23 @@ func (c *Client) StageFiles(ctx context.Context, files []string) error {
 			cmd.Dir = root
 		}
 		return cmd
+	}
+
+	// A trailing-slash path is a directory entry for an embedded git repository,
+	// not a file. `git add` cannot stage it (unborn nested repos fail with "does
+	// not have a commit checked out"; committed ones become broken gitlinks), so
+	// drop such entries before staging. The plan should already exclude them via
+	// AllChangedFiles; this keeps a stale or hand-built list from aborting a
+	// whole group.
+	var stageable []string
+	for _, f := range files {
+		if !isDirEntry(f) {
+			stageable = append(stageable, f)
+		}
+	}
+	files = stageable
+	if len(files) == 0 {
+		return nil
 	}
 
 	// Use -f to re-stage files that were already in the index but match .gitignore
@@ -541,11 +542,9 @@ func (c *Client) UnstageAll(ctx context.Context) error {
 		return nil
 	}
 	// In a repo with no commits yet HEAD cannot be resolved; remove everything
-	// from the index instead.
-	if _, err := gitCmd(ctx, "rm", "--cached", "-r", ".").CombinedOutput(); err != nil {
-		// Both failed — index is already empty, which is the goal.
-		return nil
-	}
+	// from the index instead. If that also fails the index is already empty,
+	// which is the goal, so the error is intentionally ignored.
+	gitCmd(ctx, "rm", "--cached", "-r", ".").CombinedOutput()
 	return nil
 }
 

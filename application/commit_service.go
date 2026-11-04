@@ -68,7 +68,6 @@ type CommitGitClient interface {
 	Commit(ctx context.Context, message string) (string, error)
 	CommitHash(ctx context.Context) (string, error)
 	FormatTrailers(ctx context.Context, message string, trailers []commit.Trailer) (string, error)
-	RepoRoot(ctx context.Context) (string, error)
 	LastCommitDiff(ctx context.Context) (*diff.StagedDiff, error)
 	AmendCommit(ctx context.Context, message string) (string, error)
 }

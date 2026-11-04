@@ -221,8 +221,8 @@ func (r Report) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "seam %s: %d samples, %d judged\n", r.Seam, r.Samples, r.Judged)
 	fmt.Fprintf(&b, "  prefix accuracy : %.0f%% (%d of %d)\n", r.Accuracy()*100, r.PrefixHits, r.Judged)
-	fmt.Fprintf(&b, "  type agreement  : %.0f%%\n", percent(r.TypeHits, r.Judged))
-	fmt.Fprintf(&b, "  scope agreement : %.0f%%\n", percent(r.ScopeHits, r.Judged))
+	fmt.Fprintf(&b, "  type agreement  : %.0f%%\n", Percent(r.TypeHits, r.Judged))
+	fmt.Fprintf(&b, "  scope agreement : %.0f%%\n", Percent(r.ScopeHits, r.Judged))
 	fmt.Fprintf(&b, "  mean confidence : %.2f (type %.2f, scope %.2f)\n", r.Confidence, r.TypeConfidence, r.ScopeConfidence)
 	fmt.Fprintf(&b, "  mean latency    : %s\n", r.Latency.Round(time.Millisecond))
 	fmt.Fprintf(&b, "  state sent      : %d tokens\n", r.InputTokens)
@@ -236,7 +236,9 @@ func (r Report) String() string {
 	return b.String()
 }
 
-func percent(hits, of int) float64 {
+// Percent returns the share of hits in of as a percentage, or zero when of is
+// zero. Reports use it to render agreement rates.
+func Percent(hits, of int) float64 {
 	if of == 0 {
 		return 0
 	}
@@ -266,7 +268,7 @@ func (r *Report) RecordParts(s Sample, wantType, wantScope, gotType, gotScope st
 		r.TypeHits++
 	} else {
 		r.TypeMisses = append(r.TypeMisses, fmt.Sprintf("%s want %s got %s at %.2f",
-			shortSHA(s.SHA), wantType, gotType, typeConfidence))
+			ShortSHA(s.SHA), wantType, gotType, typeConfidence))
 		r.TypeMissConfidences = append(r.TypeMissConfidences, typeConfidence)
 	}
 	if wantScope == "" {
@@ -276,7 +278,7 @@ func (r *Report) RecordParts(s Sample, wantType, wantScope, gotType, gotScope st
 		r.ScopeHits++
 	} else {
 		r.ScopeMisses = append(r.ScopeMisses, fmt.Sprintf("%s want %s got %s at %.2f",
-			shortSHA(s.SHA), wantScope, gotScope, scopeConfidence))
+			ShortSHA(s.SHA), wantScope, gotScope, scopeConfidence))
 		r.ScopeMissConfidences = append(r.ScopeMissConfidences, scopeConfidence)
 	}
 	if gotType == wantType && gotScope == wantScope {
@@ -297,7 +299,8 @@ func (r *Report) Finish() {
 	sort.Strings(r.ScopeMisses)
 }
 
-func shortSHA(sha string) string {
+// ShortSHA returns the abbreviated commit identifier used in report miss lists.
+func ShortSHA(sha string) string {
 	if len(sha) > 7 {
 		return sha[:7]
 	}

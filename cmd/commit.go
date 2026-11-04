@@ -156,10 +156,7 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	// When stderr is redirected — agent subprocesses, CI runners, pipelines
 	// — those lines are noise that pollutes captured logs and confuses
 	// downstream parsers.
-	var outWriter io.Writer
-	if verbose || stderrIsTerminal() {
-		outWriter = cmd.ErrOrStderr()
-	}
+	outWriter := autonomousHeartbeatWriter(cmd)
 
 	// The LLM heartbeat ("still waiting on LLM... (Xs elapsed)") is only
 	// shown with --verbose. On a normal interactive terminal the phase
@@ -352,12 +349,7 @@ func buildCommitDeps(
 	gitClient *infraGit.Client,
 	heartbeatOut io.Writer,
 ) (*infraOpenAI.Client, *application.CommitService) {
-	llmClient := infraOpenAI.NewClient(
-		providerCfg.APIKey, providerCfg.BaseURL, providerCfg.Model,
-		providerCfg.RequestTimeout, providerCfg.HeartbeatInterval,
-		heartbeatOut,
-	)
-	llmClient.SetCloudflareAIGateway(providerCfg.CloudflareAIGatewayID)
+	llmClient := newLLMClient(providerCfg, heartbeatOut)
 	if projCfg != nil && projCfg.MaxInputTokens > 0 {
 		llmClient.SetMaxInputTokens(projCfg.MaxInputTokens)
 	}

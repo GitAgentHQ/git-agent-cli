@@ -80,7 +80,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (user)\n", key, value)
 
-	case infraConfig.ScopeProject:
+	case infraConfig.ScopeProject, infraConfig.ScopeLocal:
 		gitClient := infraGit.NewClient()
 		root, err := gitClient.RepoRoot(cmd.Context())
 		if err != nil {
@@ -90,27 +90,17 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		path := infraConfig.ProjectConfigWritePath(root)
+		var path string
+		switch scope {
+		case infraConfig.ScopeProject:
+			path = infraConfig.ProjectConfigWritePath(root)
+		case infraConfig.ScopeLocal:
+			path = infraConfig.LocalConfigPath(root)
+		}
 		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
-			return fmt.Errorf("writing project config: %w", err)
+			return fmt.Errorf("writing %s config: %w", scope, err)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (project)\n", key, value)
-
-	case infraConfig.ScopeLocal:
-		gitClient := infraGit.NewClient()
-		root, err := gitClient.RepoRoot(cmd.Context())
-		if err != nil {
-			return fmt.Errorf("repo root: %w", err)
-		}
-		value, err = installHookScript(root, key, value, cmd.OutOrStdout())
-		if err != nil {
-			return err
-		}
-		path := infraConfig.LocalConfigPath(root)
-		if err := infraConfig.WriteProjectField(path, key, value); err != nil {
-			return fmt.Errorf("writing local config: %w", err)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (local)\n", key, value)
+		fmt.Fprintf(cmd.OutOrStdout(), "set %s = %s  (%s)\n", key, value, scope)
 	}
 	return nil
 }

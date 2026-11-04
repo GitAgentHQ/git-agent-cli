@@ -3,6 +3,7 @@ package typesafe
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -98,7 +99,7 @@ func (c *TechClassifier) ClassifyTechnologies(ctx context.Context, req domainGit
 		present = append(present, candidate.ID)
 	}
 
-	if os := osIdentifier(req.OS); os != "" && !contains(present, os) {
+	if os := osIdentifier(req.OS); os != "" && !slices.Contains(present, os) {
 		// The platform is decided by code, not by the model, so it does not
 		// lower the verdict's confidence.
 		present = append([]string{os}, present...)
@@ -127,15 +128,6 @@ func osIdentifier(os string) string {
 	default:
 		return ""
 	}
-}
-
-func contains(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }
 
 // GroupDecider decides which candidate buckets belong in the same commit.
@@ -424,11 +416,6 @@ func (r *FailureRouter) RouteFailure(ctx context.Context, req domainCommit.Failu
 // file evidence.
 const typeScopeMaxScopes = 24
 
-// typeScopeFloor is the confidence floor for this seam. It is stricter than the
-// policy default because a wrong type or scope reaches the commit history,
-// where the conventional hook would otherwise have caught a bad prefix.
-const typeScopeFloor = 0.85
-
 // TypeScopeJudge decides the conventional-commit type and scope prefix.
 //
 // The judgment runs on a structured summary only: changed paths with line
@@ -525,7 +512,7 @@ func (j *TypeScopeJudge) JudgeTypeScope(ctx context.Context, req domainCommit.Ty
 		return nil, fmt.Errorf("jev returned no scope answer")
 	}
 	verdict.Scope = *scopeAnswer.Choice
-	if !contains(scopeNames, verdict.Scope) {
+	if !slices.Contains(scopeNames, verdict.Scope) {
 		return nil, fmt.Errorf("jev returned the unoffered scope %q", verdict.Scope)
 	}
 

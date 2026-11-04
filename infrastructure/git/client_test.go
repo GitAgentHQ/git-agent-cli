@@ -88,6 +88,45 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// gitOutput invokes git inside dir and returns its stdout, failing the test on
+// error. Used to inspect the index after staging.
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return string(out)
+}
+
+// chdirForTest moves into dir for the duration of the test and restores the
+// original working directory afterwards. The git Client reads the repository
+// from the process cwd.
+func chdirForTest(t *testing.T, dir string) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+}
+
+// newUnbornNestedRepo creates an embedded git repository with no commit checked
+// out. git reports such a directory as a trailing-slash "gitlink candidate"
+// entry, which `git add -f` cannot stage.
+func newUnbornNestedRepo(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	runGit(t, dir, "init", "-q")
+}
+
 // TestClient_CommitLog_CapsPerCommitFiles asserts that a single mega-commit
 // (e.g. a vendor import touching hundreds of thousands of paths) contributes
 // at most 300 file lines to its CommitLog entry, so the scope-generation
@@ -287,6 +326,159 @@ func TestClient_ProjectFilesFromSubdirAreRepositoryRelative(t *testing.T) {
 	}
 }
 
+// An embedded (nested) git repository is reported by `git ls-files --others`
+// as a directory entry with a trailing slash — a gitlink candidate, not a file.
+// git-agent must not treat it as a file to stage: `git add -f` on an unborn
+// nested repo fails with "does not have a commit checked out" and aborts the
+// whole commit, and on a committed one silently records a broken gitlink.
+func TestClient_AllChangedFiles_OmitsEmbeddedRepoDirEntries(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	newUnbornNestedRepo(t, filepath.Join(dir, "work", "smoke"))
+	// A regular untracked file beside it must still be reported and stageable.
+	if err := os.WriteFile(filepath.Join(dir, "work", "keep.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write keep.txt: %v", err)
+	}
+	// A non-ASCII nested repo dir: git C-quotes the entry, so the trailing slash
+	// only shows up after unquoting.
+	newUnbornNestedRepo(t, filepath.Join(dir, "中文目录"))
+
+	chdirForTest(t, dir)
+	c := NewClient()
+	ctx := context.Background()
+
+	files, err := c.AllChangedFiles(ctx)
+	if err != nil {
+		t.Fatalf("AllChangedFiles: %v", err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "/") {
+			t.Errorf("AllChangedFiles returned a directory entry %q; want only files", f)
+		}
+	}
+	if len(files) != 1 || files[0] != "work/keep.txt" {
+		t.Fatalf("AllChangedFiles() = %v, want [work/keep.txt]", files)
+	}
+
+	// The returned list must be stageable without aborting on the nested repos.
+	if err := c.StageFiles(ctx, files); err != nil {
+		t.Fatalf("StageFiles(%v): %v", files, err)
+	}
+	index := gitOutput(t, dir, "ls-files", "-s")
+	if !strings.Contains(index, "work/keep.txt") {
+		t.Errorf("keep.txt not staged; index:\n%s", index)
+	}
+	if strings.Contains(index, "160000") {
+		t.Errorf("a nested repo was staged as a gitlink; index:\n%s", index)
+	}
+}
+
+// StageFiles must skip trailing-slash directory entries even when a caller
+// hands them over directly (e.g. a stale plan from an older run), instead of
+// failing the whole group with git's "does not have a commit checked out".
+func TestClient_StageFiles_SkipsDirEntries(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	newUnbornNestedRepo(t, filepath.Join(dir, "work", "smoke"))
+	if err := os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write keep.txt: %v", err)
+	}
+
+	chdirForTest(t, dir)
+	c := NewClient()
+	ctx := context.Background()
+
+	if err := c.StageFiles(ctx, []string{"work/smoke/", "keep.txt"}); err != nil {
+		t.Fatalf("StageFiles: %v", err)
+	}
+	index := gitOutput(t, dir, "ls-files", "-s")
+	if !strings.Contains(index, "keep.txt") {
+		t.Errorf("keep.txt not staged; index:\n%s", index)
+	}
+	if strings.Contains(index, "160000") || strings.Contains(index, "work/smoke") {
+		t.Errorf("nested repo was staged; index:\n%s", index)
+	}
+}
+
+// A committed embedded repo would otherwise be staged silently as a broken
+// gitlink (160000). The StageFiles guard must skip it too, not just unborn
+// repos that make git fail outright.
+func TestClient_StageFiles_SkipsCommittedEmbeddedRepo(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "init")
+
+	nested := filepath.Join(dir, "work", "smoke")
+	newUnbornNestedRepo(t, nested)
+	if err := os.WriteFile(filepath.Join(nested, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write f.txt: %v", err)
+	}
+	runGit(t, nested, "add", "f.txt")
+	runGit(t, nested, "commit", "-q", "-m", "inner")
+	if err := os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write keep.txt: %v", err)
+	}
+
+	chdirForTest(t, dir)
+	c := NewClient()
+
+	// Feed the exact dir entry git would report, plus a real file.
+	if err := c.StageFiles(context.Background(), []string{"work/smoke/", "keep.txt"}); err != nil {
+		t.Fatalf("StageFiles: %v", err)
+	}
+	index := gitOutput(t, dir, "ls-files", "-s")
+	if !strings.Contains(index, "keep.txt") {
+		t.Errorf("keep.txt not staged; index:\n%s", index)
+	}
+	if strings.Contains(index, "160000") {
+		t.Errorf("embedded repo staged as a gitlink; index:\n%s", index)
+	}
+}
+
+// hashUntracked powers rename detection. A nested-repo dir entry makes
+// `git hash-object --stdin-paths` fail for the whole batch, silently disabling
+// worktree move detection. It must hash the real files and ignore dir entries.
+func TestClient_DetectRenames_WorktreeMoveAlongsideEmbeddedRepo(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "old.md"), []byte("moved verbatim\n"), 0o644); err != nil {
+		t.Fatalf("write old.md: %v", err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+
+	// Worktree move: old path deleted, new path untracked.
+	if err := os.MkdirAll(filepath.Join(dir, "b"), 0o755); err != nil {
+		t.Fatalf("mkdir b: %v", err)
+	}
+	if err := os.Rename(filepath.Join(dir, "old.md"), filepath.Join(dir, "b", "new.md")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	// An unborn nested repo alongside would poison hash-object --stdin-paths.
+	newUnbornNestedRepo(t, filepath.Join(dir, "b", "embedded"))
+
+	chdirForTest(t, dir)
+	renames, err := NewClient().DetectRenames(context.Background())
+	if err != nil {
+		t.Fatalf("DetectRenames: %v", err)
+	}
+	if len(renames) != 1 || renames[0].Old != "old.md" || renames[0].New != "b/new.md" {
+		t.Fatalf("expected [{old.md b/new.md}], got %+v", renames)
+	}
+}
+
 func TestClient_AllChangedFiles_NonASCIIPath(t *testing.T) {
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q")
@@ -455,6 +647,51 @@ func TestClient_Commit_NothingToCommit(t *testing.T) {
 	_, err = NewClient().Commit(context.Background(), "feat(cli): noop")
 	if !errors.Is(err, pkgerrors.ErrNothingToCommit) {
 		t.Fatalf("expected ErrNothingToCommit, got %v", err)
+	}
+}
+
+// `ls-files --others` reports embedded git repositories as trailing-slash
+// directory entries. splitUnquoted must drop them (after C-unquoting) while
+// keeping ordinary file paths, including quoted non-ASCII names.
+func TestSplitUnquoted_DropsDirEntries(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "plain dir entry dropped, file kept",
+			input: "work/smoke/\nwork/keep.txt\n",
+			want:  []string{"work/keep.txt"},
+		},
+		{
+			name:  "C-quoted non-ASCII dir entry dropped",
+			input: "\"\\344\\270\\255\\346\\226\\207/\"\nmain.go\n",
+			want:  []string{"main.go"},
+		},
+		{
+			name:  "only dir entries returns nil",
+			input: "a/\nb/\n",
+			want:  nil,
+		},
+		{
+			name:  "ordinary quoted file kept and unquoted",
+			input: "\"path with spaces.go\"\n",
+			want:  []string{"path with spaces.go"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitUnquoted([]byte(tt.input))
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitUnquoted() = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitUnquoted()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }
 

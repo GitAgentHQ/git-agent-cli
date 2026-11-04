@@ -343,12 +343,6 @@ Print the build version (injected via ldflags; defaults to `dev` in local builds
 
 ## Defaults and legacy notes
 
-### Provider defaults
-
-No build embeds a provider endpoint, so configure `base_url` and `model` (and
-`api_key` for a hosted provider) before running generation commands. The CLI
-reads them from a flag, `git config --local`, or `~/.config/git-agent/config.yml`.
-
 ### Legacy config migration
 
 - **Project config filename**: `.git-agent/project.yml` is still read for backward compatibility but `.git-agent/config.yml` is the canonical write path. When both exist, `config.yml` takes priority.

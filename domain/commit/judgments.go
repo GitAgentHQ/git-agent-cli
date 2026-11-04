@@ -224,8 +224,3 @@ func JudgeSupportsLanguage(language string) bool {
 		return false
 	}
 }
-
-// ConventionalTypes are the commit types this project accepts in a title prefix.
-var ConventionalTypes = []string{
-	"feat", "fix", "docs", "refactor", "test", "chore", "perf", "style", "build", "ci", "revert",
-}

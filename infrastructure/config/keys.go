@@ -17,7 +17,6 @@ const (
 
 // KeyDef describes a config key's type and which scopes allow it.
 type KeyDef struct {
-	Name         string
 	Type         string // "string", "bool", "stringslice", "int", "duration"
 	AllowUser    bool
 	AllowProject bool
@@ -26,29 +25,29 @@ type KeyDef struct {
 
 // KeyRegistry is the authoritative list of supported config keys.
 var KeyRegistry = map[string]KeyDef{
-	"api_key":                     {Name: "api_key", Type: "string", AllowUser: true},
-	"base_url":                    {Name: "base_url", Type: "string", AllowUser: true},
-	"model":                       {Name: "model", Type: "string", AllowUser: true},
-	"jev_api_key":                 {Name: "jev_api_key", Type: "string", AllowUser: true},
-	"jev_base_url":                {Name: "jev_base_url", Type: "string", AllowUser: true},
-	"jev_model":                   {Name: "jev_model", Type: "string", AllowUser: true},
-	"jev_mode":                    {Name: "jev_mode", Type: "string", AllowUser: true},
-	"jev_min_confidence":          {Name: "jev_min_confidence", Type: "float", AllowUser: true},
-	"jev_max_calls":               {Name: "jev_max_calls", Type: "int", AllowUser: true},
-	"cloudflare_ai_gateway_id":    {Name: "cloudflare_ai_gateway_id", Type: "string", AllowUser: true},
-	"request_timeout":             {Name: "request_timeout", Type: "duration", AllowUser: true},
-	"heartbeat_interval":          {Name: "heartbeat_interval", Type: "duration", AllowUser: true},
-	"scopes":                      {Name: "scopes", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"hook":                        {Name: "hook", Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"max_diff_lines":              {Name: "max_diff_lines", Type: "int", AllowProject: true, AllowLocal: true},
-	"max_diff_bytes":              {Name: "max_diff_bytes", Type: "int", AllowProject: true, AllowLocal: true},
-	"max_input_tokens":            {Name: "max_input_tokens", Type: "int", AllowProject: true, AllowLocal: true},
-	"max_plan_files":              {Name: "max_plan_files", Type: "int", AllowProject: true, AllowLocal: true},
-	"plan_fallback":               {Name: "plan_fallback", Type: "string", AllowProject: true, AllowLocal: true},
-	"language":                    {Name: "language", Type: "string", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"require_git_agent_co_author": {Name: "require_git_agent_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"require_model_co_author":     {Name: "require_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
-	"auto_model_co_author":        {Name: "auto_model_co_author", Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"api_key":                     {Type: "string", AllowUser: true},
+	"base_url":                    {Type: "string", AllowUser: true},
+	"model":                       {Type: "string", AllowUser: true},
+	"jev_api_key":                 {Type: "string", AllowUser: true},
+	"jev_base_url":                {Type: "string", AllowUser: true},
+	"jev_model":                   {Type: "string", AllowUser: true},
+	"jev_mode":                    {Type: "string", AllowUser: true},
+	"jev_min_confidence":          {Type: "float", AllowUser: true},
+	"jev_max_calls":               {Type: "int", AllowUser: true},
+	"cloudflare_ai_gateway_id":    {Type: "string", AllowUser: true},
+	"request_timeout":             {Type: "duration", AllowUser: true},
+	"heartbeat_interval":          {Type: "duration", AllowUser: true},
+	"scopes":                      {Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"hook":                        {Type: "stringslice", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"max_diff_lines":              {Type: "int", AllowProject: true, AllowLocal: true},
+	"max_diff_bytes":              {Type: "int", AllowProject: true, AllowLocal: true},
+	"max_input_tokens":            {Type: "int", AllowProject: true, AllowLocal: true},
+	"max_plan_files":              {Type: "int", AllowProject: true, AllowLocal: true},
+	"plan_fallback":               {Type: "string", AllowProject: true, AllowLocal: true},
+	"language":                    {Type: "string", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"require_git_agent_co_author": {Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"require_model_co_author":     {Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
+	"auto_model_co_author":        {Type: "bool", AllowUser: true, AllowProject: true, AllowLocal: true},
 }
 
 // KeyAliases maps kebab-case flag names to their canonical snake_case registry keys.

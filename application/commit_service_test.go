@@ -158,13 +158,6 @@ func (m *mockCommitGitClient) FormatTrailers(_ context.Context, message string, 
 	return message, nil
 }
 
-func (m *mockCommitGitClient) RepoRoot(_ context.Context) (string, error) {
-	if m.repoRoot != "" {
-		return m.repoRoot, nil
-	}
-	return ".", nil
-}
-
 func (m *mockCommitGitClient) LastCommitDiff(_ context.Context) (*diff.StagedDiff, error) {
 	if m.lastCommitDiff == nil {
 		return &diff.StagedDiff{}, m.lastCommitDiffErr

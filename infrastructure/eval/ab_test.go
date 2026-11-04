@@ -68,11 +68,6 @@ type arm struct {
 	baselineGroups              [][]string
 	jevGroups                   [][]string
 	wantType, wantScope         string
-	ok                          bool
-	// baselineOK records that the generative side answered. An A/B with a
-	// missing arm is not an A/B: scoring an unavailable answer as a miss would
-	// manufacture a difference between a model and a network failure.
-	baselineOK bool
 }
 
 // TestLiveAgainstBaseline scores the generative path and the judgment on the
@@ -127,7 +122,7 @@ func measureRepo(t *testing.T, repo string, limit int) {
 	arms := make([]arm, 0, len(usable))
 	for i, s := range usable {
 		a := arm{SHA: s.SHA[:7]}
-		a.wantType, a.wantScope, a.ok = eval.ConventionalPrefix(s.Title)
+		a.wantType, a.wantScope, _ = eval.ConventionalPrefix(s.Title)
 		change := stagedFor(s)
 
 		if i > 0 && delay > 0 {
@@ -140,7 +135,6 @@ func measureRepo(t *testing.T, repo string, limit int) {
 			baselineErrors = append(baselineErrors, fmt.Sprintf("%s generate: %v", a.SHA, genErr))
 		} else {
 			a.baselineType, a.baselineScope, _ = eval.ConventionalPrefix(msg.Title)
-			a.baselineOK = true
 		}
 
 		plan, planErr := generator.Plan(context.Background(), commit.PlanRequest{
@@ -207,9 +201,6 @@ func printAB(t *testing.T, cfg abConfig, arms []arm) {
 	var typeEdges, scopeEdges, groupEdges []string
 
 	for _, a := range arms {
-		if !a.ok {
-			continue
-		}
 		scored++
 		if a.baselineType == a.wantType {
 			baseType++
@@ -245,11 +236,11 @@ func printAB(t *testing.T, cfg abConfig, arms []arm) {
 
 	t.Logf("\n=== A/B on %s: %d scored samples ===", cfg.repo, scored)
 	t.Logf("  type   : baseline %d/%d (%.0f%%)   jev %d/%d (%.0f%%)   delta %+d",
-		baseType, scored, percent(baseType, scored), jevType, scored, percent(jevType, scored), jevType-baseType)
+		baseType, scored, eval.Percent(baseType, scored), jevType, scored, eval.Percent(jevType, scored), jevType-baseType)
 	t.Logf("  scope  : baseline %d/%d (%.0f%%)   jev %d/%d (%.0f%%)   delta %+d",
-		baseScope, scopeScored, percent(baseScope, scopeScored),
-		jevScope, scopeScored, percent(jevScope, scopeScored), jevScope-baseScope)
-	t.Logf("  groups : identical %d/%d (%.0f%%)", groupAgree, groupCompared, percent(groupAgree, groupCompared))
+		baseScope, scopeScored, eval.Percent(baseScope, scopeScored),
+		jevScope, scopeScored, eval.Percent(jevScope, scopeScored), jevScope-baseScope)
+	t.Logf("  groups : identical %d/%d (%.0f%%)", groupAgree, groupCompared, eval.Percent(groupAgree, groupCompared))
 
 	if len(typeEdges) > 0 {
 		t.Logf("  type disagreements:\n    %s", strings.Join(trim(typeEdges, 12), "\n    "))
@@ -354,13 +345,6 @@ func shape(groups [][]string) string {
 	return strings.Join(parts, "+") + " files"
 }
 
-func percent(hits, of int) float64 {
-	if of == 0 {
-		return 0
-	}
-	return float64(hits) / float64(of) * 100
-}
-
 func orNone(v string) string {
 	if v == "" {
 		return "-"
@@ -421,16 +405,13 @@ func absPath(dir string) string {
 // abDelay spaces the baseline calls so the configured endpoint does not
 // rate-limit the side being measured.
 func abDelay() time.Duration {
+	seconds := 6
 	if v := os.Getenv("AB_DELAY"); v != "" {
-		if n, err := fmt.Sscanf(v, "%d", new(int)); err == nil && n == 1 {
-			seconds := 0
-			fmt.Sscanf(v, "%d", &seconds)
-			if seconds > 0 {
-				return time.Duration(seconds) * time.Second
-			}
+		if n, err := fmt.Sscanf(v, "%d", &seconds); n != 1 || err != nil || seconds <= 0 {
+			seconds = 6
 		}
 	}
-	return 6 * time.Second
+	return time.Duration(seconds) * time.Second
 }
 
 func abLimit() int {

@@ -53,21 +53,7 @@ func gitAgent(t *testing.T, dir string, args ...string) (string, int) {
 // command writes its result to stdout while errors and progress go to stderr).
 func gitAgentSeparated(t *testing.T, dir string, args ...string) (string, string, int) {
 	t.Helper()
-	c := exec.Command(agentBin, args...)
-	c.Dir = dir
-	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
-	var stdout, stderr bytes.Buffer
-	c.Stdout = &stdout
-	c.Stderr = &stderr
-	code := 0
-	if err := c.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else {
-			t.Fatalf("unexpected error running git-agent: %v", err)
-		}
-	}
-	return stdout.String(), stderr.String(), code
+	return runBinary(t, agentBin, dir, args...)
 }
 
 // gitAgentStdin runs git-agent with the given bytes piped to stdin, simulating
@@ -129,6 +115,19 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// isolatedEnv returns a minimal environment for a subprocess: PATH so git is
+// found, plus isolated HOME and XDG_CONFIG_HOME so the user's config is never
+// read. extra is appended for tests that need one more variable.
+func isolatedEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"XDG_CONFIG_HOME=" + t.TempDir(),
+	}
+	return append(env, extra...)
+}
+
 // newStallServer returns an httptest server that hijacks every connection and
 // blocks until the client closes its end of the socket. The returned hit
 // channel receives a value when the first request lands, letting callers gate
@@ -185,6 +184,34 @@ func newFastLLMServer(t *testing.T, delay time.Duration) *httptest.Server {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
+	}))
+}
+
+// newAutoInitLLMServer dispatches the auto-init round-trips: gitignore
+// technology detection, scope derivation, commit planning, and message
+// generation. Both autonomous-root and explicit-commit fixtures use it so they
+// send identical replies.
+func newAutoInitLLMServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		bodyStr := string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		var respContent string
+		if strings.Contains(bodyStr, "technologies are used") || strings.Contains(bodyStr, "Toptal") {
+			respContent = `{"technologies":["go"]}`
+		} else if strings.Contains(bodyStr, "Derive commit scopes") {
+			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
+		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
+			// The run commits whatever the index holds first, so the files the
+			// planner is asked about depend on what the flow had left. Answer
+			// with the files the prompt listed rather than a fixed path.
+			respContent = planFromPrompt(bodyStr)
+		} else {
+			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
+		}
+		resp := fmt.Sprintf(`{"id":"chatcmpl-auto","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%q}}]}`, respContent)
+		_, _ = w.Write([]byte(resp))
 	}))
 }
 

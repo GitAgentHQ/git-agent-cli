@@ -64,15 +64,7 @@ func TestLiveTypeScopeSeam(t *testing.T) {
 			continue
 		}
 
-		changes := make([]commit.FileChange, 0, len(s.Files))
-		counts := eval.ParseNumstat(s.Numstat)
-		for _, file := range s.Files {
-			c := commit.FileChange{Path: file}
-			if n, found := counts[file]; found {
-				c.Adds, c.Dels = n[0], n[1]
-			}
-			changes = append(changes, c)
-		}
+		changes := fileChanges(s)
 
 		started := time.Now()
 		verdict, judgeErr := judge.JudgeTypeScope(context.Background(), commit.TypeScopeRequest{

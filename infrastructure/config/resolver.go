@@ -139,8 +139,8 @@ func Resolve(ctx context.Context, flags ProviderConfig, configPath string) (*Pro
 	result.JevBaseURL = firstNonEmpty(flags.JevBaseURL, file.JevBaseURL)
 	result.JevModel = firstNonEmpty(flags.JevModel, file.JevModel)
 	result.JevMode = firstNonEmpty(flags.JevMode, file.JevMode)
-	result.JevMinConfidence = firstPositiveFloat(flags.JevMinConfidence, file.JevMinConfidence)
-	result.JevMaxCalls = firstPositiveInt(flags.JevMaxCalls, file.JevMaxCalls)
+	result.JevMinConfidence = firstPositive(flags.JevMinConfidence, file.JevMinConfidence)
+	result.JevMaxCalls = firstPositive(flags.JevMaxCalls, file.JevMaxCalls)
 
 	result.RequestTimeout = resolveDuration(flags.RequestTimeout, file.RequestTimeout, DefaultRequestTimeout)
 	result.HeartbeatInterval = resolveDuration(flags.HeartbeatInterval, file.HeartbeatInterval, DefaultHeartbeatInterval)
@@ -182,19 +182,8 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// firstPositiveFloat applies flag > file > zero, ignoring a non-positive value.
-func firstPositiveFloat(flag, fileValue float64) float64 {
-	if flag > 0 {
-		return flag
-	}
-	if fileValue > 0 {
-		return fileValue
-	}
-	return 0
-}
-
-// firstPositiveInt applies flag > file > zero, ignoring a non-positive value.
-func firstPositiveInt(flag, fileValue int) int {
+// firstPositive applies flag > file > zero, ignoring a non-positive value.
+func firstPositive[T ~float64 | ~int](flag, fileValue T) T {
 	if flag > 0 {
 		return flag
 	}

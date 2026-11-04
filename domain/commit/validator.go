@@ -3,6 +3,7 @@ package commit
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -116,11 +117,7 @@ func isNonEnglishLanguage(language, intent string) bool {
 	if language == "" {
 		return false
 	}
-	return !isEnglishLanguage(language)
-}
-
-func isEnglishLanguage(language string) bool {
-	return project.IsEnglishLanguage(language)
+	return !project.IsEnglishLanguage(language)
 }
 
 func checkHeader(result *ValidationResult, header string, allowedScopes []string, nonEnglish bool) {
@@ -328,7 +325,7 @@ func ValidateModelCoAuthor(raw string, allowedDomains []string) *ValidationResul
 			continue
 		}
 		domain := extractEmailDomain(line)
-		if domain != "" && containsDomain(normalized, domain) {
+		if domain != "" && slices.Contains(normalized, domain) {
 			return result
 		}
 	}
@@ -355,7 +352,7 @@ func HasModelCoAuthor(trailers []Trailer, allowedDomains []string) bool {
 			return true
 		}
 		domain := extractEmailDomain(t.Value)
-		if domain != "" && containsDomain(normalized, domain) {
+		if domain != "" && slices.Contains(normalized, domain) {
 			return true
 		}
 	}
@@ -371,15 +368,6 @@ func normalizeDomains(in []string) []string {
 		}
 	}
 	return out
-}
-
-func containsDomain(normalized []string, want string) bool {
-	for _, d := range normalized {
-		if d == want {
-			return true
-		}
-	}
-	return false
 }
 
 // ModelProviderInfo defines a recognized AI provider's model naming pattern & domain metadata.
@@ -540,15 +528,6 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
-}
-
-func isTierSuffix(s string) bool {
-	switch s {
-	case "high", "medium", "low", "minimal", "xhigh", "max", "lite", "extra", "thinking", "reasoning", "non-reasoning":
-		return true
-	default:
-		return false
-	}
 }
 
 func capitalize(s string) string {

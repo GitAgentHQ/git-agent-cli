@@ -1,6 +1,7 @@
 package application
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -64,16 +65,9 @@ func buildBuckets(diffs []*diff.StagedDiff, numstat string, maxBuckets int) []co
 		}
 	}
 
-	if maxBuckets > 0 && len(order) > maxBuckets {
-		order = capBucketLabels(order, maxBuckets)
-	}
-
 	buckets := make([]commit.FileBucket, 0, len(order))
 	for i, dir := range order {
 		bucket := bucketsByDir[dir]
-		if bucket == nil {
-			continue
-		}
 		bucket.ID = bucketID(i)
 		bucket.Symbols = dedupeStrings(bucket.Symbols, maxSymbolPerBucket)
 		buckets = append(buckets, *bucket)
@@ -110,31 +104,7 @@ func bucketID(i int) string {
 	if i < len(letters) {
 		return string(letters[i])
 	}
-	return "b" + itoa(i)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [8]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
-
-// capBucketLabels keeps the first maxBuckets directories and folds the rest into
-// the last kept one, so every file still lands in a bucket.
-func capBucketLabels(order []string, maxBuckets int) []string {
-	if len(order) <= maxBuckets {
-		return order
-	}
-	kept := append([]string(nil), order[:maxBuckets-1]...)
-	return append(kept, order[maxBuckets-1:]...)
+	return "b" + strconv.Itoa(i)
 }
 
 // fileEvidence is what one file's diff contributes to a bucket: its line counts
@@ -237,16 +207,8 @@ func groupingSignature(groups [][]string) string {
 	var parts []string
 	for _, files := range groups {
 		sorted := append([]string(nil), files...)
-		sortStrings(sorted)
+		sort.Strings(sorted)
 		parts = append(parts, strings.Join(sorted, "+"))
 	}
 	return strings.Join(parts, "|")
-}
-
-func sortStrings(values []string) {
-	for i := 1; i < len(values); i++ {
-		for j := i; j > 0 && values[j] < values[j-1]; j-- {
-			values[j], values[j-1] = values[j-1], values[j]
-		}
-	}
 }

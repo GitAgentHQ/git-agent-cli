@@ -82,19 +82,19 @@ func TestCollector_ReadsOneSamplePerNonMergeCommit(t *testing.T) {
 			t.Errorf("expected merge commits to be skipped, got %q", s.Title)
 		}
 		if len(s.Files) == 0 {
-			t.Errorf("expected a file list for %s", short(s.SHA))
+			t.Errorf("expected a file list for %s", eval.ShortSHA(s.SHA))
 		}
 		if s.Numstat == "" {
-			t.Errorf("expected numstat for %s", short(s.SHA))
+			t.Errorf("expected numstat for %s", eval.ShortSHA(s.SHA))
 		}
 		if s.DiffSize == 0 {
-			t.Errorf("expected a measured diff size for %s", short(s.SHA))
+			t.Errorf("expected a measured diff size for %s", eval.ShortSHA(s.SHA))
 		}
 		if s.Diff == "" {
-			t.Errorf("expected the change body for %s", short(s.SHA))
+			t.Errorf("expected the change body for %s", eval.ShortSHA(s.SHA))
 		}
 		if s.Date.IsZero() {
-			t.Errorf("expected a commit date for %s", short(s.SHA))
+			t.Errorf("expected a commit date for %s", eval.ShortSHA(s.SHA))
 		}
 	}
 	// git orders by topology, not by wall clock, so the assertion is on the set
@@ -228,11 +228,4 @@ func titles(samples []eval.Sample) []string {
 		out = append(out, s.Title)
 	}
 	return out
-}
-
-func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
 }

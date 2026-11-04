@@ -30,10 +30,6 @@ func NewExitCodeError(code int, msg string) *ExitCodeError {
 	return &ExitCodeError{Code: code, Message: msg}
 }
 
-// Sentinel exit-code errors. See the package doc for the full taxonomy.
-// Exit code 2 (hook blocked) is carried by application.ErrHookBlocked; the
-// other codes have no dedicated sentinel. Exit codes 3 and 4 are retired.
-
 // APIError represents an error returned by the LLM API (rate limit, auth failure, etc.).
 type APIError struct {
 	HTTPStatusCode int

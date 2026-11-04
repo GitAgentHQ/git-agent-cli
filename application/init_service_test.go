@@ -45,10 +45,6 @@ type mockGitReader struct {
 	err       error
 }
 
-func (m *mockGitReader) CommitSubjects(ctx context.Context, max int) ([]string, error) {
-	return m.commits, m.err
-}
-
 func (m *mockGitReader) CommitLog(ctx context.Context, max int) ([]string, error) {
 	return m.commits, m.err
 }

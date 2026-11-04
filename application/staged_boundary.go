@@ -186,21 +186,9 @@ func regionHeading(line string) string {
 
 // describeRegions names the regions for the report, at most three of them.
 func describeRegions(headings []string) string {
-	seen := map[string]bool{}
-	var named []string
-	for _, heading := range headings {
-		heading = strings.TrimSpace(heading)
-		if heading == "" || seen[heading] {
-			continue
-		}
-		seen[heading] = true
-		named = append(named, heading)
-	}
+	named := dedupeStrings(headings, 3)
 	if len(named) == 0 {
 		return "no heading in the diff"
-	}
-	if len(named) > 3 {
-		named = named[:3]
 	}
 	return strings.Join(named, ", ")
 }

@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,15 +124,7 @@ func TestCommitCmd_SIGINTCancels(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "b.go"), "package b\n")
 	writeFile(t, filepath.Join(dir, "c.go"), "package c\n")
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "a.go", "b.go")
+	runGit(t, dir, "add", "a.go", "b.go")
 
 	c := exec.Command(agentBin, "commit",
 		"--api-key", "test-key",
@@ -145,11 +136,7 @@ func TestCommitCmd_SIGINTCancels(t *testing.T) {
 	// Minimal env: PATH for `git`, isolated XDG so the user's ~/.config is
 	// never read. Inheriting os.Environ() risks pulling in CLIPROXYAPI_TOKEN
 	// or other shell exports that change credential resolution.
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -249,15 +236,7 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 	// that the byte cap never trips and no truncation phase line fires.
 	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "readme.txt")
+	runGit(t, dir, "add", "readme.txt")
 
 	c := exec.Command(agentBin, "commit",
 		"--api-key", "test-key",
@@ -266,11 +245,7 @@ func TestCommitCmd_SmallDiffRegression(t *testing.T) {
 		"--no-stage",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -323,15 +298,7 @@ func TestCommitCmd_JSONOutput(t *testing.T) {
 		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
 	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "readme.txt")
+	runGit(t, dir, "add", "readme.txt")
 
 	c := exec.Command(agentBin, "commit",
 		"--api-key", "test-key",
@@ -341,11 +308,7 @@ func TestCommitCmd_JSONOutput(t *testing.T) {
 		"-o", "json",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -411,7 +374,7 @@ func TestCommitCmd_JSONDryRun(t *testing.T) {
 		"--no-stage", "--dry-run", "-o", "json",
 	)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "XDG_CONFIG_HOME=" + t.TempDir()}
+	cmd.Env = isolatedEnv(t)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -469,15 +432,7 @@ func TestCommitCmd_NoReasoningEffortSent(t *testing.T) {
 		"scopes:\n  - name: cli\n    description: CLI changes\nhook: empty\n")
 	writeFile(t, filepath.Join(dir, "readme.txt"), strings.Repeat("a", 200))
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "readme.txt")
+	runGit(t, dir, "add", "readme.txt")
 
 	c := exec.Command(agentBin, "commit",
 		"--api-key", "test-key",
@@ -486,11 +441,7 @@ func TestCommitCmd_NoReasoningEffortSent(t *testing.T) {
 		"--no-stage",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -540,11 +491,7 @@ func commitOneFile(t *testing.T, dir, serverURL, configYML string) {
 		"--no-stage",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -554,40 +501,13 @@ func commitOneFile(t *testing.T, dir, serverURL, configYML string) {
 }
 
 func TestAutonomousRoot_AutoInitScopeAndGitignore(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		bodyStr := string(bodyBytes)
-		w.Header().Set("Content-Type", "application/json")
-		var respContent string
-		if strings.Contains(bodyStr, "technologies are used") || strings.Contains(bodyStr, "Toptal") {
-			respContent = `{"technologies":["go"]}`
-		} else if strings.Contains(bodyStr, "Derive commit scopes") {
-			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
-		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
-			// The run commits whatever the index holds first, so the files the
-			// planner is asked about depend on what the flow had left. Answer
-			// with the files the prompt listed rather than a fixed path.
-			respContent = planFromPrompt(bodyStr)
-		} else {
-			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
-		}
-		resp := fmt.Sprintf(`{"id":"chatcmpl-auto","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%q}}]}`, respContent)
-		_, _ = w.Write([]byte(resp))
-	}))
+	server := newAutoInitLLMServer(t)
 	defer server.Close()
 
 	dir := newGitRepo(t)
 	writeFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main() {}\n")
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "main.go")
+	runGit(t, dir, "add", "main.go")
 
 	c := exec.Command(agentBin,
 		"--api-key", "test-key",
@@ -595,11 +515,7 @@ func TestAutonomousRoot_AutoInitScopeAndGitignore(t *testing.T) {
 		"--model", "test-model",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
@@ -624,40 +540,13 @@ func TestAutonomousRoot_AutoInitScopeAndGitignore(t *testing.T) {
 // TestCommitCmd_SkippedAutoInitOnDisk verifies that running explicit git-agent commit
 // does not write .gitignore or .git-agent/config.yml to disk.
 func TestCommitCmd_SkippedAutoInitOnDisk(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		bodyStr := string(bodyBytes)
-		w.Header().Set("Content-Type", "application/json")
-		var respContent string
-		if strings.Contains(bodyStr, "technologies are used") || strings.Contains(bodyStr, "Toptal") {
-			respContent = `{"technologies":["go"]}`
-		} else if strings.Contains(bodyStr, "Derive commit scopes") {
-			respContent = `{"scopes":[{"name":"cli","description":"CLI"}],"reasoning":"auto"}`
-		} else if strings.Contains(bodyStr, "meaningful atomic commits") {
-			// The run commits whatever the index holds first, so the files the
-			// planner is asked about depend on what the flow had left. Answer
-			// with the files the prompt listed rather than a fixed path.
-			respContent = planFromPrompt(bodyStr)
-		} else {
-			respContent = `{"title":"feat(cli): initial commit","bullets":["Add main.go"],"explanation":"initial commit"}`
-		}
-		resp := fmt.Sprintf(`{"id":"chatcmpl-auto","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%q}}]}`, respContent)
-		_, _ = w.Write([]byte(resp))
-	}))
+	server := newAutoInitLLMServer(t)
 	defer server.Close()
 
 	dir := newGitRepo(t)
 	writeFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main() {}\n")
 
-	gitInRepo := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitInRepo("add", "main.go")
+	runGit(t, dir, "add", "main.go")
 
 	c := exec.Command(agentBin, "commit",
 		"--api-key", "test-key",
@@ -665,11 +554,7 @@ func TestCommitCmd_SkippedAutoInitOnDisk(t *testing.T) {
 		"--model", "test-model",
 	)
 	c.Dir = dir
-	c.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"XDG_CONFIG_HOME=" + t.TempDir(),
-	}
+	c.Env = isolatedEnv(t)
 	var stderr, stdout bytes.Buffer
 	c.Stderr = &stderr
 	c.Stdout = &stdout
