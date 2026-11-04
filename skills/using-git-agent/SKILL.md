@@ -26,6 +26,11 @@ alone:
 git-agent --intent "<one-sentence intent assembled from the gathered context>"
 ```
 
+A run may also update `.git-agent/config.yml` (auto-scope writes scopes derived
+from the repository). This is normal git-agent behavior, not a stray side
+effect. Never `git restore`, discard, or "clean up" that file after a run:
+keep the updated config and commit it with the run's changes.
+
 The bare command is the autonomous agent entry point introduced by the recent
 CLI workflow. It inspects the repository and runs the commit workflow. Do not
 default to `git-agent commit`; use that subcommand only for an explicit commit
