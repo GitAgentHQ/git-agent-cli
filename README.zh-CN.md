@@ -97,6 +97,10 @@ git-agent commit -o json                      # 结构化结果（标题、SHA�
 `{title, message, files, sha, hook_outcome}`）、`committed_count` 和
 `final_sha`。`hook_outcome` 为 `passed` 或 `skipped`。否则输出为人类可读文本。
 
+### 多区域变更报告
+
+当某个待整体提交的文件包含两个或更多区域时，三个或更少的文件会在标准错误中逐文件列出区域和 `git add -p <file>`。超过三个文件受此影响时，标准错误只输出一行包含数量、示例路径和具体 `git add -p` 命令的摘要；`--verbose` 会列出每个文件的完整明细，摘要也会省略该提示。索引仍是唯一由 git-agent 执行的拆分边界：工具只报告，不自行拆分。
+
 ### `git-agent config`
 
 管理 git-agent 配置。

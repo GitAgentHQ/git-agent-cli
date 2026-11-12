@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Bound the multi-region report in large working trees: a run with more than three affected files now writes one summary with a concrete `git add -p` example to standard error and keeps the full per-file list under `--verbose`, instead of emitting one warning per file (cli)
+- Fetch full Git history in the build check so the pinned pre-fix parity baseline runs instead of silently skipping on a shallow CI checkout (ci)
+
 ## [0.15.0] - 2026-10-30
 
 ### Removed

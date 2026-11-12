@@ -19,6 +19,11 @@ import (
 // boundary. Every other split belongs to the user, and the run's job is to say
 // when one is possible.
 
+const (
+	maxRegionHeadings      = 3
+	maxDetailedRegionFiles = 3
+)
+
 // commitStagedContent commits what the index holds, exactly as it holds it, and
 // returns that commit. It returns nil when the index holds nothing.
 //
@@ -116,13 +121,20 @@ func (s *CommitService) remainderDiff(ctx context.Context, stagedPaths []string)
 	return remainder, nil
 }
 
+type regionReport struct {
+	file     string
+	headings []string
+}
+
 // reportSplittableFiles tells the user when a file the run is about to commit as a
 // whole holds more than one region, and names the regions so the user can decide.
 //
 // This is what a tool can honestly say. Where a commit boundary belongs is the
 // user's judgment and the index is how they express it; all the run knows is that
 // git reported several regions in one file, which is the fact that makes a split
-// possible. It reports and never splits.
+// possible. A small run names each file on the warning stream. A larger run keeps
+// one bounded line there, with a concrete command, and writes every per-file
+// report to the verbose stream. It reports and never splits.
 func (s *CommitService) reportSplittableFiles(req CommitRequest, remainder *diff.StagedDiff) {
 	if remainder == nil || remainder.Content == "" {
 		return
@@ -134,13 +146,38 @@ func (s *CommitService) reportSplittableFiles(req CommitRequest, remainder *diff
 	}
 	sort.Strings(files)
 
+	reports := make([]regionReport, 0, len(files))
 	for _, file := range files {
 		headings := regions[file]
 		if len(headings) < 2 {
 			continue
 		}
-		s.warn(req, "Warning: %s holds %d separate regions (%s): stage them apart with \"git add -p %s\" to commit them separately",
-			file, len(headings), describeRegions(headings), file)
+		reports = append(reports, regionReport{file: file, headings: headings})
+	}
+	if len(reports) == 0 {
+		return
+	}
+	if len(reports) <= maxDetailedRegionFiles {
+		for _, report := range reports {
+			s.warn(req, "Warning: %s holds %d separate regions (%s): stage them apart with \"git add -p %s\" to commit them separately",
+				report.file, len(report.headings), describeRegions(report.headings), report.file)
+		}
+		return
+	}
+
+	examples := make([]string, 0, maxDetailedRegionFiles)
+	for _, report := range reports[:maxDetailedRegionFiles] {
+		examples = append(examples, report.file)
+	}
+	hint := "; run with --verbose to list every file"
+	if req.Verbose {
+		hint = ""
+	}
+	s.warn(req, "Warning: %d files hold separate regions (%s, and %d more): stage one region at a time with \"git add -p %s\" to commit them separately%s",
+		len(reports), strings.Join(examples, ", "), len(reports)-maxDetailedRegionFiles, reports[0].file, hint)
+	for _, report := range reports {
+		s.vlog(req, "Warning: %s holds %d separate regions (%s): stage them apart with \"git add -p %s\" to commit them separately",
+			report.file, len(report.headings), describeRegions(report.headings), report.file)
 	}
 }
 
@@ -184,9 +221,9 @@ func regionHeading(line string) string {
 	return strings.TrimSpace(rest[end+2:])
 }
 
-// describeRegions names the regions for the report, at most three of them.
+// describeRegions names the regions for the report, up to maxRegionHeadings.
 func describeRegions(headings []string) string {
-	named := dedupeStrings(headings, 3)
+	named := dedupeStrings(headings, maxRegionHeadings)
 	if len(named) == 0 {
 		return "no heading in the diff"
 	}

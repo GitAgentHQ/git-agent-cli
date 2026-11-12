@@ -107,6 +107,18 @@ With `-o json`, commit prints a single object: `dry_run`, `commits[]` (each
 `final_sha`. `hook_outcome` is `passed` or `skipped`. Otherwise output is
 human-readable text.
 
+### Multi-region reports
+
+When a file the run is about to commit as a whole holds two or more regions,
+the run says so on standard error, names the regions, and points at
+`git add -p <file>`. Three or fewer affected files are each named on the
+warning stream. When more than three are affected, the run writes one bounded
+summary with the count, a few example paths, and a concrete `git add -p`
+command; `--verbose` lists every per-file line. In a verbose run the summary
+comes first and omits the flag hint. It reports; it never splits on its own.
+Where a commit boundary belongs is the user's judgment, and the index is how
+they express it.
+
 ### `git-agent config`
 
 Manage git-agent configuration.
@@ -312,7 +324,7 @@ When the index already holds changes, `git-agent` commits exactly that content a
 
 When the index holds a complete file change, the commits are the same ones this run made before: the staged file forms its own commit and the other changes are grouped as usual. When the staged content is only part of a file's change, that file is committed in two parts, first what was staged and then the rest, because the region the user left alone must not ride along.
 
-When a file the run is about to commit as a whole holds two or more regions, the run says so on standard error, names the regions, and points at `git add -p <file>`. It reports; it never splits on its own. Where a commit boundary belongs is the user's judgment, and the index is how they express it.
+See Multi-region reports for how the run reports files with more than one region.
 
 ## Project config (`.git-agent/config.yml`)
 

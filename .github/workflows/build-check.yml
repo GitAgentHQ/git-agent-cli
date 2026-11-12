@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The staged-boundary parity tests build a pinned pre-fix revision.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
